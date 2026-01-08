@@ -110,14 +110,133 @@ jQuery(document).ready(function($) {
 
         const $button = $('#generate-button');
         const originalText = $button.html();
+        const $previewSection = $('#preview-section');
+        const $previewContent = $('#preview-content');
 
-        $button.prop('disabled', true).html('<span class="dashicons dashicons-update-alt"></span> <?php esc_js( _e( '生成中...', 'blog-poster' ) ); ?>');
+        // フォームデータ取得
+        const topic = $('#topic').val().trim();
+        const additionalInstructions = $('#additional_instructions').val().trim();
 
-        // TODO: AJAX実装（Phase 1で実装予定）
-        setTimeout(function() {
-            $button.prop('disabled', false).html(originalText);
-            alert('<?php esc_js( _e( '記事生成機能は開発中です。Phase 1で実装予定です。', 'blog-poster' ) ); ?>');
-        }, 1000);
+        if (!topic) {
+            alert('<?php esc_js( _e( 'トピックを入力してください。', 'blog-poster' ) ); ?>');
+            return;
+        }
+
+        // ボタンを無効化
+        $button.prop('disabled', true).html('<span class="dashicons dashicons-update-alt spin"></span> <?php esc_js( _e( '生成中...', 'blog-poster' ) ); ?>');
+        $previewSection.hide();
+
+        // AJAX リクエスト
+        $.ajax({
+            url: blogPosterAdmin.ajaxUrl,
+            type: 'POST',
+            data: {
+                action: 'blog_poster_generate_article',
+                nonce: blogPosterAdmin.nonce,
+                topic: topic,
+                additional_instructions: additionalInstructions
+            },
+            timeout: 120000, // 2分タイムアウト
+            success: function(response) {
+                if (response.success) {
+                    // 成功時の処理
+                    const data = response.data;
+
+                    // プレビュー表示
+                    let preview = '<div class="article-preview">';
+                    preview += '<h2 class="preview-title">' + data.article.title + '</h2>';
+                    preview += '<div class="preview-meta">';
+                    preview += '<p><strong><?php esc_js( _e( 'Slug:', 'blog-poster' ) ); ?></strong> ' + data.article.slug + '</p>';
+                    preview += '<p><strong><?php esc_js( _e( 'メタディスクリプション:', 'blog-poster' ) ); ?></strong> ' + data.article.meta_description + '</p>';
+                    preview += '<p><strong><?php esc_js( _e( '使用トークン数:', 'blog-poster' ) ); ?></strong> ' + data.tokens.toLocaleString() + '</p>';
+                    preview += '<p><strong><?php esc_js( _e( '残り記事数:', 'blog-poster' ) ); ?></strong> ' + data.remaining + '</p>';
+                    preview += '</div>';
+                    preview += '<div class="preview-content">' + data.article.content + '</div>';
+                    preview += '<div class="preview-actions">';
+                    preview += '<a href="' + data.post_url + '" class="button button-primary" target="_blank"><?php esc_js( _e( '投稿を編集', 'blog-poster' ) ); ?></a>';
+                    preview += '</div>';
+                    preview += '</div>';
+
+                    $previewContent.html(preview);
+                    $previewSection.fadeIn();
+
+                    // 成功メッセージ
+                    alert(data.message + '\n\n<?php esc_js( _e( '投稿を編集画面で確認できます。', 'blog-poster' ) ); ?>');
+
+                    // フォームをリセット
+                    $('#topic').val('');
+                    $('#additional_instructions').val('');
+
+                } else {
+                    // エラー時の処理
+                    alert('<?php esc_js( _e( 'エラー:', 'blog-poster' ) ); ?> ' + response.data.message);
+                }
+            },
+            error: function(xhr, status, error) {
+                console.error('AJAX Error:', error);
+
+                let errorMessage = '<?php esc_js( _e( '記事生成中にエラーが発生しました。', 'blog-poster' ) ); ?>';
+
+                if (status === 'timeout') {
+                    errorMessage = '<?php esc_js( _e( 'タイムアウトしました。もう一度お試しください。', 'blog-poster' ) ); ?>';
+                } else if (xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message) {
+                    errorMessage = xhr.responseJSON.data.message;
+                }
+
+                alert(errorMessage);
+            },
+            complete: function() {
+                // ボタンを有効化
+                $button.prop('disabled', false).html(originalText);
+            }
+        });
     });
 });
 </script>
+
+<style>
+.dashicons.spin {
+    animation: rotation 2s infinite linear;
+}
+
+@keyframes rotation {
+    from {
+        transform: rotate(0deg);
+    }
+    to {
+        transform: rotate(359deg);
+    }
+}
+
+.article-preview {
+    padding: 20px;
+}
+
+.preview-title {
+    margin-top: 0;
+    padding-bottom: 10px;
+    border-bottom: 2px solid #2271b1;
+}
+
+.preview-meta {
+    background: #f6f7f7;
+    padding: 15px;
+    margin: 15px 0;
+    border-left: 4px solid #2271b1;
+}
+
+.preview-meta p {
+    margin: 5px 0;
+}
+
+.preview-content {
+    line-height: 1.8;
+    margin: 20px 0;
+}
+
+.preview-actions {
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid #dcdcde;
+}
+</style>

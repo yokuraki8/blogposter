@@ -23,6 +23,9 @@ class Blog_Poster_Admin {
         add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_styles' ) );
         add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_scripts' ) );
         add_action( 'admin_init', array( $this, 'register_settings' ) );
+
+        // AJAXハンドラー
+        add_action( 'wp_ajax_blog_poster_generate_article', array( $this, 'ajax_generate_article' ) );
     }
 
     /**
@@ -193,5 +196,156 @@ class Blog_Poster_Admin {
      */
     public function display_history_page() {
         require_once BLOG_POSTER_PLUGIN_DIR . 'admin/views/history.php';
+    }
+
+    /**
+     * AJAX: 記事生成
+     */
+    public function ajax_generate_article() {
+        // nonceチェック
+        check_ajax_referer( 'blog_poster_nonce', 'nonce' );
+
+        // 権限チェック
+        if ( ! current_user_can( 'manage_options' ) ) {
+            wp_send_json_error( array(
+                'message' => __( '権限がありません。', 'blog-poster' )
+            ) );
+        }
+
+        // パラメータ取得
+        $topic = isset( $_POST['topic'] ) ? sanitize_text_field( $_POST['topic'] ) : '';
+        $additional_instructions = isset( $_POST['additional_instructions'] ) ? sanitize_textarea_field( $_POST['additional_instructions'] ) : '';
+
+        if ( empty( $topic ) ) {
+            wp_send_json_error( array(
+                'message' => __( 'トピックを入力してください。', 'blog-poster' )
+            ) );
+        }
+
+        // 設定チェック
+        $settings = get_option( 'blog_poster_settings', array() );
+        $ai_provider = isset( $settings['ai_provider'] ) ? $settings['ai_provider'] : 'openai';
+
+        // APIキーチェック
+        $api_key_field = $ai_provider . '_api_key';
+        if ( empty( $settings[ $api_key_field ] ) ) {
+            wp_send_json_error( array(
+                'message' => sprintf(
+                    __( '%s のAPIキーが設定されていません。設定画面で設定してください。', 'blog-poster' ),
+                    $this->get_provider_name( $ai_provider )
+                )
+            ) );
+        }
+
+        // 無料プラン制限チェック
+        $subscription_plan = isset( $settings['subscription_plan'] ) ? $settings['subscription_plan'] : 'free';
+        $articles_generated = isset( $settings['articles_generated'] ) ? intval( $settings['articles_generated'] ) : 0;
+        $articles_limit = isset( $settings['articles_limit_free'] ) ? intval( $settings['articles_limit_free'] ) : 5;
+
+        if ( $subscription_plan === 'free' && $articles_generated >= $articles_limit ) {
+            wp_send_json_error( array(
+                'message' => sprintf(
+                    __( '無料プランの制限（%d記事）に達しました。有料プランにアップグレードしてください。', 'blog-poster' ),
+                    $articles_limit
+                )
+            ) );
+        }
+
+        // 記事生成
+        $generator = new Blog_Poster_Generator();
+        $result = $generator->generate_article( $topic, $additional_instructions );
+
+        if ( is_wp_error( $result ) ) {
+            wp_send_json_error( array(
+                'message' => $result->get_error_message()
+            ) );
+        }
+
+        if ( ! $result['success'] ) {
+            wp_send_json_error( array(
+                'message' => __( '記事の生成に失敗しました。', 'blog-poster' )
+            ) );
+        }
+
+        // WordPress投稿を作成
+        $article = $result['article'];
+        $post_id = wp_insert_post( array(
+            'post_title'   => $article['title'],
+            'post_content' => $article['content'],
+            'post_excerpt' => $article['excerpt'],
+            'post_status'  => 'draft',
+            'post_type'    => 'post',
+        ) );
+
+        if ( is_wp_error( $post_id ) ) {
+            wp_send_json_error( array(
+                'message' => __( '投稿の作成に失敗しました。', 'blog-poster' )
+            ) );
+        }
+
+        // Slug設定
+        if ( ! empty( $article['slug'] ) ) {
+            wp_update_post( array(
+                'ID'        => $post_id,
+                'post_name' => sanitize_title( $article['slug'] )
+            ) );
+        }
+
+        // メタディスクリプション設定
+        if ( ! empty( $article['meta_description'] ) ) {
+            update_post_meta( $post_id, '_blog_poster_meta_description', $article['meta_description'] );
+        }
+
+        // 関連キーワード設定
+        if ( ! empty( $article['keywords'] ) ) {
+            update_post_meta( $post_id, '_blog_poster_keywords', implode( ', ', $article['keywords'] ) );
+        }
+
+        // 生成履歴をデータベースに記録
+        global $wpdb;
+        $table_name = $wpdb->prefix . 'blog_poster_history';
+        $wpdb->insert(
+            $table_name,
+            array(
+                'post_id'      => $post_id,
+                'ai_provider'  => $ai_provider,
+                'ai_model'     => $result['model'],
+                'prompt'       => $topic,
+                'tokens_used'  => $result['tokens'],
+                'status'       => 'draft',
+                'created_at'   => current_time( 'mysql' ),
+            ),
+            array( '%d', '%s', '%s', '%s', '%d', '%s', '%s' )
+        );
+
+        // 記事生成数をカウントアップ
+        $settings['articles_generated'] = $articles_generated + 1;
+        update_option( 'blog_poster_settings', $settings );
+
+        // 成功レスポンス
+        wp_send_json_success( array(
+            'message'  => __( '記事が正常に生成されました！', 'blog-poster' ),
+            'post_id'  => $post_id,
+            'post_url' => get_edit_post_link( $post_id, 'raw' ),
+            'article'  => $article,
+            'tokens'   => $result['tokens'],
+            'remaining' => max( 0, $articles_limit - ( $articles_generated + 1 ) ),
+        ) );
+    }
+
+    /**
+     * AIプロバイダー名を取得
+     */
+    private function get_provider_name( $provider ) {
+        switch ( $provider ) {
+            case 'gemini':
+                return 'Google Gemini';
+            case 'claude':
+                return 'Anthropic Claude';
+            case 'openai':
+                return 'OpenAI';
+            default:
+                return 'AI';
+        }
     }
 }
