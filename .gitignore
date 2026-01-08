@@ -1,0 +1,71 @@
+# WordPress Core
+/app/public/wp-admin/
+/app/public/wp-includes/
+/app/public/wp-*.php
+/app/public/index.php
+/app/public/readme.html
+/app/public/license.txt
+/app/public/xmlrpc.php
+
+# WordPress設定ファイル（機密情報を含む）
+/app/public/wp-config.php
+/app/public/local-xdebuginfo.php
+/app/public/.htaccess
+
+# WordPress Themes（標準テーマは除外）
+/app/public/wp-content/themes/twenty*/
+
+# WordPress Plugins（標準プラグインは除外、独自開発プラグインは管理）
+/app/public/wp-content/plugins/akismet/
+/app/public/wp-content/plugins/hello.php
+
+# WordPress Uploads（画像などのアップロードファイル）
+/app/public/wp-content/uploads/
+
+# WordPress Cache & Temp Files
+/app/public/wp-content/cache/
+/app/public/wp-content/backup-db/
+/app/public/wp-content/backups/
+/app/public/wp-content/upgrade/
+
+# Local by Flywheel関連
+/conf/
+/logs/
+
+# Mac OS
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# IDE関連
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Node.js関連（将来的にビルドツールを使う場合）
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Composer関連（PHPの依存関係管理）
+/vendor/
+composer.lock
+
+# 環境変数ファイル
+.env
+.env.local
+
+# ログファイル
+*.log
+
+# 一時ファイル
+*.tmp
+*.temp
