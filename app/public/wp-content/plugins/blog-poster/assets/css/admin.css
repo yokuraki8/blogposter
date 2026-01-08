@@ -1,0 +1,58 @@
+/**
+ * Blog Poster管理画面スタイル
+ *
+ * @package BlogPoster
+ */
+
+/* 全体 */
+.blog-poster-settings,
+.blog-poster-dashboard,
+.blog-poster-generate,
+.blog-poster-history {
+    max-width: 1200px;
+}
+
+/* バージョン表示 */
+.blog-poster-version {
+    margin: 10px 0;
+    color: #646970;
+    font-size: 13px;
+}
+
+/* スライダー */
+.blog-poster-slider {
+    width: 100%;
+    max-width: 400px;
+}
+
+.slider-value {
+    display: inline-block;
+    min-width: 40px;
+    margin-left: 10px;
+    font-weight: 600;
+    color: #2271b1;
+}
+
+/* 設定セクション */
+.settings-section {
+    background: #fff;
+    border: 1px solid #c3c4c7;
+    box-shadow: 0 1px 1px rgba(0,0,0,.04);
+    padding: 24px;
+    margin: 20px 0;
+}
+
+.settings-section h2 {
+    margin-top: 0;
+    border-bottom: 1px solid #dcdcde;
+    padding-bottom: 10px;
+}
+
+/* API セクション */
+.api-section {
+    display: none;
+}
+
+.api-section.active {
+    display: block;
+}

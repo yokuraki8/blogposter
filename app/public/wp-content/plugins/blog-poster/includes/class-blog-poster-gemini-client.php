@@ -1,0 +1,89 @@
+<?php
+/**
+ * Google Gemini APIクライアント
+ *
+ * @package BlogPoster
+ */
+
+// セキュリティ: 直接アクセスを防止
+if ( ! defined( 'ABSPATH' ) ) {
+    exit;
+}
+
+/**
+ * Blog_Poster_Gemini_Client クラス
+ */
+class Blog_Poster_Gemini_Client extends Blog_Poster_AI_Client {
+
+    /**
+     * API Base URL
+     */
+    const API_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models/';
+
+    /**
+     * テキスト生成
+     *
+     * @param string $prompt プロンプト
+     * @return array レスポンス
+     */
+    public function generate_text( $prompt ) {
+        if ( empty( $this->api_key ) ) {
+            return $this->error_response( __( 'Gemini APIキーが設定されていません。', 'blog-poster' ) );
+        }
+
+        $url = self::API_BASE_URL . $this->model . ':generateContent?key=' . $this->api_key;
+
+        $adjusted_prompt = $this->apply_tone_settings( $prompt );
+
+        $body = array(
+            'contents' => array(
+                array(
+                    'parts' => array(
+                        array(
+                            'text' => $adjusted_prompt
+                        )
+                    )
+                )
+            ),
+            'generationConfig' => array(
+                'temperature' => $this->temperature,
+                'maxOutputTokens' => $this->max_tokens,
+            )
+        );
+
+        $headers = array(
+            'Content-Type' => 'application/json',
+        );
+
+        $response = $this->make_request( $url, $body, $headers );
+
+        if ( is_wp_error( $response ) ) {
+            return $this->error_response( $response->get_error_message() );
+        }
+
+        // レスポンスからテキストとトークン数を抽出
+        $text = '';
+        $tokens = 0;
+
+        if ( isset( $response['candidates'][0]['content']['parts'][0]['text'] ) ) {
+            $text = $response['candidates'][0]['content']['parts'][0]['text'];
+        }
+
+        if ( isset( $response['usageMetadata']['totalTokenCount'] ) ) {
+            $tokens = $response['usageMetadata']['totalTokenCount'];
+        }
+
+        return $this->success_response( $text, $tokens );
+    }
+
+    /**
+     * 画像生成（Imagen 3経由）
+     *
+     * @param string $prompt プロンプト
+     * @return array レスポンス
+     */
+    public function generate_image( $prompt ) {
+        // TODO: Imagen 3 API実装（Phase 4で実装予定）
+        return $this->error_response( __( '画像生成機能は開発中です。', 'blog-poster' ) );
+    }
+}
