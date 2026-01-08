@@ -30,20 +30,20 @@ class Blog_Poster_Generator {
         switch ( $provider ) {
             case 'gemini':
                 $api_key = isset( $settings['gemini_api_key'] ) ? $settings['gemini_api_key'] : '';
-                $model = isset( $settings['default_model']['gemini'] ) ? $settings['default_model']['gemini'] : 'gemini-1.5-pro';
+                $model = isset( $settings['default_model']['gemini'] ) ? $settings['default_model']['gemini'] : 'gemini-3-flash';
                 $client = new Blog_Poster_Gemini_Client( $api_key, $model, $settings );
                 break;
 
             case 'claude':
                 $api_key = isset( $settings['claude_api_key'] ) ? $settings['claude_api_key'] : '';
-                $model = isset( $settings['default_model']['claude'] ) ? $settings['default_model']['claude'] : 'claude-3-5-sonnet-20241022';
+                $model = isset( $settings['default_model']['claude'] ) ? $settings['default_model']['claude'] : 'claude-sonnet-4-5-20250514';
                 $client = new Blog_Poster_Claude_Client( $api_key, $model, $settings );
                 break;
 
             case 'openai':
             default:
                 $api_key = isset( $settings['openai_api_key'] ) ? $settings['openai_api_key'] : '';
-                $model = isset( $settings['default_model']['openai'] ) ? $settings['default_model']['openai'] : 'gpt-4o';
+                $model = isset( $settings['default_model']['openai'] ) ? $settings['default_model']['openai'] : 'gpt-5.2';
                 $client = new Blog_Poster_OpenAI_Client( $api_key, $model, $settings );
                 break;
         }
