@@ -56,191 +56,339 @@ class Blog_Poster_Generator {
     }
 
     /**
-     * ブログ記事を生成（品質検証付き）
+     * ブログ記事を生成（3フェーズ方式）
      *
      * @param string $topic トピック/キーワード
      * @param string $additional_instructions 追加指示
      * @return array|WP_Error 生成結果またはエラー
      */
     public function generate_article( $topic, $additional_instructions = '' ) {
-        $max_attempts = 3;
-        $attempt = 0;
+        // Phase 1: アウトライン生成（最大3回試行）
+        $outline = null;
+        $max_outline_attempts = 3;
 
-        // トピックの明確化
-        $clarification = $this->clarify_topic( $topic );
-        if ( ! is_wp_error( $clarification ) ) {
-            $additional_instructions .= "\n\n【トピックの明確化】\n" . $clarification;
-        }
+        for ( $i = 0; $i < $max_outline_attempts; $i++ ) {
+            $outline = $this->generate_outline( $topic, $additional_instructions );
 
-        $last_content = '';
-
-        while ( $attempt < $max_attempts ) {
-            $attempt++;
-
-            // 記事生成
-            $result = $this->generate_article_internal( $topic, $additional_instructions );
-
-            if ( is_wp_error( $result ) ) {
-                return $result;
+            if ( ! is_wp_error( $outline ) ) {
+                break;
             }
 
-            $last_content = $result;
+            error_log( "Blog Poster: Outline generation attempt " . ( $i + 1 ) . " failed: " . $outline->get_error_message() );
+        }
 
-            // コードブロックを修正
-            $result['article']['content'] = $this->fix_code_blocks( $result['article']['content'] );
+        if ( is_wp_error( $outline ) ) {
+            return new WP_Error( 'outline_generation_failed', 'アウトライン生成に3回失敗しました。' );
+        }
 
-            // 品質検証
-            $validation = $this->validate_article( $result['article']['content'] );
+        // Phase 2: セクションごとに生成
+        $sections_content = array();
+        $previous_summary = '';
 
-            if ( $validation['valid'] ) {
-                return $result;
+        foreach ( $outline['sections'] as $section ) {
+            $section_result = $this->generate_section_content( $section, $topic, $previous_summary, $additional_instructions );
+
+            if ( is_wp_error( $section_result ) ) {
+                error_log( "Blog Poster: Section generation failed for " . $section['h2'] . ": " . $section_result->get_error_message() );
+                continue;
             }
 
-            // 問題点を追加指示に含めて再生成
-            $additional_instructions .= "\n\n【前回の生成で見つかった問題（必ず修正してください）】\n" . $validation['issues'];
+            $sections_content[] = $section_result['content'];
+            $previous_summary = $section_result['summary'];
         }
 
-        // 最大試行回数を超えた場合はログを残して最後の結果を返す
-        error_log( "Blog Poster: Article generation failed validation after {$max_attempts} attempts for topic: {$topic}" );
-        return $last_content;
-    }
+        // Phase 3: 記事組み立て
+        $article_data = $this->assemble_article( $outline, $sections_content, $topic );
 
-    /**
-     * 記事生成の内部実装
-     *
-     * @param string $topic トピック/キーワード
-     * @param string $additional_instructions 追加指示
-     * @return array|WP_Error 生成結果またはエラー
-     */
-    private function generate_article_internal( $topic, $additional_instructions = '' ) {
-        $client = $this->get_ai_client();
-
-        if ( is_wp_error( $client ) ) {
-            return $client;
+        if ( is_wp_error( $article_data ) ) {
+            return $article_data;
         }
 
-        // プロンプトを構築
-        $prompt = $this->build_article_prompt( $topic, $additional_instructions );
+        // コードブロック修正
+        $article_data['content'] = $this->fix_code_blocks( $article_data['content'] );
 
-        // AIで記事を生成
-        $response = $client->generate_text( $prompt );
-
-        if ( ! $response['success'] ) {
-            return new WP_Error( 'generation_failed', $response['error'] );
-        }
-
-        // 記事データを解析
-        $article_data = $this->parse_article_response( $response['data'] );
+        // Claude関連の虚偽記述をチェック
+        $article_data['content'] = $this->fact_check_claude_references( $article_data['content'] );
 
         return array(
             'success' => true,
             'article' => $article_data,
-            'tokens' => $response['tokens'],
-            'model' => $response['model'],
+            'tokens' => isset( $article_data['tokens'] ) ? $article_data['tokens'] : 0,
+            'model' => isset( $article_data['model'] ) ? $article_data['model'] : '',
         );
     }
 
     /**
-     * 記事生成プロンプトを構築（簡素化版）
+     * Phase 1: アウトラインをJSON形式で生成
      *
      * @param string $topic トピック
      * @param string $additional_instructions 追加指示
-     * @return string プロンプト
+     * @return array|WP_Error アウトラインデータまたはエラー
      */
-    private function build_article_prompt( $topic, $additional_instructions = '' ) {
-        $prompt = "あなたは{$topic}に関する実務経験を持つテクニカルライターです。\n\n";
-        $prompt .= "以下の記事を作成してください。\n\n";
-
-        $prompt .= "【記事の目的】\n";
-        $prompt .= "読者がこの記事だけを読んで、実際に{$topic}を実行できるようにすること。\n\n";
-
-        $prompt .= "【必須コンテンツ】\n";
-        $prompt .= "1. 完全に動作するコード例（省略なし、コピペで動く状態。必ず```php または ```javascript のようにコードブロックを明示）\n";
-        $prompt .= "2. 各ステップの実行結果の説明\n";
-        $prompt .= "3. よくあるエラーとその解決方法\n\n";
-
-        $prompt .= "【文体】\n";
-        $prompt .= "- 具体的な例や手順を文章で説明する\n";
-        $prompt .= "- 「〜することが重要です」「〜できます」で終わる段落は禁止\n";
-        $prompt .= "- 各段落は具体的な情報または手順で終わること\n";
-        $prompt .= "- 技術用語は正確に使用（Webサービスを「インストール」と言わない）\n\n";
-
-        $prompt .= "【記事構成】\n";
-        $prompt .= "- 導入部: この記事で得られる具体的な成果（200-300文字）\n";
-        $prompt .= "- 本文: H2見出しを3-5個、各H2の下にH3見出しを2-4個配置\n";
-        $prompt .= "- まとめ: 要点3-5個と次のアクション提案\n\n";
-
-        if ( ! empty( $additional_instructions ) ) {
-            $prompt .= "【追加指示】\n{$additional_instructions}\n\n";
-        }
-
-        $prompt .= "【出力形式】\n";
-        $prompt .= "=== タイトル ===\n";
-        $prompt .= "（50文字以内、具体的で魅力的なタイトル）\n\n";
-        $prompt .= "=== Slug ===\n";
-        $prompt .= "（英数字とハイフンのみ）\n\n";
-        $prompt .= "=== メタディスクリプション ===\n";
-        $prompt .= "（120文字以内）\n\n";
-        $prompt .= "=== 抜粋 ===\n";
-        $prompt .= "（100-200文字）\n\n";
-        $prompt .= "=== 本文 ===\n";
-        $prompt .= "（ここにMarkdown形式で本文を記載。コードブロックは必ず```phpまたは```javascriptなどの言語指定付きで記載）\n\n";
-        $prompt .= "=== 関連キーワード ===\n";
-        $prompt .= "（5-10個、カンマ区切り）\n\n";
-
-        $prompt .= "上記の形式で、読者が実際に実行できる高品質な記事を生成してください。\n";
-
-        return $prompt;
-    }
-
-    /**
-     * トピックの明確化
-     *
-     * @param string $topic トピック
-     * @return string|WP_Error 明確化された内容またはエラー
-     */
-    private function clarify_topic( $topic ) {
+    private function generate_outline( $topic, $additional_instructions = '' ) {
         $client = $this->get_ai_client();
 
         if ( is_wp_error( $client ) ) {
             return $client;
         }
 
-        $clarification_prompt = <<<PROMPT
-以下のトピックについて、記事で扱うべき内容を明確にしてください。
+        $prompt = <<<PROMPT
+あなたは{$topic}に関する実務経験を持つテクニカルライターです。
+
+以下のトピックについて、読者が実行できる高品質な記事のアウトラインをJSON形式で生成してください。
 
 トピック: {$topic}
 
-以下の形式で簡潔に回答してください：
-1. 読者が知りたいこと（1文）
-2. 記事で提供すべき具体的な成果物（例：動作するコード、設定ファイル、手順書など）
-3. 記事に含めるべきでないこと（混同しやすい別トピックなど）
+【アウトラインの要件】
+1. 5-7個のH2セクションを作成
+2. 各H2の下に2-4個のH3サブセクションを配置
+3. 各セクションの目的と読者の状態変化を明記
+4. 読者が「実行できる」ことを重視
+
+【JSON出力形式】
+{
+  "title": "（50文字以内、具体的で魅力的なタイトル）",
+  "slug": "（英数字とハイフンのみ）",
+  "meta_description": "（120文字以内）",
+  "excerpt": "（100-200文字）",
+  "target_reader": "（ターゲット読者の具体像）",
+  "reader_goal": "（この記事で達成できること）",
+  "keywords": ["キーワード1", "キーワード2", "..."],
+  "sections": [
+    {
+      "h2": "セクション見出し",
+      "purpose": "このセクションの目的",
+      "reader_state_before": "読者の現在の状態",
+      "reader_state_after": "読者がこのセクションを読んだ後の状態",
+      "key_content": "含めるべき重要な内容（具体例、コード、手順など）",
+      "subsections": [
+        {
+          "h3": "サブセクション見出し",
+          "content_type": "code/explanation/step-by-step",
+          "key_points": "このサブセクションで伝えるべきポイント"
+        }
+      ]
+    }
+  ]
+}
+
+{$additional_instructions}
+
+上記のJSON形式で、実行可能な記事のアウトラインを生成してください。
 PROMPT;
 
-        $response = $client->generate_text( $clarification_prompt );
+        $response = $client->generate_text( $prompt );
 
         if ( ! $response['success'] ) {
-            return new WP_Error( 'clarification_failed', $response['error'] );
+            return new WP_Error( 'outline_generation_failed', $response['error'] );
         }
 
-        return $response['data'];
+        // JSONをパース
+        $outline_data = $this->parse_json_outline( $response['data'] );
+
+        if ( is_wp_error( $outline_data ) ) {
+            return $outline_data;
+        }
+
+        return $outline_data;
     }
 
     /**
-     * コードブロックを修正
+     * JSON形式のアウトラインをパース
+     *
+     * @param string $response AI応答
+     * @return array|WP_Error パース結果またはエラー
+     */
+    private function parse_json_outline( $response ) {
+        // コードブロックを除去（```json ... ``` の形式に対応）
+        $json_str = preg_replace( '/```json\s*\n/', '', $response );
+        $json_str = preg_replace( '/```\s*$/', '', $json_str );
+        $json_str = trim( $json_str );
+
+        $data = json_decode( $json_str, true );
+
+        if ( json_last_error() !== JSON_ERROR_NONE ) {
+            return new WP_Error( 'json_parse_error', 'JSONパースエラー: ' . json_last_error_msg() );
+        }
+
+        // 必須フィールドの検証
+        $required_fields = array( 'title', 'slug', 'meta_description', 'excerpt', 'sections' );
+        foreach ( $required_fields as $field ) {
+            if ( ! isset( $data[ $field ] ) ) {
+                return new WP_Error( 'missing_field', "必須フィールドが不足しています: {$field}" );
+            }
+        }
+
+        return $data;
+    }
+
+    /**
+     * Phase 2: 個別セクションのコンテンツを生成
+     *
+     * @param array  $section セクション情報
+     * @param string $topic トピック
+     * @param string $previous_summary 前セクションの要約
+     * @param string $additional_instructions 追加指示
+     * @return array|WP_Error 生成結果またはエラー
+     */
+    private function generate_section_content( $section, $topic, $previous_summary = '', $additional_instructions = '' ) {
+        $client = $this->get_ai_client();
+
+        if ( is_wp_error( $client ) ) {
+            return $client;
+        }
+
+        $context = '';
+        if ( ! empty( $previous_summary ) ) {
+            $context = "【これまでの流れ】\n{$previous_summary}\n\n";
+        }
+
+        $subsections_list = '';
+        if ( isset( $section['subsections'] ) ) {
+            foreach ( $section['subsections'] as $sub ) {
+                $subsections_list .= "### {$sub['h3']}\n";
+                $subsections_list .= "タイプ: {$sub['content_type']}\n";
+                $subsections_list .= "ポイント: {$sub['key_points']}\n\n";
+            }
+        }
+
+        $prompt = <<<PROMPT
+あなたは{$topic}に関する実務経験を持つテクニカルライターです。
+
+{$context}以下のセクションの内容を、Markdown形式で具体的に記述してください。
+
+【セクション情報】
+見出し: {$section['h2']}
+目的: {$section['purpose']}
+読者の状態変化: {$section['reader_state_before']} → {$section['reader_state_after']}
+含めるべき内容: {$section['key_content']}
+
+【サブセクション構成】
+{$subsections_list}
+
+【記述要件】
+1. 完全に動作するコード例を含める（省略なし、コピペで動く状態）
+2. コードブロックは必ず```php、```javascript等の言語指定付きで記述
+3. 各ステップの実行結果を説明
+4. 抽象的な説明（「〜が重要です」）は禁止
+5. 読者が実際に手を動かせる情報のみ
+
+{$additional_instructions}
+
+このセクションの内容をMarkdown形式で記述してください。
+PROMPT;
+
+        $response = $client->generate_text( $prompt );
+
+        if ( ! $response['success'] ) {
+            return new WP_Error( 'section_generation_failed', $response['error'] );
+        }
+
+        $content = $response['data'];
+
+        // このセクションの要約を生成（次のセクションへの文脈として使用）
+        $summary = $this->generate_section_summary( $section['h2'], $content );
+
+        return array(
+            'content' => $content,
+            'summary' => $summary,
+        );
+    }
+
+    /**
+     * セクションの要約を生成
+     *
+     * @param string $heading 見出し
+     * @param string $content コンテンツ
+     * @return string 要約
+     */
+    private function generate_section_summary( $heading, $content ) {
+        // 簡易的な要約（最初の200文字程度）
+        $text_only = strip_tags( $content );
+        $text_only = preg_replace( '/```.*?```/s', '', $text_only );
+        $summary = mb_substr( $text_only, 0, 200 ) . '...';
+
+        return "{$heading}: {$summary}";
+    }
+
+    /**
+     * Phase 3: 記事を組み立て
+     *
+     * @param array $outline アウトライン
+     * @param array $sections_content セクションコンテンツ配列
+     * @param string $topic トピック
+     * @return array|WP_Error 記事データまたはエラー
+     */
+    private function assemble_article( $outline, $sections_content, $topic ) {
+        $client = $this->get_ai_client();
+
+        if ( is_wp_error( $client ) ) {
+            return $client;
+        }
+
+        // 導入文を生成
+        $intro_prompt = <<<PROMPT
+以下の記事の導入文を200-300文字で作成してください。
+
+タイトル: {$outline['title']}
+読者のゴール: {$outline['reader_goal']}
+
+【導入文の要件】
+- この記事で得られる具体的な成果を明記
+- 読者の課題を明確にする
+- 抽象的な説明を避ける
+PROMPT;
+
+        $intro_response = $client->generate_text( $intro_prompt );
+        $intro = $intro_response['success'] ? $intro_response['data'] : '';
+
+        // まとめを生成
+        $summary_prompt = <<<PROMPT
+以下の記事のまとめを200-300文字で作成してください。
+
+タイトル: {$outline['title']}
+
+【まとめの要件】
+- 要点を3-5個、箇条書きで記載
+- 次のアクション提案を含める
+- 読者が実行すべき具体的なステップを提示
+PROMPT;
+
+        $summary_response = $client->generate_text( $summary_prompt );
+        $summary = $summary_response['success'] ? $summary_response['data'] : '';
+
+        // 本文を組み立て
+        $body = $intro . "\n\n";
+        $body .= implode( "\n\n", $sections_content );
+        $body .= "\n\n## まとめ\n\n" . $summary;
+
+        return array(
+            'title' => $outline['title'],
+            'slug' => $outline['slug'],
+            'meta_description' => $outline['meta_description'],
+            'excerpt' => $outline['excerpt'],
+            'content' => $body,
+            'keywords' => isset( $outline['keywords'] ) ? $outline['keywords'] : array(),
+        );
+    }
+
+    /**
+     * コードブロックを修正（強化版）
      *
      * @param string $content コンテンツ
      * @return string 修正されたコンテンツ
      */
     private function fix_code_blocks( $content ) {
-        // 壊れたコードブロックを修正
-        $content = preg_replace( '/`php\s*\n/', "```php\n", $content );
-        $content = preg_replace( '/`javascript\s*\n/', "```javascript\n", $content );
-        $content = preg_replace( '/`html\s*\n/', "```html\n", $content );
-        $content = preg_replace( '/`css\s*\n/', "```css\n", $content );
-        $content = preg_replace( '/`bash\s*\n/', "```bash\n", $content );
+        // パターン1: バッククォート1つで始まる壊れたコードブロック（`php → ```php）
+        $content = preg_replace( '/`(php|javascript|js|html|css|bash|sh|python|py|java|c|cpp|go|rust|sql|json|xml|yaml|yml)\s*\n/', '```$1' . "\n", $content );
 
-        // 閉じられていないコードブロックを検出して閉じる
+        // パターン2: ダブルクォートで終わるコードブロック（```php" → ```php）
+        $content = preg_replace( '/```(php|javascript|js|html|css|bash|sh|python|py|java|c|cpp|go|rust|sql|json|xml|yaml|yml)"\s*\n/', '```$1' . "\n", $content );
+
+        // パターン3: 空のコードブロックを削除（```php\n``` または ```\n```）
+        $content = preg_replace( '/```\w*\s*\n\s*```/m', '', $content );
+
+        // パターン4: 閉じられていないコードブロックを検出して閉じる
         $lines = explode( "\n", $content );
         $in_code_block = false;
         $fixed_lines = array();
@@ -259,7 +407,58 @@ PROMPT;
             $fixed_lines[] = '```';
         }
 
-        return implode( "\n", $fixed_lines );
+        $content = implode( "\n", $fixed_lines );
+
+        // パターン5: コードブロック内の不要な空行を削減（連続する3行以上の空行を2行に）
+        $content = preg_replace( '/(```\w+.*?\n)((?:\s*\n){3,})/s', '$1' . "\n\n", $content );
+
+        return $content;
+    }
+
+    /**
+     * Claude関連の虚偽記述をチェック・修正
+     *
+     * @param string $content コンテンツ
+     * @return string 修正されたコンテンツ
+     */
+    private function fact_check_claude_references( $content ) {
+        // パターン1: Claudeの「インストール」「プラグイン」に関する虚偽記述を検出
+        $false_patterns = array(
+            '/Claude.*?プラグイン.*?インストール/u',
+            '/Claude.*?をインストール/u',
+            '/Claude.*?ダウンロード.*?インストール/u',
+            '/Claude.*?プラグインディレクトリ/u',
+            '/wp-content\/plugins\/claude/i',
+        );
+
+        $has_false_info = false;
+        foreach ( $false_patterns as $pattern ) {
+            if ( preg_match( $pattern, $content ) ) {
+                $has_false_info = true;
+                error_log( "Blog Poster: Detected false Claude reference matching pattern: {$pattern}" );
+                break;
+            }
+        }
+
+        if ( $has_false_info ) {
+            // 虚偽記述が見つかった場合、該当部分を修正
+            $content = preg_replace(
+                '/Claude.*?プラグイン.*?インストール[^。]*。/u',
+                'ClaudeのAPIキーを取得して設定します。',
+                $content
+            );
+
+            $content = preg_replace(
+                '/Claude.*?をインストール[^。]*。/u',
+                'Claude APIを使用するには、Anthropic公式サイトでAPIキーを取得します。',
+                $content
+            );
+
+            // ログに記録
+            error_log( "Blog Poster: Fixed false Claude references in generated article" );
+        }
+
+        return $content;
     }
 
     /**
@@ -315,51 +514,6 @@ PROMPT;
             'valid' => false,
             'issues' => implode( "\n", $issues ),
         );
-    }
-
-    /**
-     * AI応答から記事データを解析
-     *
-     * @param string $response AI応答テキスト
-     * @return array 解析された記事データ
-     */
-    private function parse_article_response( $response ) {
-        $article = array(
-            'title' => '',
-            'slug' => '',
-            'meta_description' => '',
-            'excerpt' => '',
-            'content' => '',
-            'keywords' => array(),
-        );
-
-        // セクションごとに分割
-        if ( preg_match( '/===\s*タイトル\s*===\s*\n(.+?)\n/s', $response, $matches ) ) {
-            $article['title'] = trim( $matches[1] );
-        }
-
-        if ( preg_match( '/===\s*Slug\s*===\s*\n(.+?)\n/s', $response, $matches ) ) {
-            $article['slug'] = trim( $matches[1] );
-        }
-
-        if ( preg_match( '/===\s*メタディスクリプション\s*===\s*\n(.+?)\n/s', $response, $matches ) ) {
-            $article['meta_description'] = trim( $matches[1] );
-        }
-
-        if ( preg_match( '/===\s*抜粋\s*===\s*\n(.+?)\n/s', $response, $matches ) ) {
-            $article['excerpt'] = trim( $matches[1] );
-        }
-
-        if ( preg_match( '/===\s*本文\s*===\s*\n(.+?)\n===\s*関連キーワード/s', $response, $matches ) ) {
-            $article['content'] = trim( $matches[1] );
-        }
-
-        if ( preg_match( '/===\s*関連キーワード\s*===\s*\n(.+?)($|\n===)/s', $response, $matches ) ) {
-            $keywords_string = trim( $matches[1] );
-            $article['keywords'] = array_map( 'trim', explode( ',', $keywords_string ) );
-        }
-
-        return $article;
     }
 
     /**
