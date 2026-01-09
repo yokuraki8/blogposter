@@ -333,6 +333,24 @@ class Blog_Poster_Job_Manager {
 			// ファクトチェック
 			$content = $this->generator->fact_check_claude_references( $content );
 
+			// 公開前コードブロック検証
+			$code_validation = $this->generator->validate_code_blocks( $content );
+			if ( ! $code_validation['valid'] ) {
+				$message = 'コードブロック検証に失敗しました: ' . implode( ' / ', $code_validation['issues'] );
+				$this->update_job(
+					$job_id,
+					array(
+						'status'        => 'failed',
+						'error_message' => $message,
+					)
+				);
+				return array(
+					'success'    => false,
+					'message'    => $message,
+					'validation' => $code_validation,
+				);
+			}
+
 			// 検証
 			$validation = $this->generator->validate_article( $content );
 

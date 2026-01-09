@@ -508,11 +508,77 @@ PROMPT;
 
         $content = implode( "\n", $fixed_lines );
 
-        // パターン8: 過度な空行の削減（3行以上の連続空行を2行に）
+        // パターン8: 誤って囲まれた文章ブロックをアンラップ
+        $lines         = explode( "\n", $content );
+        $sanitized     = array();
+        $block_lines   = array();
+        $fence_open    = '';
+        $in_code_block = false;
+
+        foreach ( $lines as $line ) {
+            if ( preg_match( '/^```/', trim( $line ) ) ) {
+                if ( ! $in_code_block ) {
+                    $in_code_block = true;
+                    $fence_open    = $line;
+                    $block_lines   = array();
+                } else {
+                    $block_text = implode( "\n", $block_lines );
+                    $is_empty   = '' === trim( $block_text );
+                    $has_code   = preg_match( '/[;{}<>$=]/', $block_text )
+                        || preg_match( '/<\?php|\bfunction\b|\bclass\b|=>/i', $block_text );
+                    $has_md     = preg_match( '/^\s{0,3}#{1,6}\s/m', $block_text )
+                        || preg_match( '/^\s*[-*]\s+/m', $block_text )
+                        || preg_match( '/^\s*\d+\.\s+/m', $block_text );
+                    $has_ja     = preg_match( '/[ぁ-んァ-ン一-龯]/u', $block_text );
+
+                    if ( $is_empty || ( $has_md || ( $has_ja && ! $has_code ) ) ) {
+                        $sanitized = array_merge( $sanitized, $block_lines );
+                    } else {
+                        $sanitized[] = $fence_open;
+                        $sanitized   = array_merge( $sanitized, $block_lines );
+                        $sanitized[] = '```';
+                    }
+
+                    $in_code_block = false;
+                    $fence_open    = '';
+                    $block_lines   = array();
+                }
+                continue;
+            }
+
+            if ( $in_code_block ) {
+                $block_lines[] = $line;
+            } else {
+                $sanitized[] = $line;
+            }
+        }
+
+        if ( $in_code_block ) {
+            $block_text = implode( "\n", $block_lines );
+            $is_empty   = '' === trim( $block_text );
+            $has_code   = preg_match( '/[;{}<>$=]/', $block_text )
+                || preg_match( '/<\?php|\bfunction\b|\bclass\b|=>/i', $block_text );
+            $has_md     = preg_match( '/^\s{0,3}#{1,6}\s/m', $block_text )
+                || preg_match( '/^\s*[-*]\s+/m', $block_text )
+                || preg_match( '/^\s*\d+\.\s+/m', $block_text );
+            $has_ja     = preg_match( '/[ぁ-んァ-ン一-龯]/u', $block_text );
+
+            if ( $is_empty || ( $has_md || ( $has_ja && ! $has_code ) ) ) {
+                $sanitized = array_merge( $sanitized, $block_lines );
+            } else {
+                $sanitized[] = $fence_open;
+                $sanitized   = array_merge( $sanitized, $block_lines );
+                $sanitized[] = '```';
+            }
+        }
+
+        $content = implode( "\n", $sanitized );
+
+        // パターン9: 過度な空行の削減（3行以上の連続空行を2行に）
         $content = preg_replace( '/\n\s*\n\s*\n+/', "\n\n", $content );
 
         // 修正後の検証
-        $open_count_after = preg_match_all( '/^```\w*/', $content, $open_matches_after, PREG_OFFSET_CAPTURE | PREG_MULTILINE );
+        $open_count_after = preg_match_all( '/^```\w*/m', $content, $open_matches_after, PREG_OFFSET_CAPTURE );
         $close_count_after = preg_match_all( '/^```\s*$/m', $content, $close_matches_after );
 
         // ログ出力（本番では必ず削除または集約）
@@ -621,6 +687,72 @@ PROMPT;
         return array(
             'valid' => false,
             'issues' => implode( "\n", $issues ),
+        );
+    }
+
+    /**
+     * コードブロックの健全性を検証
+     *
+     * @param string $content コンテンツ
+     * @return array 検証結果
+     */
+    public function validate_code_blocks( $content ) {
+        $issues       = array();
+        $lines        = explode( "\n", $content );
+        $in_block     = false;
+        $block_lines  = array();
+        $block_start  = 0;
+        $fence_line   = '';
+
+        foreach ( $lines as $index => $line ) {
+            $trimmed = trim( $line );
+            if ( preg_match( '/^```/', $trimmed ) ) {
+                if ( ! $in_block ) {
+                    $in_block    = true;
+                    $block_lines = array();
+                    $block_start = $index + 1;
+                    $fence_line  = $trimmed;
+                } else {
+                    $block_text = implode( "\n", $block_lines );
+                    $is_empty   = '' === trim( $block_text );
+                    $code_token_count  = preg_match_all( '/[;{}<>$=]/', $block_text );
+                    $code_token_count += preg_match_all( '/<\?php|\bfunction\b|\bclass\b|=>/i', $block_text );
+                    $code_token_count += preg_match_all( '/\b(public|private|protected|return|const|let|var|import|export)\b/i', $block_text );
+                    $has_md     = preg_match( '/^\s*#{1,6}\s/m', $block_text )
+                        || preg_match( '/^\s*[-*]\s+/m', $block_text )
+                        || preg_match( '/^\s*\d+\.\s+/m', $block_text );
+                    $has_ja     = preg_match( '/[ぁ-んァ-ン一-龯]/u', $block_text );
+                    $sentence_count = preg_match_all( '/[。！？]/u', $block_text );
+                    $looks_like_prose = $has_ja && $sentence_count >= 2 && $code_token_count < 2;
+
+                    if ( $is_empty ) {
+                        $issues[] = '空のコードブロックが検出されました（開始行: ' . $block_start . '）';
+                    } elseif ( $has_md && $has_ja ) {
+                        $issues[] = 'コードブロック内に見出し/箇条書きが混入しています（開始行: ' . $block_start . '）';
+                    } elseif ( $looks_like_prose ) {
+                        $issues[] = 'コードブロック内に文章・見出し・箇条書きが混入しています（開始行: ' . $block_start . '）';
+                    }
+
+                    $in_block    = false;
+                    $block_lines = array();
+                    $block_start = 0;
+                    $fence_line  = '';
+                }
+                continue;
+            }
+
+            if ( $in_block ) {
+                $block_lines[] = $line;
+            }
+        }
+
+        if ( $in_block ) {
+            $issues[] = 'コードブロックが閉じられていません（開始行: ' . $block_start . '）';
+        }
+
+        return array(
+            'valid'  => empty( $issues ),
+            'issues' => $issues,
         );
     }
 
