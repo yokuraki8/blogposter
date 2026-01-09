@@ -21,8 +21,14 @@ jQuery(document).ready(function($) {
     $('#blog-poster-generate-form').on('submit', function(e) {
         e.preventDefault();
 
+        console.log('Form submitted');
+        console.log('blogPosterAjax:', blogPosterAjax);
+
         const topic = $('#topic').val().trim();
-        const additionalInstructions = $('#additional-instructions').val().trim();
+        const additionalInstructions = $('#additional_instructions').val().trim();
+
+        console.log('Topic:', topic);
+        console.log('Additional instructions:', additionalInstructions);
 
         if (!topic) {
             alert('トピックを入力してください');
@@ -47,6 +53,7 @@ jQuery(document).ready(function($) {
                 additional_instructions: additionalInstructions
             },
             success: function(response) {
+                console.log('Create job response:', response);
                 if (response.success) {
                     currentJobId = response.data.job_id;
                     console.log('Job created:', currentJobId);
@@ -76,6 +83,8 @@ jQuery(document).ready(function($) {
         const progress = Math.floor(((stepIndex) / steps.length) * 100);
         updateProgress(progress, stepLabels[step]);
 
+        console.log('Processing step:', step, 'Job ID:', currentJobId);
+
         $.ajax({
             url: blogPosterAjax.ajaxurl,
             type: 'POST',
@@ -87,12 +96,14 @@ jQuery(document).ready(function($) {
             },
             timeout: 120000, // 2分のタイムアウト
             success: function(response) {
+                console.log('Step ' + step + ' response:', response);
                 if (response.success) {
                     const nextProgress = Math.floor(((stepIndex + 1) / steps.length) * 100);
                     updateProgress(nextProgress, stepLabels[step] + ' 完了');
 
                     // 最終ステップなら結果を表示
                     if (step === 'review') {
+                        console.log('Review completed, displaying result with data:', response.data);
                         displayResult(response.data);
                     }
 
@@ -101,14 +112,17 @@ jQuery(document).ready(function($) {
                         processNextStep(stepIndex + 1);
                     }, 500);
                 } else {
+                    console.log('Step failed:', response.data.message);
                     showError(response.data.message || 'ステップ処理に失敗しました');
                 }
             },
             error: function(xhr, status, error) {
+                console.log('Process step error:', xhr, status, error);
+                console.log('Response text:', xhr.responseText);
                 if (status === 'timeout') {
                     showError('処理がタイムアウトしました。もう一度お試しください。');
                 } else {
-                    showError('通信エラー: ' + error);
+                    showError('通信エラー: ' + error + '<br>詳細をコンソールで確認してください。');
                 }
             }
         });
@@ -133,34 +147,46 @@ jQuery(document).ready(function($) {
     }
 
     /**
-     * 結果表示
+     * 結果表示と自動投稿作成
      */
     function displayResult(data) {
-        $('#result-container').show();
-        $('#result-title').text(data.title);
-        $('#result-slug').text(data.slug);
-        $('#result-excerpt').text(data.excerpt);
+        console.log('Displaying result and creating post automatically...');
 
-        // Markdownをプレビュー表示（簡易版）
-        const contentHtml = markdownToHtml(data.content);
-        $('#result-content').html(contentHtml);
+        // プログレスメッセージを更新
+        updateProgress(100, '投稿を作成中...');
 
-        // 投稿作成ボタンを有効化
-        $('#create-post-button')
-            .prop('disabled', false)
-            .data('job-id', currentJobId)
-            .data('title', data.title)
-            .data('slug', data.slug)
-            .data('excerpt', data.excerpt)
-            .data('content', data.content)
-            .data('meta-description', data.meta_description);
-
-        // 検証結果表示
-        if (data.validation && !data.validation.valid) {
-            $('#validation-issues').html('<div class="notice notice-warning"><p><strong>検証警告:</strong><br>' + data.validation.issues.replace(/\n/g, '<br>') + '</p></div>').show();
-        } else {
-            $('#validation-issues').hide();
-        }
+        // 自動的に投稿を作成
+        $.ajax({
+            url: blogPosterAjax.ajaxurl,
+            type: 'POST',
+            data: {
+                action: 'blog_poster_create_post',
+                nonce: blogPosterAjax.nonce,
+                job_id: currentJobId,
+                title: data.title,
+                slug: data.slug,
+                excerpt: data.excerpt,
+                content: data.content,
+                meta_description: data.meta_description
+            },
+            success: function(response) {
+                console.log('Post creation response:', response);
+                if (response.success) {
+                    updateProgress(100, '完了！編集画面に移動します...');
+                    // 1秒後に編集画面に移動
+                    setTimeout(function() {
+                        window.location.href = response.data.edit_url;
+                    }, 1000);
+                } else {
+                    showError('投稿作成に失敗しました: ' + response.data.message);
+                }
+            },
+            error: function(xhr, status, error) {
+                console.log('Post creation error:', xhr, status, error);
+                console.log('Response text:', xhr.responseText);
+                showError('投稿作成中に通信エラーが発生しました: ' + error);
+            }
+        });
     }
 
     /**
@@ -212,9 +238,10 @@ jQuery(document).ready(function($) {
     }
 
     /**
-     * 投稿作成ボタン
+     * 投稿作成ボタン（イベント委譲を使用）
      */
-    $('#create-post-button').on('click', function() {
+    $(document).on('click', '#create-post-button', function() {
+        console.log('Create post button clicked');
         if (!confirm('この内容で投稿を作成しますか？')) {
             return;
         }
@@ -223,20 +250,25 @@ jQuery(document).ready(function($) {
         const originalText = button.text();
         button.prop('disabled', true).text('作成中...');
 
+        const postData = {
+            action: 'blog_poster_create_post',
+            nonce: blogPosterAjax.nonce,
+            job_id: button.data('job-id'),
+            title: button.data('title'),
+            slug: button.data('slug'),
+            excerpt: button.data('excerpt'),
+            content: button.data('content'),
+            meta_description: button.data('meta-description')
+        };
+
+        console.log('Creating post with data:', postData);
+
         $.ajax({
             url: blogPosterAjax.ajaxurl,
             type: 'POST',
-            data: {
-                action: 'blog_poster_create_post',
-                nonce: blogPosterAjax.nonce,
-                job_id: button.data('job-id'),
-                title: button.data('title'),
-                slug: button.data('slug'),
-                excerpt: button.data('excerpt'),
-                content: button.data('content'),
-                meta_description: button.data('meta-description')
-            },
+            data: postData,
             success: function(response) {
+                console.log('Create post response:', response);
                 if (response.success) {
                     alert('投稿を作成しました！編集画面に移動します。');
                     window.location.href = response.data.edit_url;
@@ -245,8 +277,10 @@ jQuery(document).ready(function($) {
                     button.prop('disabled', false).text(originalText);
                 }
             },
-            error: function() {
-                alert('通信エラーが発生しました');
+            error: function(xhr, status, error) {
+                console.log('Create post error:', xhr, status, error);
+                console.log('Response text:', xhr.responseText);
+                alert('通信エラーが発生しました: ' + error);
                 button.prop('disabled', false).text(originalText);
             }
         });

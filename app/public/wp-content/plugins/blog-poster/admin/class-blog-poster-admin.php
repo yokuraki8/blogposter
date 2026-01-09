@@ -31,6 +31,7 @@ class Blog_Poster_Admin {
         add_action( 'wp_ajax_blog_poster_create_job', array( $this, 'ajax_create_job' ) );
         add_action( 'wp_ajax_blog_poster_process_step', array( $this, 'ajax_process_step' ) );
         add_action( 'wp_ajax_blog_poster_get_job_status', array( $this, 'ajax_get_job_status' ) );
+        add_action( 'wp_ajax_blog_poster_create_post', array( $this, 'ajax_create_post' ) );
     }
 
     /**
@@ -122,12 +123,12 @@ class Blog_Poster_Admin {
         );
 
         // v0.2.5-alpha: 非同期ジョブ方式のJavaScript
-        if ( 'blog-poster_page_blog-poster-generate' === $hook ) {
+        if ( strpos( $hook, 'blog-poster-generate' ) !== false ) {
             wp_enqueue_script(
                 'blog-poster-generator',
                 BLOG_POSTER_PLUGIN_URL . 'assets/js/admin-generator.js',
                 array( 'jquery' ),
-                BLOG_POSTER_VERSION,
+                BLOG_POSTER_VERSION . '-' . time(), // キャッシュバスティング
                 true
             );
 
@@ -432,6 +433,8 @@ class Blog_Poster_Admin {
         }
 
         if ( $result['success'] ) {
+            // success フィールドを除いてデータを返す
+            unset( $result['success'] );
             wp_send_json_success( $result );
         } else {
             wp_send_json_error( $result );
@@ -462,5 +465,163 @@ class Blog_Poster_Admin {
                 'total_steps'  => $job['total_steps'],
             )
         );
+    }
+
+    /**
+     * Ajax: 投稿を作成
+     *
+     * @since 0.2.5-alpha
+     */
+    public function ajax_create_post() {
+        check_ajax_referer( 'blog_poster_nonce', 'nonce' );
+
+        error_log( 'Blog Poster: ajax_create_post called' );
+
+        $title            = isset( $_POST['title'] ) ? sanitize_text_field( wp_unslash( $_POST['title'] ) ) : '';
+        $slug             = isset( $_POST['slug'] ) ? sanitize_title( wp_unslash( $_POST['slug'] ) ) : '';
+        $excerpt          = isset( $_POST['excerpt'] ) ? sanitize_textarea_field( wp_unslash( $_POST['excerpt'] ) ) : '';
+        // マークダウンの内容はサニタイズせずそのまま取得（後でHTMLに変換してからサニタイズする）
+        $content          = isset( $_POST['content'] ) ? wp_unslash( $_POST['content'] ) : '';
+        $meta_description = isset( $_POST['meta_description'] ) ? sanitize_text_field( wp_unslash( $_POST['meta_description'] ) ) : '';
+
+        error_log( 'Blog Poster: Title: ' . $title );
+        error_log( 'Blog Poster: Content length: ' . strlen( $content ) );
+
+        if ( empty( $title ) || empty( $content ) ) {
+            error_log( 'Blog Poster: Empty title or content' );
+            wp_send_json_error( array( 'message' => 'タイトルまたは本文が空です' ) );
+        }
+
+        // マークダウンをHTMLに変換
+        $html_content = $this->markdown_to_html( $content );
+
+        // 投稿を作成
+        $post_data = array(
+            'post_title'   => $title,
+            'post_name'    => $slug,
+            'post_content' => $html_content,
+            'post_excerpt' => $excerpt,
+            'post_status'  => 'draft',
+            'post_author'  => get_current_user_id(),
+            'post_type'    => 'post',
+        );
+
+        error_log( 'Blog Poster: Creating post with data: ' . print_r( $post_data, true ) );
+
+        $post_id = wp_insert_post( $post_data );
+
+        error_log( 'Blog Poster: Post ID: ' . $post_id );
+
+        if ( is_wp_error( $post_id ) ) {
+            error_log( 'Blog Poster: wp_insert_post error: ' . $post_id->get_error_message() );
+            wp_send_json_error( array( 'message' => $post_id->get_error_message() ) );
+        }
+
+        // メタ情報を保存
+        if ( ! empty( $meta_description ) ) {
+            update_post_meta( $post_id, '_yoast_wpseo_metadesc', $meta_description );
+        }
+
+        error_log( 'Blog Poster: Post created successfully with ID: ' . $post_id );
+
+        wp_send_json_success(
+            array(
+                'post_id'  => $post_id,
+                'edit_url' => admin_url( 'post.php?post=' . $post_id . '&action=edit' ),
+                'message'  => '投稿を作成しました',
+            )
+        );
+    }
+
+    /**
+     * マークダウンをHTMLに変換（v0.2.6改善版）
+     *
+     * @param string $markdown マークダウンテキスト
+     * @return string HTML
+     */
+    private function markdown_to_html( $markdown ) {
+        // Parsedownライブラリを読み込み
+        if ( ! class_exists( 'Parsedown' ) ) {
+            require_once BLOG_POSTER_PLUGIN_DIR . 'includes/Parsedown.php';
+        }
+
+        // ステップ1: マークダウンの前処理
+        // 1-1. HTMLエンティティをデコード
+        $markdown = html_entity_decode( $markdown, ENT_QUOTES | ENT_HTML5, 'UTF-8' );
+
+        // 1-2. 記事全体を囲む```markdownブロックを削除
+        $markdown = preg_replace( '/^```(?:markdown|md)\s*\n/', '', $markdown );
+        $markdown = preg_replace( '/\n```\s*$/', '', $markdown );
+
+        // 1-3. HTMLエンティティ化されたタグを修正
+        $html_entity_replacements = array(
+            '<!--?php'  => '<?php',
+            '?-->'      => '?>',
+            '&lt;?php'  => '<?php',
+            '?&gt;'     => '?>',
+            '&lt;'      => '<',
+            '&gt;'      => '>',
+            '&quot;'    => '"',
+            '&amp;'     => '&',
+        );
+        $markdown = strtr( $markdown, $html_entity_replacements );
+
+        // ステップ2: コードブロックの構造検証と修正
+        $lines = explode( "\n", $markdown );
+        $fixed_lines = array();
+        $in_code_block = false;
+
+        for ( $i = 0; $i < count( $lines ); $i++ ) {
+            $line = $lines[ $i ];
+            $trimmed = trim( $line );
+
+            // コードブロック開始を検出
+            if ( preg_match( '/^```(\w*)/', $trimmed ) ) {
+                // すでにコードブロック内なら前のブロックを閉じる
+                if ( $in_code_block ) {
+                    $fixed_lines[] = '```';
+                }
+                $in_code_block = true;
+                $fixed_lines[] = $line;
+            }
+            // コードブロック終了を検出
+            elseif ( trim( $line ) === '```' ) {
+                if ( $in_code_block ) {
+                    $in_code_block = false;
+                }
+                $fixed_lines[] = $line;
+            }
+            // その他の行
+            else {
+                $fixed_lines[] = $line;
+            }
+        }
+
+        // 最後に開いたままのコードブロックがあれば閉じる
+        if ( $in_code_block ) {
+            $fixed_lines[] = '```';
+        }
+
+        $markdown = implode( "\n", $fixed_lines );
+
+        // ステップ3: Parsedownを使用してHTMLに変換
+        $parsedown = new Parsedown();
+        $parsedown->setSafeMode( true ); // XSS対策
+        $html = $parsedown->text( $markdown );
+
+        // ステップ4: HTMLのサニタイズ
+        $allowed_html = wp_kses_allowed_html( 'post' );
+
+        // コードブロック関連のタグと属性を追加
+        $allowed_html['pre']  = array(
+            'class' => true,
+        );
+        $allowed_html['code'] = array(
+            'class' => true,
+        );
+
+        $html = wp_kses( $html, $allowed_html );
+
+        return $html;
     }
 }

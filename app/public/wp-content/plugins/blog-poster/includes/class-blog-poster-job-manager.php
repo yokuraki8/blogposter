@@ -39,6 +39,53 @@ class Blog_Poster_Job_Manager {
 		global $wpdb;
 		$this->table_name = $wpdb->prefix . 'blog_poster_jobs';
 		$this->generator  = new Blog_Poster_Generator();
+		$this->ensure_table_exists();
+	}
+
+	/**
+	 * テーブルの存在を確認し、なければ作成
+	 */
+	private function ensure_table_exists() {
+		global $wpdb;
+
+		$table_exists = $wpdb->get_var( "SHOW TABLES LIKE '{$this->table_name}'" );
+
+		if ( $table_exists !== $this->table_name ) {
+			error_log( 'Blog Poster: Jobs table does not exist. Creating...' );
+			$this->create_table();
+		}
+	}
+
+	/**
+	 * ジョブテーブルを作成
+	 */
+	private function create_table() {
+		global $wpdb;
+		$charset_collate = $wpdb->get_charset_collate();
+
+		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+
+		$sql = "CREATE TABLE {$this->table_name} (
+			id bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+			topic varchar(500) NOT NULL,
+			additional_instructions text,
+			status varchar(20) DEFAULT 'pending',
+			current_step int(11) DEFAULT 0,
+			total_steps int(11) DEFAULT 3,
+			outline longtext,
+			sections_content longtext,
+			final_content longtext,
+			error_message text,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP,
+			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+			PRIMARY KEY  (id),
+			KEY status (status),
+			KEY created_at (created_at)
+		) $charset_collate;";
+
+		dbDelta( $sql );
+
+		error_log( 'Blog Poster: Jobs table created.' );
 	}
 
 	/**
@@ -51,7 +98,7 @@ class Blog_Poster_Job_Manager {
 	public function create_job( $topic, $additional_instructions = '' ) {
 		global $wpdb;
 
-		$wpdb->insert(
+		$result = $wpdb->insert(
 			$this->table_name,
 			array(
 				'topic'                    => $topic,
@@ -60,6 +107,13 @@ class Blog_Poster_Job_Manager {
 			)
 		);
 
+		if ( false === $result ) {
+			error_log( 'Blog Poster: Failed to create job. Error: ' . $wpdb->last_error );
+			error_log( 'Blog Poster: Table name: ' . $this->table_name );
+			return 0;
+		}
+
+		error_log( 'Blog Poster: Job created successfully. Insert ID: ' . $wpdb->insert_id );
 		return $wpdb->insert_id;
 	}
 

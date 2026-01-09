@@ -125,7 +125,7 @@ class Blog_Poster_Generator {
      * @param string $additional_instructions 追加指示
      * @return array|WP_Error アウトラインデータまたはエラー
      */
-    private function generate_outline( $topic, $additional_instructions = '' ) {
+    public function generate_outline( $topic, $additional_instructions = '' ) {
         $client = $this->get_ai_client();
 
         if ( is_wp_error( $client ) ) {
@@ -231,7 +231,7 @@ PROMPT;
      * @param string $additional_instructions 追加指示
      * @return array|WP_Error 生成結果またはエラー
      */
-    private function generate_section_content( $section, $topic, $previous_summary = '', $additional_instructions = '' ) {
+    public function generate_section_content( $section, $topic, $previous_summary = '', $additional_instructions = '' ) {
         $client = $this->get_ai_client();
 
         if ( is_wp_error( $client ) ) {
@@ -273,9 +273,66 @@ PROMPT;
 4. 抽象的な説明（「〜が重要です」）は禁止
 5. 読者が実際に手を動かせる情報のみ
 
+【コードブロックの記述ルール - 最重要】
+このルールは絶対に守ってください：
+
+1. コードブロック開始：```言語名
+   - 例：```php、```javascript、```bash、```html
+   - 3つのバッククォートの後に言語名を入力
+   - バッククォートは3つ以上使用しない
+
+2. コードブロック終了：```
+   - 3つのバッククォートのみで閉じる
+   - 同じ行に何も入力しない
+   - 開始と終了は必ず1対1で対応させる
+
+3. 複数のコードブロック
+   - 前のコードブロックを必ず```で閉じてから、新しいコードブロックを開く
+   - ブロック間には必ず空行を入れる
+
+4. コードブロック内で説明を入れる場合
+   - コードブロックを```で閉じる
+   - 説明を書く
+   - 再度```言語名で新しいコードブロックを開く
+
+5. 禁止事項
+   - HTMLエンティティ化されたタグ（<!--?php、&lt;?php等）は使用しない
+   - <?phpは必ず```php内に記述
+   - バッククォートを4つ以上使用しない
+   - 引用符（"や'）をバッククォートの直後に付けない
+
+【正しいコードブロック記述例】
+例1: PHPコード
+```php
+<?php
+function example_function() {
+    echo "Hello World";
+}
+```
+
+例2: コードとテキストの混在
+```javascript
+// ブラウザのコンソールで実行
+console.log("Hello");
+```
+
+ここで説明を書きます。
+
+```javascript
+// 次のコード例
+console.log("World");
+```
+
+【修正方法 - 万が一ルール違反があった場合】
+1. バッククォートが1-2個しかない場合：3つに増やす
+2. バッククォートが4個以上の場合：3個に減らす
+3. 閉じタグがない場合：末尾に```を追加
+4. HTMLエンティティ化されている場合：元のタグに戻す
+
 {$additional_instructions}
 
 このセクションの内容をMarkdown形式で記述してください。
+上記のコードブロック記述ルールを絶対に守ってください。
 PROMPT;
 
         $response = $client->generate_text( $prompt );
@@ -373,44 +430,95 @@ PROMPT;
     }
 
     /**
-     * コードブロックを修正（強化版）
+     * コードブロックを修正（v0.2.6 - 完全版）
      *
      * @param string $content コンテンツ
      * @return string 修正されたコンテンツ
      */
-    private function fix_code_blocks( $content ) {
-        // パターン1: バッククォート1つで始まる壊れたコードブロック（`php → ```php）
-        $content = preg_replace( '/`(php|javascript|js|html|css|bash|sh|python|py|java|c|cpp|go|rust|sql|json|xml|yaml|yml)\s*\n/', '```$1' . "\n", $content );
+    public function fix_code_blocks( $content ) {
+        // 修正前の検証
+        $open_count_before = preg_match_all( '/```\w*/', $content, $open_matches_before );
+        $close_count_before = preg_match_all( '/^```\s*$/m', $content, $close_matches_before );
 
-        // パターン2: ダブルクォートで終わるコードブロック（```php" → ```php）
-        $content = preg_replace( '/```(php|javascript|js|html|css|bash|sh|python|py|java|c|cpp|go|rust|sql|json|xml|yaml|yml)"\s*\n/', '```$1' . "\n", $content );
+        // パターン1: 記事全体を囲む```markdownブロックを削除
+        $content = preg_replace( '/^```(?:markdown|md)\s*\n/', '', $content );
+        $content = preg_replace( '/\n```\s*$/', '', $content );
 
-        // パターン3: 空のコードブロックを削除（```php\n``` または ```\n```）
+        // パターン2: 5つ以上のバッククォートを3つに修正
+        $content = preg_replace( '/`{4,}(php|javascript|js|html|css|bash|sh|python|py|java|c|cpp|go|rust|sql|json|xml|yaml|yml|markdown|md)?/', '```$1', $content );
+
+        // パターン3: バッククォート1-2個で始まる壊れたコードブロックを修正
+        $content = preg_replace( '/^`{1,2}(php|javascript|js|html|css|bash|sh|python|py|java|c|cpp|go|rust|sql|json|xml|yaml|yml)\s*$/m', '```$1', $content );
+
+        // パターン4: 引用符付きのコードブロック開始を修正（```php" → ```php）
+        $content = preg_replace( '/```(php|javascript|js|html|css|bash|sh|python|py|java|c|cpp|go|rust|sql|json|xml|yaml|yml)["\']/', '```$1', $content );
+
+        // パターン5: HTMLエンティティ化されたタグを修正
+        $html_entity_replacements = array(
+            '<!--?php'  => '<?php',
+            '?-->'      => '?>',
+            '&lt;?php'  => '<?php',
+            '?&gt;'     => '?>',
+            '&lt;?'     => '<?',
+            '&gt;'      => '>',
+            '&lt;'      => '<',
+            '&amp;'     => '&',
+            '&quot;'    => '"',
+        );
+        $content = strtr( $content, $html_entity_replacements );
+
+        // パターン6: 空のコードブロックを削除
         $content = preg_replace( '/```\w*\s*\n\s*```/m', '', $content );
 
-        // パターン4: 閉じられていないコードブロックを検出して閉じる
+        // パターン7: 行単位での構造チェックと修正（最重要）
         $lines = explode( "\n", $content );
-        $in_code_block = false;
         $fixed_lines = array();
+        $in_code_block = false;
 
-        foreach ( $lines as $line ) {
-            if ( preg_match( '/^```\w+/', $line ) ) {
+        for ( $i = 0; $i < count( $lines ); $i++ ) {
+            $line = $lines[ $i ];
+            $trimmed = trim( $line );
+
+            // コードブロック開始を検出（```で始まり、言語指定がある場合とない場合）
+            if ( preg_match( '/^```(\w*)/', $trimmed ) ) {
+                // すでにコードブロック内なら前のブロックを閉じる
+                if ( $in_code_block ) {
+                    $fixed_lines[] = '```';
+                }
                 $in_code_block = true;
-            } elseif ( preg_match( '/^```\s*$/', $line ) ) {
-                $in_code_block = false;
+                $fixed_lines[] = $line;
             }
-            $fixed_lines[] = $line;
+            // コードブロック終了を検出（```のみの行）
+            elseif ( trim( $line ) === '```' ) {
+                if ( $in_code_block ) {
+                    $in_code_block = false;
+                }
+                $fixed_lines[] = $line;
+            }
+            // その他の行
+            else {
+                $fixed_lines[] = $line;
+            }
         }
 
-        // 最後にコードブロックが閉じられていない場合は閉じる
+        // 最後に開いたままのコードブロックがあれば閉じる
         if ( $in_code_block ) {
             $fixed_lines[] = '```';
         }
 
         $content = implode( "\n", $fixed_lines );
 
-        // パターン5: コードブロック内の不要な空行を削減（連続する3行以上の空行を2行に）
-        $content = preg_replace( '/(```\w+.*?\n)((?:\s*\n){3,})/s', '$1' . "\n\n", $content );
+        // パターン8: 過度な空行の削減（3行以上の連続空行を2行に）
+        $content = preg_replace( '/\n\s*\n\s*\n+/', "\n\n", $content );
+
+        // 修正後の検証
+        $open_count_after = preg_match_all( '/^```\w*/', $content, $open_matches_after, PREG_OFFSET_CAPTURE | PREG_MULTILINE );
+        $close_count_after = preg_match_all( '/^```\s*$/m', $content, $close_matches_after );
+
+        // ログ出力（本番では必ず削除または集約）
+        if ( $open_count_after !== $close_count_after ) {
+            error_log( "Blog Poster v0.2.6: Code block mismatch after fix. Open: {$open_count_after}, Close: {$close_count_after}" );
+        }
 
         return $content;
     }
@@ -421,7 +529,7 @@ PROMPT;
      * @param string $content コンテンツ
      * @return string 修正されたコンテンツ
      */
-    private function fact_check_claude_references( $content ) {
+    public function fact_check_claude_references( $content ) {
         // パターン1: Claudeの「インストール」「プラグイン」に関する虚偽記述を検出
         $false_patterns = array(
             '/Claude.*?プラグイン.*?インストール/u',
@@ -467,7 +575,7 @@ PROMPT;
      * @param string $content コンテンツ
      * @return array 検証結果
      */
-    private function validate_article( $content ) {
+    public function validate_article( $content ) {
         $issues = array();
 
         // コードブロックの検証
@@ -476,11 +584,11 @@ PROMPT;
         }
 
         // コードブロックが途中で切れていないか確認
-        $open_count = preg_match_all( '/```\w+/', $content );
-        $close_count = preg_match_all( '/```\s*$/m', $content );
+        $open_count = preg_match_all( '/```\w+/', $content, $open_matches );
+        $close_count = preg_match_all( '/^```\s*$/m', $content, $close_matches );
 
-        if ( $open_count > $close_count ) {
-            $issues[] = 'コードブロックが閉じられていません';
+        if ( $open_count !== $close_count ) {
+            $issues[] = 'コードブロックが閉じられていません（開始: ' . $open_count . '個, 終了: ' . $close_count . '個）';
         }
 
         // 「〜が重要です」「〜できます」で終わる段落の検出
