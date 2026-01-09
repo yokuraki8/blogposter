@@ -492,8 +492,15 @@ class Blog_Poster_Admin {
             wp_send_json_error( array( 'message' => 'タイトルまたは本文が空です' ) );
         }
 
-        // マークダウンをHTMLに変換
-        $html_content = $this->markdown_to_html( $content );
+        // JSONブロックならHTMLへレンダリング、なければMarkdown変換
+        $decoded = json_decode( $content, true );
+        if ( json_last_error() === JSON_ERROR_NONE && isset( $decoded['blocks'] ) ) {
+            $generator    = new Blog_Poster_Generator();
+            $html_content = $generator->render_article_json_to_html( $decoded );
+            $html_content = $generator->fact_check_claude_references( $html_content );
+        } else {
+            $html_content = $this->markdown_to_html( $content );
+        }
 
         // 投稿を作成
         $post_data = array(

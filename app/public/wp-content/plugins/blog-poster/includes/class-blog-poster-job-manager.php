@@ -238,10 +238,71 @@ class Blog_Poster_Job_Manager {
 			$topic   = $job['topic'];
 			$additional_instructions = $job['additional_instructions'] ?? '';
 
-			// 導入部生成
+			if ( $this->generator->is_json_output_enabled() ) {
+				$intro_blocks = $this->generator->generate_intro_blocks( $outline );
+				if ( is_wp_error( $intro_blocks ) ) {
+					throw new Exception( $intro_blocks->get_error_message() );
+				}
+
+				$blocks           = $intro_blocks;
+				$previous_summary = '';
+
+				foreach ( $outline['sections'] as $section ) {
+					$section_result = $this->generator->generate_section_blocks(
+						$section,
+						$topic,
+						$previous_summary,
+						$additional_instructions
+					);
+
+					if ( is_wp_error( $section_result ) ) {
+						error_log( 'Blog Poster: Section generation failed for ' . $section['h2'] . ': ' . $section_result->get_error_message() );
+						continue;
+					}
+
+					$blocks           = array_merge( $blocks, $section_result['blocks'] );
+					$previous_summary = isset( $section_result['summary'] ) ? $section_result['summary'] : '';
+				}
+
+				$summary_blocks = $this->generator->generate_summary_blocks( $outline, '' );
+				if ( is_wp_error( $summary_blocks ) ) {
+					throw new Exception( $summary_blocks->get_error_message() );
+				}
+
+				$blocks = array_merge( $blocks, $summary_blocks );
+
+				$article_json = array(
+					'meta'   => array(
+						'title'            => $outline['title'],
+						'slug'             => $outline['slug'],
+						'meta_description' => $outline['meta_description'],
+						'excerpt'          => $outline['excerpt'],
+						'keywords'         => isset( $outline['keywords'] ) ? $outline['keywords'] : array(),
+					),
+					'blocks' => $blocks,
+				);
+
+				$final_content = wp_json_encode( $article_json, JSON_UNESCAPED_UNICODE );
+
+				$this->update_job(
+					$job_id,
+					array(
+						'sections_content' => wp_json_encode( $blocks, JSON_UNESCAPED_UNICODE ),
+						'final_content'    => $final_content,
+						'current_step'     => 2,
+					)
+				);
+
+				return array(
+					'success'         => true,
+					'message'         => '本文生成完了',
+					'content_preview' => mb_substr( $final_content, 0, 500 ) . '...',
+				);
+			}
+
+			// 旧Markdown方式
 			$intro = $this->generator->generate_intro( $outline );
 
-			// 各セクション生成
 			$sections         = array();
 			$previous_summary = '';
 
@@ -262,11 +323,9 @@ class Blog_Poster_Job_Manager {
 				$previous_summary = $section_result['summary'];
 			}
 
-			// まとめ生成
 			$all_content = implode( "\n\n", $sections );
 			$summary     = $this->generator->generate_summary( $outline, $all_content );
 
-			// 全体を組み立て
 			$full_content = $intro . "\n\n" . $all_content . "\n\n" . $summary;
 
 			$this->update_job(
@@ -327,13 +386,53 @@ class Blog_Poster_Job_Manager {
 			$outline = json_decode( $job['outline'], true );
 			$content = $job['final_content'];
 
-			// コードブロック修正
+			if ( $this->generator->is_json_output_enabled() ) {
+				$article_json    = json_decode( $content, true );
+				$json_validation = $this->generator->validate_article_json( $article_json );
+
+				if ( ! $json_validation['valid'] ) {
+					$message = 'JSON検証に失敗しました: ' . implode( ' / ', $json_validation['issues'] );
+					$this->update_job(
+						$job_id,
+						array(
+							'status'        => 'failed',
+							'error_message' => $message,
+						)
+					);
+					return array(
+						'success'    => false,
+						'message'    => $message,
+						'validation' => $json_validation,
+					);
+				}
+
+				$this->update_job(
+					$job_id,
+					array(
+						'status'        => 'completed',
+						'final_content' => $content,
+						'current_step'  => 3,
+					)
+				);
+
+				return array(
+					'success'          => true,
+					'message'          => '記事生成完了',
+					'title'            => $outline['title'],
+					'slug'             => $outline['slug'],
+					'meta_description' => $outline['meta_description'],
+					'excerpt'          => $outline['excerpt'],
+					'content'          => $content,
+					'keywords'         => isset( $outline['keywords'] ) ? $outline['keywords'] : array(),
+					'validation'       => $json_validation,
+				);
+			}
+
+			// 旧Markdown方式
 			$content = $this->generator->fix_code_blocks( $content );
 
-			// ファクトチェック
 			$content = $this->generator->fact_check_claude_references( $content );
 
-			// 公開前コードブロック検証
 			$code_validation = $this->generator->validate_code_blocks( $content );
 			if ( ! $code_validation['valid'] ) {
 				$message = 'コードブロック検証に失敗しました: ' . implode( ' / ', $code_validation['issues'] );
@@ -351,7 +450,6 @@ class Blog_Poster_Job_Manager {
 				);
 			}
 
-			// 検証
 			$validation = $this->generator->validate_article( $content );
 
 			$this->update_job(

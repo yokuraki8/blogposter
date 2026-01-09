@@ -14,6 +14,136 @@ if ( ! defined( 'ABSPATH' ) ) {
  * Blog_Poster_Generator クラス
  */
 class Blog_Poster_Generator {
+    /**
+     * JSON出力を有効にするか
+     *
+     * @return bool
+     */
+    private function use_json_output() {
+        $settings = get_option( 'blog_poster_settings', array() );
+        return ! isset( $settings['use_json_output'] ) || (bool) $settings['use_json_output'];
+    }
+
+    /**
+     * JSON出力の有効状態を取得
+     *
+     * @return bool
+     */
+    public function is_json_output_enabled() {
+        return $this->use_json_output();
+    }
+
+    /**
+     * JSONレスポンスをパース
+     *
+     * @param string $response レスポンス
+     * @return array|WP_Error
+     */
+    private function parse_json_blocks_response( $response ) {
+        $json_str = preg_replace( '/```json\\s*\\n/', '', $response );
+        $json_str = preg_replace( '/```\\s*$/', '', $json_str );
+        $json_str = trim( $json_str );
+
+        $data = json_decode( $json_str, true );
+        if ( json_last_error() !== JSON_ERROR_NONE ) {
+            return new WP_Error( 'json_parse_error', 'JSONパースエラー: ' . json_last_error_msg() );
+        }
+
+        return $data;
+    }
+
+    /**
+     * JSONブロックを検証
+     *
+     * @param array $article_json JSONデータ
+     * @return array
+     */
+    public function validate_article_json( $article_json ) {
+        $issues = array();
+
+        if ( ! is_array( $article_json ) || ! isset( $article_json['blocks'] ) || ! is_array( $article_json['blocks'] ) ) {
+            return array(
+                'valid'  => false,
+                'issues' => array( 'blocks が不正です。' ),
+            );
+        }
+
+        $allowed_types = array( 'h2', 'h3', 'text', 'code', 'list' );
+
+        foreach ( $article_json['blocks'] as $index => $block ) {
+            if ( ! isset( $block['type'] ) || ! in_array( $block['type'], $allowed_types, true ) ) {
+                $issues[] = '不正なブロック種別: ' . ( $block['type'] ?? 'unknown' ) . ' (index: ' . $index . ')';
+                continue;
+            }
+
+            if ( in_array( $block['type'], array( 'h2', 'h3', 'text' ), true ) ) {
+                if ( empty( $block['content'] ) ) {
+                    $issues[] = 'content が空です (index: ' . $index . ')';
+                }
+            } elseif ( 'code' === $block['type'] ) {
+                if ( empty( $block['content'] ) ) {
+                    $issues[] = 'code.content が空です (index: ' . $index . ')';
+                }
+                if ( empty( $block['language'] ) ) {
+                    $issues[] = 'code.language が空です (index: ' . $index . ')';
+                }
+            } elseif ( 'list' === $block['type'] ) {
+                if ( empty( $block['items'] ) || ! is_array( $block['items'] ) ) {
+                    $issues[] = 'list.items が不正です (index: ' . $index . ')';
+                }
+            }
+        }
+
+        return array(
+            'valid'  => empty( $issues ),
+            'issues' => $issues,
+        );
+    }
+
+    /**
+     * JSONブロックをHTMLに変換
+     *
+     * @param array $article_json JSONデータ
+     * @return string
+     */
+    public function render_article_json_to_html( $article_json ) {
+        if ( ! is_array( $article_json ) || ! isset( $article_json['blocks'] ) ) {
+            return '';
+        }
+
+        $html_parts = array();
+
+        foreach ( $article_json['blocks'] as $block ) {
+            $type = isset( $block['type'] ) ? $block['type'] : '';
+            switch ( $type ) {
+                case 'h2':
+                    $html_parts[] = '<h2>' . wp_kses_post( $block['content'] ) . '</h2>';
+                    break;
+                case 'h3':
+                    $html_parts[] = '<h3>' . wp_kses_post( $block['content'] ) . '</h3>';
+                    break;
+                case 'text':
+                    $html_parts[] = '<p>' . wp_kses_post( $block['content'] ) . '</p>';
+                    break;
+                case 'code':
+                    $language = isset( $block['language'] ) ? sanitize_text_field( $block['language'] ) : 'text';
+                    $code     = isset( $block['content'] ) ? $block['content'] : '';
+                    $html_parts[] = '<pre><code class="language-' . esc_attr( $language ) . '">' . esc_html( $code ) . '</code></pre>';
+                    break;
+                case 'list':
+                    if ( isset( $block['items'] ) && is_array( $block['items'] ) ) {
+                        $items = array();
+                        foreach ( $block['items'] as $item ) {
+                            $items[] = '<li>' . esc_html( $item ) . '</li>';
+                        }
+                        $html_parts[] = '<ul>' . implode( '', $items ) . '</ul>';
+                    }
+                    break;
+            }
+        }
+
+        return implode( "\n", $html_parts );
+    }
 
     /**
      * AIクライアントを取得
@@ -81,34 +211,85 @@ class Blog_Poster_Generator {
             return new WP_Error( 'outline_generation_failed', 'アウトライン生成に3回失敗しました。' );
         }
 
-        // Phase 2: セクションごとに生成
-        $sections_content = array();
-        $previous_summary = '';
-
-        foreach ( $outline['sections'] as $section ) {
-            $section_result = $this->generate_section_content( $section, $topic, $previous_summary, $additional_instructions );
-
-            if ( is_wp_error( $section_result ) ) {
-                error_log( "Blog Poster: Section generation failed for " . $section['h2'] . ": " . $section_result->get_error_message() );
-                continue;
+        // JSON方式
+        if ( $this->use_json_output() ) {
+            $intro_blocks = $this->generate_intro_blocks( $outline );
+            if ( is_wp_error( $intro_blocks ) ) {
+                return $intro_blocks;
             }
 
-            $sections_content[] = $section_result['content'];
-            $previous_summary = $section_result['summary'];
+            $blocks           = $intro_blocks;
+            $previous_summary = '';
+
+            foreach ( $outline['sections'] as $section ) {
+                $section_result = $this->generate_section_blocks( $section, $topic, $previous_summary, $additional_instructions );
+
+                if ( is_wp_error( $section_result ) ) {
+                    error_log( "Blog Poster: Section generation failed for " . $section['h2'] . ": " . $section_result->get_error_message() );
+                    continue;
+                }
+
+                $blocks           = array_merge( $blocks, $section_result['blocks'] );
+                $previous_summary = isset( $section_result['summary'] ) ? $section_result['summary'] : '';
+            }
+
+            $summary_blocks = $this->generate_summary_blocks( $outline, '' );
+            if ( is_wp_error( $summary_blocks ) ) {
+                return $summary_blocks;
+            }
+
+            $blocks = array_merge( $blocks, $summary_blocks );
+
+            $article_data = array(
+                'title'            => $outline['title'],
+                'slug'             => $outline['slug'],
+                'meta_description' => $outline['meta_description'],
+                'excerpt'          => $outline['excerpt'],
+                'content'          => wp_json_encode(
+                    array(
+                        'meta'   => array(
+                            'title'            => $outline['title'],
+                            'slug'             => $outline['slug'],
+                            'meta_description' => $outline['meta_description'],
+                            'excerpt'          => $outline['excerpt'],
+                            'keywords'         => isset( $outline['keywords'] ) ? $outline['keywords'] : array(),
+                        ),
+                        'blocks' => $blocks,
+                    ),
+                    JSON_UNESCAPED_UNICODE
+                ),
+                'keywords'         => isset( $outline['keywords'] ) ? $outline['keywords'] : array(),
+            );
+        } else {
+            // Phase 2: セクションごとに生成
+            $sections_content = array();
+            $previous_summary = '';
+
+            foreach ( $outline['sections'] as $section ) {
+                $section_result = $this->generate_section_content( $section, $topic, $previous_summary, $additional_instructions );
+
+                if ( is_wp_error( $section_result ) ) {
+                    error_log( "Blog Poster: Section generation failed for " . $section['h2'] . ": " . $section_result->get_error_message() );
+                    continue;
+                }
+
+                $sections_content[] = $section_result['content'];
+                $previous_summary = $section_result['summary'];
+            }
+
+            // Phase 3: 記事組み立て
+            $article_data = $this->assemble_article( $outline, $sections_content, $topic );
+
+            if ( is_wp_error( $article_data ) ) {
+                return $article_data;
+            }
+
+            // コードブロック修正
+            $article_data['content'] = $this->fix_code_blocks( $article_data['content'] );
+
+            // Claude関連の虚偽記述をチェック
+            $article_data['content'] = $this->fact_check_claude_references( $article_data['content'] );
         }
-
-        // Phase 3: 記事組み立て
-        $article_data = $this->assemble_article( $outline, $sections_content, $topic );
-
-        if ( is_wp_error( $article_data ) ) {
-            return $article_data;
-        }
-
-        // コードブロック修正
-        $article_data['content'] = $this->fix_code_blocks( $article_data['content'] );
-
-        // Claude関連の虚偽記述をチェック
-        $article_data['content'] = $this->fact_check_claude_references( $article_data['content'] );
 
         return array(
             'success' => true,
@@ -349,6 +530,88 @@ PROMPT;
         return array(
             'content' => $content,
             'summary' => $summary,
+        );
+    }
+
+    /**
+     * Phase 2: セクションのJSONブロックを生成
+     *
+     * @param array  $section セクション情報
+     * @param string $topic トピック
+     * @param string $previous_summary 前セクションの要約
+     * @param string $additional_instructions 追加指示
+     * @return array|WP_Error
+     */
+    public function generate_section_blocks( $section, $topic, $previous_summary = '', $additional_instructions = '' ) {
+        $client = $this->get_ai_client();
+
+        if ( is_wp_error( $client ) ) {
+            return $client;
+        }
+
+        $context = '';
+        if ( ! empty( $previous_summary ) ) {
+            $context = "【これまでの流れ】\n{$previous_summary}\n\n";
+        }
+
+        $subsections_list = '';
+        if ( isset( $section['subsections'] ) ) {
+            foreach ( $section['subsections'] as $sub ) {
+                $subsections_list .= "- {$sub['h3']} ({$sub['content_type']}): {$sub['key_points']}\n";
+            }
+        }
+
+        $prompt = <<<PROMPT
+あなたは{$topic}に関する実務経験を持つテクニカルライターです。
+
+{$context}以下のセクション内容をJSONブロック配列で出力してください。
+
+【セクション情報】
+見出し: {$section['h2']}
+目的: {$section['purpose']}
+読者の状態変化: {$section['reader_state_before']} → {$section['reader_state_after']}
+含めるべき内容: {$section['key_content']}
+
+【サブセクション構成】
+{$subsections_list}
+
+【出力ルール - 絶対遵守】
+- Markdown記号（#, -, ```, ** など）を使わない
+- JSON以外のテキストは出力しない
+- codeブロックのcontentはコードのみ（説明文を含めない）
+- textはプレーンテキストのみ
+- 先頭ブロックは必ずh2（見出し: {$section['h2']}）
+- サブセクションごとにh3を入れて構成する
+
+【出力フォーマット】
+{ "blocks": [ ... ] }
+
+ブロック種別:
+- h2, h3, text, code, list
+codeは language と content を必須
+listは items 配列を使用
+
+{$additional_instructions}
+PROMPT;
+
+        $response = $client->generate_text( $prompt );
+
+        if ( ! $response['success'] ) {
+            return new WP_Error( 'api_error', $response['error'] ?? 'APIエラー' );
+        }
+
+        $data = $this->parse_json_blocks_response( $response['data'] );
+        if ( is_wp_error( $data ) ) {
+            return $data;
+        }
+
+        if ( ! isset( $data['blocks'] ) || ! is_array( $data['blocks'] ) ) {
+            return new WP_Error( 'invalid_blocks', 'blocks が取得できませんでした。' );
+        }
+
+        return array(
+            'blocks'  => $data['blocks'],
+            'summary' => isset( $data['summary'] ) ? $data['summary'] : '',
         );
     }
 
@@ -828,6 +1091,96 @@ PROMPT;
         $response = $client->generate_text( $prompt );
 
         return $response['success'] ? $response['data'] : '';
+    }
+
+    /**
+     * JSONブロックで導入部を生成
+     *
+     * @param array $outline アウトライン
+     * @return array|WP_Error
+     */
+    public function generate_intro_blocks( $outline ) {
+        $client = $this->get_ai_client();
+
+        if ( is_wp_error( $client ) ) {
+            return $client;
+        }
+
+        $prompt = <<<PROMPT
+以下の記事の導入部をJSONブロック配列で作成してください。
+
+タイトル: {$outline['title']}
+想定読者: {$outline['target_reader']}
+読者の目標: {$outline['reader_goal']}
+
+【要件】
+- 読者の課題への共感から始める
+- この記事で得られることを明示
+- 箇条書きは使わない
+- Markdown記号は使わない
+- JSON以外のテキストを出力しない
+
+【出力フォーマット】
+{ "blocks": [ { "type": "text", "content": "..." } ] }
+PROMPT;
+
+        $response = $client->generate_text( $prompt );
+        if ( ! $response['success'] ) {
+            return new WP_Error( 'api_error', $response['error'] ?? 'APIエラー' );
+        }
+
+        $data = $this->parse_json_blocks_response( $response['data'] );
+        if ( is_wp_error( $data ) ) {
+            return $data;
+        }
+
+        return isset( $data['blocks'] ) ? $data['blocks'] : array();
+    }
+
+    /**
+     * JSONブロックでまとめを生成
+     *
+     * @param array  $outline アウトライン
+     * @param string $all_content 本文
+     * @return array|WP_Error
+     */
+    public function generate_summary_blocks( $outline, $all_content ) {
+        $client = $this->get_ai_client();
+
+        if ( is_wp_error( $client ) ) {
+            return $client;
+        }
+
+        $prompt = <<<PROMPT
+以下の記事のまとめをJSONブロック配列で作成してください。
+
+タイトル: {$outline['title']}
+
+【要件】
+- 要点を3-5個のlistで記述
+- 次のアクション提案をtextで1段落追加
+- Markdown記号は使わない
+- JSON以外のテキストを出力しない
+
+【出力フォーマット】
+{ "blocks": [
+  { "type": "h2", "content": "まとめ" },
+  { "type": "list", "items": ["...","..."] },
+  { "type": "text", "content": "..." }
+] }
+PROMPT;
+
+        $response = $client->generate_text( $prompt );
+        if ( ! $response['success'] ) {
+            return new WP_Error( 'api_error', $response['error'] ?? 'APIエラー' );
+        }
+
+        $data = $this->parse_json_blocks_response( $response['data'] );
+        if ( is_wp_error( $data ) ) {
+            return $data;
+        }
+
+        return isset( $data['blocks'] ) ? $data['blocks'] : array();
     }
 
     /**
