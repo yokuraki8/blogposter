@@ -12,6 +12,11 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 $settings = get_option( 'blog_poster_settings', array() );
 $ai_provider = isset( $settings['ai_provider'] ) ? $settings['ai_provider'] : 'openai';
+$categories = get_categories( array( 'hide_empty' => false ) );
+$selected_categories = isset( $settings['category_ids'] ) && is_array( $settings['category_ids'] )
+    ? array_map( 'intval', $settings['category_ids'] )
+    : array();
+$default_category_id = isset( $settings['default_category_id'] ) ? intval( $settings['default_category_id'] ) : 0;
 ?>
 
 <div class="wrap blog-poster-settings">
@@ -205,6 +210,57 @@ $ai_provider = isset( $settings['ai_provider'] ) ? $settings['ai_provider'] : 'o
                             />
                             <p class="description">
                                 <?php _e( '生成する最大トークン数を指定します。', 'blog-poster' ); ?>
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+
+            <!-- カテゴリ設定 -->
+            <div class="settings-section">
+                <h2><?php _e( 'カテゴリ設定', 'blog-poster' ); ?></h2>
+                <p class="description">
+                    <?php _e( '記事生成時に付与するカテゴリを選択します。複数選択可能です。', 'blog-poster' ); ?>
+                </p>
+                <table class="form-table">
+                    <tr>
+                        <th scope="row">
+                            <label for="category_ids"><?php _e( 'カテゴリ選択', 'blog-poster' ); ?></label>
+                        </th>
+                        <td>
+                            <select
+                                name="blog_poster_settings[category_ids][]"
+                                id="category_ids"
+                                multiple
+                                size="6"
+                                class="regular-text"
+                            >
+                                <?php foreach ( $categories as $category ) : ?>
+                                    <option value="<?php echo esc_attr( $category->term_id ); ?>" <?php selected( in_array( $category->term_id, $selected_categories, true ) ); ?>>
+                                        <?php echo esc_html( $category->name ); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                            <p class="description">
+                                <?php _e( 'Ctrl/Commandを押しながら複数選択できます。', 'blog-poster' ); ?>
+                            </p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">
+                            <label for="default_category_id"><?php _e( 'デフォルトカテゴリ', 'blog-poster' ); ?></label>
+                        </th>
+                        <td>
+                            <select name="blog_poster_settings[default_category_id]" id="default_category_id">
+                                <option value="0"><?php _e( '未設定', 'blog-poster' ); ?></option>
+                                <?php foreach ( $categories as $category ) : ?>
+                                    <option value="<?php echo esc_attr( $category->term_id ); ?>" <?php selected( $default_category_id, $category->term_id ); ?>>
+                                        <?php echo esc_html( $category->name ); ?>
+                                    </option>
+                                <?php endforeach; ?>
+                            </select>
+                            <p class="description">
+                                <?php _e( '未選択の場合はカテゴリ未設定のまま投稿されます。', 'blog-poster' ); ?>
                             </p>
                         </td>
                     </tr>

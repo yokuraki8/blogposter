@@ -196,6 +196,20 @@ class Blog_Poster_Admin {
         // JSON output toggle
         $sanitized['use_json_output'] = isset( $input['use_json_output'] ) ? (bool) $input['use_json_output'] : false;
 
+        // Category settings
+        $sanitized['category_ids'] = array();
+        if ( isset( $input['category_ids'] ) && is_array( $input['category_ids'] ) ) {
+            $sanitized['category_ids'] = array_values(
+                array_filter(
+                    array_map( 'intval', $input['category_ids'] ),
+                    function ( $value ) {
+                        return $value > 0;
+                    }
+                )
+            );
+        }
+        $sanitized['default_category_id'] = isset( $input['default_category_id'] ) ? intval( $input['default_category_id'] ) : 0;
+
         // 既存の設定を維持
         $current_settings = get_option( 'blog_poster_settings', array() );
         $sanitized = array_merge( $current_settings, $sanitized );
@@ -619,6 +633,21 @@ class Blog_Poster_Admin {
         // メタ情報を保存
         if ( ! empty( $meta_description ) ) {
             update_post_meta( $post_id, '_yoast_wpseo_metadesc', $meta_description );
+        }
+
+        // カテゴリ設定
+        $settings = get_option( 'blog_poster_settings', array() );
+        $category_ids = isset( $settings['category_ids'] ) && is_array( $settings['category_ids'] )
+            ? array_values( array_filter( array_map( 'intval', $settings['category_ids'] ) ) )
+            : array();
+        $default_category_id = isset( $settings['default_category_id'] ) ? intval( $settings['default_category_id'] ) : 0;
+
+        if ( $default_category_id > 0 && ! in_array( $default_category_id, $category_ids, true ) ) {
+            $category_ids[] = $default_category_id;
+        }
+
+        if ( ! empty( $category_ids ) ) {
+            wp_set_post_categories( $post_id, $category_ids, false );
         }
 
         error_log( 'Blog Poster: Post created successfully with ID: ' . $post_id );
