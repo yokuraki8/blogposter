@@ -77,7 +77,12 @@ $settings = get_option( 'blog_poster_settings', array() );
                         0%
                     </div>
                 </div>
-                <p class="progress-message" id="progress-message">準備中...</p>
+                <div class="progress-actions">
+                    <p class="progress-message" id="progress-message">準備中...</p>
+                    <button type="button" class="button" id="cancel-button" style="display: none;">
+                        <?php _e( 'キャンセル', 'blog-poster' ); ?>
+                    </button>
+                </div>
             </div>
         </div>
 
@@ -172,6 +177,18 @@ $settings = get_option( 'blog_poster_settings', array() );
     font-size: 15px;
     color: #50575e;
     font-weight: 500;
+}
+
+.progress-actions {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 15px;
+}
+
+.progress-actions .progress-message {
+    margin-top: 0;
 }
 
 /* 結果表示 */

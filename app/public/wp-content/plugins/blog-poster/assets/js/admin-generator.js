@@ -16,6 +16,8 @@ jQuery(document).ready(function($) {
     };
 
     let currentJobId = null;
+    let currentRequest = null;
+    let isCancelled = false;
 
     // 記事生成フォーム送信
     $('#blog-poster-generate-form').on('submit', function(e) {
@@ -40,10 +42,12 @@ jQuery(document).ready(function($) {
         $('#progress-container').show();
         $('#result-container').hide();
         $('#error-message').hide();
+        $('#cancel-button').show().prop('disabled', false);
+        isCancelled = false;
         updateProgress(0, '準備中...');
 
         // ジョブ作成
-        $.ajax({
+        currentRequest = $.ajax({
             url: blogPosterAjax.ajaxurl,
             type: 'POST',
             data: {
@@ -68,14 +72,54 @@ jQuery(document).ready(function($) {
         });
     });
 
+    // キャンセル処理
+    $('#cancel-button').on('click', function() {
+        if (!currentJobId) {
+            return;
+        }
+        isCancelled = true;
+        $(this).prop('disabled', true);
+        updateProgress(0, 'キャンセル処理中...');
+
+        if (currentRequest && currentRequest.readyState !== 4) {
+            currentRequest.abort();
+        }
+
+        $.ajax({
+            url: blogPosterAjax.ajaxurl,
+            type: 'POST',
+            data: {
+                action: 'blog_poster_cancel_job',
+                nonce: blogPosterAjax.nonce,
+                job_id: currentJobId
+            },
+            success: function(response) {
+                if (response.success) {
+                    $('#progress-container').hide();
+                    $('#error-message').html('<strong>キャンセル:</strong> 記事生成を中止しました。').show();
+                } else {
+                    showError(response.data && response.data.message ? response.data.message : 'キャンセルに失敗しました');
+                }
+                $('#generate-button').prop('disabled', false).text('記事を生成');
+            },
+            error: function() {
+                showError('キャンセル中に通信エラーが発生しました。');
+            }
+        });
+    });
+
     /**
      * 次のステップを処理
      */
     function processNextStep(stepIndex) {
+        if (isCancelled) {
+            return;
+        }
         if (stepIndex >= steps.length) {
             // 全ステップ完了
             updateProgress(100, '完了！');
             $('#generate-button').prop('disabled', false).text('記事を生成');
+            $('#cancel-button').hide();
             return;
         }
 
@@ -85,7 +129,7 @@ jQuery(document).ready(function($) {
 
         console.log('Processing step:', step, 'Job ID:', currentJobId);
 
-        $.ajax({
+        currentRequest = $.ajax({
             url: blogPosterAjax.ajaxurl,
             type: 'POST',
             data: {
@@ -119,6 +163,9 @@ jQuery(document).ready(function($) {
             error: function(xhr, status, error) {
                 console.log('Process step error:', xhr, status, error);
                 console.log('Response text:', xhr.responseText);
+                if (status === 'abort') {
+                    return;
+                }
                 if (status === 'timeout') {
                     showError('処理がタイムアウトしました。もう一度お試しください。');
                 } else {
@@ -144,6 +191,7 @@ jQuery(document).ready(function($) {
         $('#progress-container').hide();
         $('#error-message').html('<strong>エラー:</strong> ' + message).show();
         $('#generate-button').prop('disabled', false).text('記事を生成');
+        $('#cancel-button').hide();
     }
 
     /**
@@ -154,9 +202,10 @@ jQuery(document).ready(function($) {
 
         // プログレスメッセージを更新
         updateProgress(100, '投稿を作成中...');
+        $('#cancel-button').hide();
 
         // 自動的に投稿を作成
-        $.ajax({
+        currentRequest = $.ajax({
             url: blogPosterAjax.ajaxurl,
             type: 'POST',
             data: {

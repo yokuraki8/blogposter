@@ -148,6 +148,31 @@ class Blog_Poster_Job_Manager {
 	}
 
 	/**
+	 * ジョブをキャンセル
+	 *
+	 * @param int $job_id ジョブID
+	 * @return bool
+	 */
+	public function cancel_job( $job_id ) {
+		$job = $this->get_job( $job_id );
+		if ( ! $job ) {
+			return false;
+		}
+
+		if ( 'completed' === $job['status'] || 'failed' === $job['status'] ) {
+			return false;
+		}
+
+		return (bool) $this->update_job(
+			$job_id,
+			array(
+				'status'        => 'cancelled',
+				'error_message' => 'Cancelled by user',
+			)
+		);
+	}
+
+	/**
 	 * Step 1: アウトライン生成
 	 *
 	 * @param int $job_id ジョブID

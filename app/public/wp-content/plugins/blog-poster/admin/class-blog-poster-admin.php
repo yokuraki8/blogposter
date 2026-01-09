@@ -32,6 +32,7 @@ class Blog_Poster_Admin {
         add_action( 'wp_ajax_blog_poster_process_step', array( $this, 'ajax_process_step' ) );
         add_action( 'wp_ajax_blog_poster_get_job_status', array( $this, 'ajax_get_job_status' ) );
         add_action( 'wp_ajax_blog_poster_create_post', array( $this, 'ajax_create_post' ) );
+        add_action( 'wp_ajax_blog_poster_cancel_job', array( $this, 'ajax_cancel_job' ) );
         add_action( 'wp_ajax_blog_poster_regenerate_from_json', array( $this, 'ajax_regenerate_from_json' ) );
 
         add_action( 'add_meta_boxes', array( $this, 'register_post_meta_box' ) );
@@ -531,6 +532,27 @@ class Blog_Poster_Admin {
                 'total_steps'  => $job['total_steps'],
             )
         );
+    }
+
+    /**
+     * Ajax: ジョブをキャンセル
+     */
+    public function ajax_cancel_job() {
+        check_ajax_referer( 'blog_poster_nonce', 'nonce' );
+
+        $job_id = isset( $_POST['job_id'] ) ? intval( $_POST['job_id'] ) : 0;
+        if ( ! $job_id ) {
+            wp_send_json_error( array( 'message' => 'ジョブIDが不正です' ) );
+        }
+
+        $job_manager = new Blog_Poster_Job_Manager();
+        $result      = $job_manager->cancel_job( $job_id );
+
+        if ( ! $result ) {
+            wp_send_json_error( array( 'message' => 'キャンセルに失敗しました' ) );
+        }
+
+        wp_send_json_success( array( 'message' => 'キャンセルしました' ) );
     }
 
     /**
