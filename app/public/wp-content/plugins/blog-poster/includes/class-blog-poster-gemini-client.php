@@ -18,7 +18,7 @@ class Blog_Poster_Gemini_Client extends Blog_Poster_AI_Client {
     /**
      * API Base URL
      */
-    const API_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models/';
+    const API_BASE_URL = 'https://generativelanguage.googleapis.com/v1/models/';
 
     /**
      * テキスト生成
@@ -57,8 +57,19 @@ class Blog_Poster_Gemini_Client extends Blog_Poster_AI_Client {
 
         $response = $this->make_request( $url, $body, $headers );
 
+        // v1で404の場合はv1betaへフォールバック
+        if ( is_wp_error( $response ) && strpos( $response->get_error_message(), 'ステータスコード 404' ) !== false ) {
+            $fallback_url = str_replace( '/v1/', '/v1beta/', $url );
+            $response = $this->make_request( $fallback_url, $body, $headers );
+        }
+
         if ( is_wp_error( $response ) ) {
-            return $this->error_response( $response->get_error_message() );
+            $error_message = $response->get_error_message();
+            $error_data    = $response->get_error_data();
+            if ( ! empty( $error_data ) ) {
+                error_log( 'Blog Poster Gemini error data: ' . wp_json_encode( $error_data, JSON_UNESCAPED_UNICODE ) );
+            }
+            return $this->error_response( $error_message );
         }
 
         // レスポンスからテキストとトークン数を抽出
@@ -74,6 +85,52 @@ class Blog_Poster_Gemini_Client extends Blog_Poster_AI_Client {
         }
 
         return $this->success_response( $text, $tokens );
+    }
+
+    /**
+     * 利用可能なモデル一覧を取得
+     *
+     * @return array
+     */
+    public function list_models() {
+        if ( empty( $this->api_key ) ) {
+            return $this->error_response( __( 'Gemini APIキーが設定されていません。', 'blog-poster' ) );
+        }
+
+        $url = 'https://generativelanguage.googleapis.com/v1beta/models?key=' . $this->api_key;
+
+        $response = wp_remote_get(
+            $url,
+            array(
+                'timeout' => 30,
+            )
+        );
+
+        if ( is_wp_error( $response ) ) {
+            return $this->error_response( $response->get_error_message() );
+        }
+
+        $status_code = wp_remote_retrieve_response_code( $response );
+        $body        = wp_remote_retrieve_body( $response );
+        $data        = json_decode( $body, true );
+
+        if ( $status_code !== 200 ) {
+            return $this->error_response(
+                sprintf( __( 'APIエラー: ステータスコード %d', 'blog-poster' ), $status_code ),
+                $data
+            );
+        }
+
+        $models = array();
+        if ( isset( $data['models'] ) && is_array( $data['models'] ) ) {
+            foreach ( $data['models'] as $model ) {
+                if ( isset( $model['name'] ) ) {
+                    $models[] = $model['name'];
+                }
+            }
+        }
+
+        return $this->success_response( $models );
     }
 
     /**

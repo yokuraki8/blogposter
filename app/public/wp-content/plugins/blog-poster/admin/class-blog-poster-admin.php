@@ -34,6 +34,7 @@ class Blog_Poster_Admin {
         add_action( 'wp_ajax_blog_poster_create_post', array( $this, 'ajax_create_post' ) );
         add_action( 'wp_ajax_blog_poster_cancel_job', array( $this, 'ajax_cancel_job' ) );
         add_action( 'wp_ajax_blog_poster_regenerate_from_json', array( $this, 'ajax_regenerate_from_json' ) );
+        add_action( 'wp_ajax_blog_poster_list_gemini_models', array( $this, 'ajax_list_gemini_models' ) );
 
         add_action( 'add_meta_boxes', array( $this, 'register_post_meta_box' ) );
     }
@@ -187,6 +188,14 @@ class Blog_Poster_Admin {
         // Parameters
         $sanitized['temperature'] = isset( $input['temperature'] ) ? floatval( $input['temperature'] ) : 0.7;
         $sanitized['max_tokens'] = isset( $input['max_tokens'] ) ? intval( $input['max_tokens'] ) : 2000;
+
+        // Model selection
+        $sanitized['default_model'] = array();
+        if ( isset( $input['default_model'] ) && is_array( $input['default_model'] ) ) {
+            foreach ( $input['default_model'] as $provider => $model ) {
+                $sanitized['default_model'][ $provider ] = sanitize_text_field( $model );
+            }
+        }
 
         // Slider settings
         $sanitized['formality'] = isset( $input['formality'] ) ? intval( $input['formality'] ) : 50;
@@ -698,6 +707,29 @@ class Blog_Poster_Admin {
         }
 
         wp_send_json_success( array( 'message' => '再描画が完了しました。' ) );
+    }
+
+    /**
+     * Ajax: Geminiモデル一覧取得
+     */
+    public function ajax_list_gemini_models() {
+        check_ajax_referer( 'blog_poster_nonce', 'nonce' );
+
+        $settings = get_option( 'blog_poster_settings', array() );
+        $api_key  = isset( $settings['gemini_api_key'] ) ? $settings['gemini_api_key'] : '';
+
+        if ( empty( $api_key ) ) {
+            wp_send_json_error( array( 'message' => 'Gemini APIキーが未設定です。' ) );
+        }
+
+        $client = new Blog_Poster_Gemini_Client( $api_key, 'gemini-1.5-flash', $settings );
+        $result = $client->list_models();
+
+        if ( ! $result['success'] ) {
+            wp_send_json_error( array( 'message' => $result['error'] ) );
+        }
+
+        wp_send_json_success( array( 'models' => $result['data'] ) );
     }
 
     /**
