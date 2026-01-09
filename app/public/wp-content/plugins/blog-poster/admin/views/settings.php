@@ -150,6 +150,26 @@ $ai_provider = isset( $settings['ai_provider'] ) ? $settings['ai_provider'] : 'o
                 <table class="form-table">
                     <tr>
                         <th scope="row">
+                            <label for="use_json_output"><?php _e( 'JSON出力', 'blog-poster' ); ?></label>
+                        </th>
+                        <td>
+                            <label>
+                                <input
+                                    type="checkbox"
+                                    name="blog_poster_settings[use_json_output]"
+                                    id="use_json_output"
+                                    value="1"
+                                    <?php checked( isset( $settings['use_json_output'] ) ? $settings['use_json_output'] : true, true ); ?>
+                                />
+                                <?php _e( 'JSON構造化出力を使用する', 'blog-poster' ); ?>
+                            </label>
+                            <p class="description">
+                                <?php _e( 'JSONが不正な場合は従来のMarkdown方式にフォールバックします。', 'blog-poster' ); ?>
+                            </p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">
                             <label for="temperature"><?php _e( 'Temperature', 'blog-poster' ); ?></label>
                         </th>
                         <td>

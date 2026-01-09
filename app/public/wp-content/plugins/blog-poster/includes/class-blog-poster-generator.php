@@ -87,10 +87,32 @@ class Blog_Poster_Generator {
                 if ( empty( $block['language'] ) ) {
                     $issues[] = 'code.language が空です (index: ' . $index . ')';
                 }
+                if ( isset( $block['content'] ) ) {
+                    $code_text = $block['content'];
+                    $has_md    = preg_match( '/^\s*#{1,6}\s/m', $code_text )
+                        || preg_match( '/^\s*[-*]\s+/m', $code_text )
+                        || preg_match( '/^\s*\d+\.\s+/m', $code_text );
+                    $has_ja    = preg_match( '/[ぁ-んァ-ン一-龯]/u', $code_text );
+                    $sentence_count = preg_match_all( '/[。！？]/u', $code_text );
+                    $code_token_count  = preg_match_all( '/[;{}<>$=]/', $code_text );
+                    $code_token_count += preg_match_all( '/\b(public|private|protected|return|const|let|var|import|export|function|class)\b/i', $code_text );
+                    $looks_like_prose = $has_ja && $sentence_count >= 2 && $code_token_count < 2;
+
+                    if ( $has_md || $looks_like_prose ) {
+                        $issues[] = 'code.content に説明文が混入しています (index: ' . $index . ')';
+                    }
+                    if ( false !== strpos( $code_text, '```' ) ) {
+                        $issues[] = 'code.content にバッククォートが含まれています (index: ' . $index . ')';
+                    }
+                }
             } elseif ( 'list' === $block['type'] ) {
                 if ( empty( $block['items'] ) || ! is_array( $block['items'] ) ) {
                     $issues[] = 'list.items が不正です (index: ' . $index . ')';
                 }
+            }
+
+            if ( isset( $block['content'] ) && is_string( $block['content'] ) && false !== strpos( $block['content'], '```' ) ) {
+                $issues[] = 'content にバッククォートが含まれています (index: ' . $index . ')';
             }
         }
 

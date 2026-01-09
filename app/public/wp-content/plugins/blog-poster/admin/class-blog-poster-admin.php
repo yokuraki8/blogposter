@@ -32,6 +32,9 @@ class Blog_Poster_Admin {
         add_action( 'wp_ajax_blog_poster_process_step', array( $this, 'ajax_process_step' ) );
         add_action( 'wp_ajax_blog_poster_get_job_status', array( $this, 'ajax_get_job_status' ) );
         add_action( 'wp_ajax_blog_poster_create_post', array( $this, 'ajax_create_post' ) );
+        add_action( 'wp_ajax_blog_poster_regenerate_from_json', array( $this, 'ajax_regenerate_from_json' ) );
+
+        add_action( 'add_meta_boxes', array( $this, 'register_post_meta_box' ) );
     }
 
     /**
@@ -189,6 +192,9 @@ class Blog_Poster_Admin {
         $sanitized['expertise'] = isset( $input['expertise'] ) ? intval( $input['expertise'] ) : 50;
         $sanitized['friendliness'] = isset( $input['friendliness'] ) ? intval( $input['friendliness'] ) : 50;
 
+        // JSON output toggle
+        $sanitized['use_json_output'] = isset( $input['use_json_output'] ) ? (bool) $input['use_json_output'] : false;
+
         // 既存の設定を維持
         $current_settings = get_option( 'blog_poster_settings', array() );
         $sanitized = array_merge( $current_settings, $sanitized );
@@ -222,6 +228,66 @@ class Blog_Poster_Admin {
      */
     public function display_history_page() {
         require_once BLOG_POSTER_PLUGIN_DIR . 'admin/views/history.php';
+    }
+
+    /**
+     * 記事編集画面のメタボックスを登録
+     */
+    public function register_post_meta_box() {
+        add_meta_box(
+            'blog-poster-json-regenerate',
+            __( 'Blog Poster JSON再描画', 'blog-poster' ),
+            array( $this, 'render_json_regenerate_metabox' ),
+            'post',
+            'side',
+            'default'
+        );
+    }
+
+    /**
+     * JSON再描画メタボックス表示
+     *
+     * @param WP_Post $post 投稿
+     */
+    public function render_json_regenerate_metabox( $post ) {
+        $json_content = get_post_meta( $post->ID, '_blog_poster_article_json', true );
+        if ( empty( $json_content ) ) {
+            echo '<p>' . esc_html__( 'JSONデータが見つかりません。', 'blog-poster' ) . '</p>';
+            return;
+        }
+
+        wp_nonce_field( 'blog_poster_regenerate_json', 'blog_poster_regenerate_json_nonce' );
+        ?>
+        <p><?php esc_html_e( '保存済みJSONから本文HTMLを再描画します。', 'blog-poster' ); ?></p>
+        <p>
+            <button type="button" class="button" id="blog-poster-regenerate-json">
+                <?php esc_html_e( 'JSONから再描画', 'blog-poster' ); ?>
+            </button>
+        </p>
+        <script>
+            jQuery(function($) {
+                $('#blog-poster-regenerate-json').on('click', function() {
+                    const $btn = $(this);
+                    $btn.prop('disabled', true).text('<?php echo esc_js( __( '再描画中...', 'blog-poster' ) ); ?>');
+                    $.post(ajaxurl, {
+                        action: 'blog_poster_regenerate_from_json',
+                        nonce: $('#blog_poster_regenerate_json_nonce').val(),
+                        post_id: <?php echo (int) $post->ID; ?>
+                    }).done(function(response) {
+                        if (response.success) {
+                            location.reload();
+                        } else {
+                            alert(response.data && response.data.message ? response.data.message : '再描画に失敗しました');
+                        }
+                    }).fail(function() {
+                        alert('通信エラーが発生しました');
+                    }).always(function() {
+                        $btn.prop('disabled', false).text('<?php echo esc_js( __( 'JSONから再描画', 'blog-poster' ) ); ?>');
+                    });
+                });
+            });
+        </script>
+        <?php
     }
 
     /**
@@ -524,6 +590,10 @@ class Blog_Poster_Admin {
             wp_send_json_error( array( 'message' => $post_id->get_error_message() ) );
         }
 
+        if ( isset( $decoded ) && is_array( $decoded ) && isset( $decoded['blocks'] ) ) {
+            update_post_meta( $post_id, '_blog_poster_article_json', wp_json_encode( $decoded, JSON_UNESCAPED_UNICODE ) );
+        }
+
         // メタ情報を保存
         if ( ! empty( $meta_description ) ) {
             update_post_meta( $post_id, '_yoast_wpseo_metadesc', $meta_description );
@@ -538,6 +608,45 @@ class Blog_Poster_Admin {
                 'message'  => '投稿を作成しました',
             )
         );
+    }
+
+    /**
+     * Ajax: JSONから本文を再描画
+     */
+    public function ajax_regenerate_from_json() {
+        check_ajax_referer( 'blog_poster_regenerate_json', 'nonce' );
+
+        $post_id = isset( $_POST['post_id'] ) ? intval( $_POST['post_id'] ) : 0;
+        if ( ! $post_id || ! current_user_can( 'edit_post', $post_id ) ) {
+            wp_send_json_error( array( 'message' => '権限がありません。' ) );
+        }
+
+        $json_content = get_post_meta( $post_id, '_blog_poster_article_json', true );
+        if ( empty( $json_content ) ) {
+            wp_send_json_error( array( 'message' => 'JSONデータが見つかりません。' ) );
+        }
+
+        $decoded = json_decode( $json_content, true );
+        if ( json_last_error() !== JSON_ERROR_NONE || ! isset( $decoded['blocks'] ) ) {
+            wp_send_json_error( array( 'message' => 'JSONが不正です。' ) );
+        }
+
+        $generator    = new Blog_Poster_Generator();
+        $html_content = $generator->render_article_json_to_html( $decoded );
+
+        $updated = wp_update_post(
+            array(
+                'ID'           => $post_id,
+                'post_content' => $html_content,
+            ),
+            true
+        );
+
+        if ( is_wp_error( $updated ) ) {
+            wp_send_json_error( array( 'message' => $updated->get_error_message() ) );
+        }
+
+        wp_send_json_success( array( 'message' => '再描画が完了しました。' ) );
     }
 
     /**
