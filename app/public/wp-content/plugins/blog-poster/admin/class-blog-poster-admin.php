@@ -26,6 +26,11 @@ class Blog_Poster_Admin {
 
         // AJAXハンドラー
         add_action( 'wp_ajax_blog_poster_generate_article', array( $this, 'ajax_generate_article' ) );
+
+        // v0.2.5-alpha: 非同期ジョブ方式のAJAXハンドラー
+        add_action( 'wp_ajax_blog_poster_create_job', array( $this, 'ajax_create_job' ) );
+        add_action( 'wp_ajax_blog_poster_process_step', array( $this, 'ajax_process_step' ) );
+        add_action( 'wp_ajax_blog_poster_get_job_status', array( $this, 'ajax_get_job_status' ) );
     }
 
     /**
@@ -115,6 +120,26 @@ class Blog_Poster_Admin {
             BLOG_POSTER_VERSION,
             true
         );
+
+        // v0.2.5-alpha: 非同期ジョブ方式のJavaScript
+        if ( 'blog-poster_page_blog-poster-generate' === $hook ) {
+            wp_enqueue_script(
+                'blog-poster-generator',
+                BLOG_POSTER_PLUGIN_URL . 'assets/js/admin-generator.js',
+                array( 'jquery' ),
+                BLOG_POSTER_VERSION,
+                true
+            );
+
+            wp_localize_script(
+                'blog-poster-generator',
+                'blogPosterAjax',
+                array(
+                    'ajaxurl' => admin_url( 'admin-ajax.php' ),
+                    'nonce'   => wp_create_nonce( 'blog_poster_nonce' ),
+                )
+            );
+        }
 
         // AJAX用のデータを渡す
         wp_localize_script(
@@ -347,5 +372,95 @@ class Blog_Poster_Admin {
             default:
                 return 'AI';
         }
+    }
+
+    /**
+     * Ajax: ジョブ作成
+     *
+     * @since 0.2.5-alpha
+     */
+    public function ajax_create_job() {
+        check_ajax_referer( 'blog_poster_nonce', 'nonce' );
+
+        $topic = isset( $_POST['topic'] ) ? sanitize_text_field( wp_unslash( $_POST['topic'] ) ) : '';
+        $additional_instructions = isset( $_POST['additional_instructions'] ) ? sanitize_textarea_field( wp_unslash( $_POST['additional_instructions'] ) ) : '';
+
+        if ( empty( $topic ) ) {
+            wp_send_json_error( array( 'message' => 'トピックを入力してください' ) );
+        }
+
+        $job_manager = new Blog_Poster_Job_Manager();
+        $job_id      = $job_manager->create_job( $topic, $additional_instructions );
+
+        wp_send_json_success(
+            array(
+                'job_id'  => $job_id,
+                'message' => 'ジョブを作成しました',
+            )
+        );
+    }
+
+    /**
+     * Ajax: ステップ実行
+     *
+     * @since 0.2.5-alpha
+     */
+    public function ajax_process_step() {
+        check_ajax_referer( 'blog_poster_nonce', 'nonce' );
+
+        $job_id = isset( $_POST['job_id'] ) ? intval( $_POST['job_id'] ) : 0;
+        $step   = isset( $_POST['step'] ) ? sanitize_text_field( wp_unslash( $_POST['step'] ) ) : '';
+
+        if ( ! $job_id || ! $step ) {
+            wp_send_json_error( array( 'message' => 'パラメータが不正です' ) );
+        }
+
+        $job_manager = new Blog_Poster_Job_Manager();
+
+        switch ( $step ) {
+            case 'outline':
+                $result = $job_manager->process_step_outline( $job_id );
+                break;
+            case 'content':
+                $result = $job_manager->process_step_content( $job_id );
+                break;
+            case 'review':
+                $result = $job_manager->process_step_review( $job_id );
+                break;
+            default:
+                wp_send_json_error( array( 'message' => '不明なステップです' ) );
+        }
+
+        if ( $result['success'] ) {
+            wp_send_json_success( $result );
+        } else {
+            wp_send_json_error( $result );
+        }
+    }
+
+    /**
+     * Ajax: ジョブステータス取得
+     *
+     * @since 0.2.5-alpha
+     */
+    public function ajax_get_job_status() {
+        check_ajax_referer( 'blog_poster_nonce', 'nonce' );
+
+        $job_id = isset( $_POST['job_id'] ) ? intval( $_POST['job_id'] ) : 0;
+
+        $job_manager = new Blog_Poster_Job_Manager();
+        $job         = $job_manager->get_job( $job_id );
+
+        if ( ! $job ) {
+            wp_send_json_error( array( 'message' => 'ジョブが見つかりません' ) );
+        }
+
+        wp_send_json_success(
+            array(
+                'status'       => $job['status'],
+                'current_step' => $job['current_step'],
+                'total_steps'  => $job['total_steps'],
+            )
+        );
     }
 }

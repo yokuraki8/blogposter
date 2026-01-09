@@ -68,6 +68,40 @@ $settings = get_option( 'blog_poster_settings', array() );
             </form>
         </div>
 
+        <!-- プログレスバー表示 (v0.2.5-alpha) -->
+        <div class="generate-progress-section" id="progress-container" style="display: none;">
+            <h2><?php _e( '記事生成中', 'blog-poster' ); ?></h2>
+            <div class="progress-wrapper">
+                <div class="progress-bar-container">
+                    <div class="progress-bar" id="progress-bar" role="progressbar" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+                        0%
+                    </div>
+                </div>
+                <p class="progress-message" id="progress-message">準備中...</p>
+            </div>
+        </div>
+
+        <!-- エラー表示 -->
+        <div class="generate-error-section" id="error-message" style="display: none;"></div>
+
+        <!-- 結果表示 -->
+        <div class="generate-result-section" id="result-container" style="display: none;">
+            <h2><?php _e( '生成結果', 'blog-poster' ); ?></h2>
+            <div class="result-meta">
+                <p><strong><?php _e( 'タイトル:', 'blog-poster' ); ?></strong> <span id="result-title"></span></p>
+                <p><strong><?php _e( 'Slug:', 'blog-poster' ); ?></strong> <span id="result-slug"></span></p>
+                <p><strong><?php _e( '抜粋:', 'blog-poster' ); ?></strong> <span id="result-excerpt"></span></p>
+            </div>
+            <div id="validation-issues" style="display: none;"></div>
+            <div class="result-content" id="result-content"></div>
+            <p class="submit">
+                <button type="button" class="button button-primary button-hero" id="create-post-button" disabled>
+                    <span class="dashicons dashicons-admin-post"></span>
+                    <?php _e( '投稿を作成', 'blog-poster' ); ?>
+                </button>
+            </p>
+        </div>
+
         <div class="generate-preview-section" id="preview-section" style="display: none;">
             <h2><?php _e( '生成結果プレビュー', 'blog-poster' ); ?></h2>
             <div id="preview-content"></div>
@@ -76,17 +110,28 @@ $settings = get_option( 'blog_poster_settings', array() );
 </div>
 
 <style>
+/* v0.2.5-alpha: 非同期ジョブ方式のスタイル */
 .blog-poster-generate-container {
     max-width: 900px;
 }
 
 .generate-form-section,
-.generate-preview-section {
+.generate-preview-section,
+.generate-progress-section,
+.generate-error-section,
+.generate-result-section {
     background: #fff;
     border: 1px solid #c3c4c7;
     box-shadow: 0 1px 1px rgba(0,0,0,.04);
     padding: 24px;
     margin: 20px 0;
+}
+
+.generate-error-section {
+    background: #fef8f8;
+    border-color: #cc1818;
+    color: #cc1818;
+    padding: 15px;
 }
 
 #generate-button {
@@ -95,148 +140,97 @@ $settings = get_option( 'blog_poster_settings', array() );
     gap: 8px;
 }
 
-#preview-content {
-    padding: 20px;
-    background: #f6f7f7;
-    border: 1px solid #dcdcde;
+/* プログレスバー */
+.progress-wrapper {
+    margin: 20px 0;
+}
+
+.progress-bar-container {
+    width: 100%;
+    height: 40px;
+    background-color: #f0f0f1;
     border-radius: 4px;
-}
-</style>
-
-<script>
-jQuery(document).ready(function($) {
-    $('#blog-poster-generate-form').on('submit', function(e) {
-        e.preventDefault();
-
-        const $button = $('#generate-button');
-        const originalText = $button.html();
-        const $previewSection = $('#preview-section');
-        const $previewContent = $('#preview-content');
-
-        // フォームデータ取得
-        const topic = $('#topic').val().trim();
-        const additionalInstructions = $('#additional_instructions').val().trim();
-
-        if (!topic) {
-            alert('<?php esc_js( _e( 'トピックを入力してください。', 'blog-poster' ) ); ?>');
-            return;
-        }
-
-        // ボタンを無効化
-        $button.prop('disabled', true).html('<span class="dashicons dashicons-update-alt spin"></span> <?php esc_js( _e( '生成中...', 'blog-poster' ) ); ?>');
-        $previewSection.hide();
-
-        // AJAX リクエスト
-        $.ajax({
-            url: blogPosterAdmin.ajaxUrl,
-            type: 'POST',
-            data: {
-                action: 'blog_poster_generate_article',
-                nonce: blogPosterAdmin.nonce,
-                topic: topic,
-                additional_instructions: additionalInstructions
-            },
-            timeout: 120000, // 2分タイムアウト
-            success: function(response) {
-                if (response.success) {
-                    // 成功時の処理
-                    const data = response.data;
-
-                    // プレビュー表示
-                    let preview = '<div class="article-preview">';
-                    preview += '<h2 class="preview-title">' + data.article.title + '</h2>';
-                    preview += '<div class="preview-meta">';
-                    preview += '<p><strong><?php esc_js( _e( 'Slug:', 'blog-poster' ) ); ?></strong> ' + data.article.slug + '</p>';
-                    preview += '<p><strong><?php esc_js( _e( 'メタディスクリプション:', 'blog-poster' ) ); ?></strong> ' + data.article.meta_description + '</p>';
-                    preview += '<p><strong><?php esc_js( _e( '使用トークン数:', 'blog-poster' ) ); ?></strong> ' + data.tokens.toLocaleString() + '</p>';
-                    preview += '<p><strong><?php esc_js( _e( '残り記事数:', 'blog-poster' ) ); ?></strong> ' + data.remaining + '</p>';
-                    preview += '</div>';
-                    preview += '<div class="preview-content">' + data.article.content + '</div>';
-                    preview += '<div class="preview-actions">';
-                    preview += '<a href="' + data.post_url + '" class="button button-primary" target="_blank"><?php esc_js( _e( '投稿を編集', 'blog-poster' ) ); ?></a>';
-                    preview += '</div>';
-                    preview += '</div>';
-
-                    $previewContent.html(preview);
-                    $previewSection.fadeIn();
-
-                    // 成功メッセージ
-                    alert(data.message + '\n\n<?php esc_js( _e( '投稿を編集画面で確認できます。', 'blog-poster' ) ); ?>');
-
-                    // フォームをリセット
-                    $('#topic').val('');
-                    $('#additional_instructions').val('');
-
-                } else {
-                    // エラー時の処理
-                    alert('<?php esc_js( _e( 'エラー:', 'blog-poster' ) ); ?> ' + response.data.message);
-                }
-            },
-            error: function(xhr, status, error) {
-                console.error('AJAX Error:', error);
-
-                let errorMessage = '<?php esc_js( _e( '記事生成中にエラーが発生しました。', 'blog-poster' ) ); ?>';
-
-                if (status === 'timeout') {
-                    errorMessage = '<?php esc_js( _e( 'タイムアウトしました。もう一度お試しください。', 'blog-poster' ) ); ?>';
-                } else if (xhr.responseJSON && xhr.responseJSON.data && xhr.responseJSON.data.message) {
-                    errorMessage = xhr.responseJSON.data.message;
-                }
-
-                alert(errorMessage);
-            },
-            complete: function() {
-                // ボタンを有効化
-                $button.prop('disabled', false).html(originalText);
-            }
-        });
-    });
-});
-</script>
-
-<style>
-.dashicons.spin {
-    animation: rotation 2s infinite linear;
+    overflow: hidden;
+    box-shadow: inset 0 1px 2px rgba(0,0,0,.1);
 }
 
-@keyframes rotation {
-    from {
-        transform: rotate(0deg);
-    }
-    to {
-        transform: rotate(359deg);
-    }
+.progress-bar {
+    height: 100%;
+    background: linear-gradient(90deg, #2271b1 0%, #135e96 100%);
+    transition: width 0.5s ease;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-weight: 600;
+    font-size: 14px;
 }
 
-.article-preview {
-    padding: 20px;
+.progress-message {
+    text-align: center;
+    margin-top: 15px;
+    font-size: 15px;
+    color: #50575e;
+    font-weight: 500;
 }
 
-.preview-title {
-    margin-top: 0;
-    padding-bottom: 10px;
-    border-bottom: 2px solid #2271b1;
-}
-
-.preview-meta {
+/* 結果表示 */
+.result-meta {
     background: #f6f7f7;
     padding: 15px;
     margin: 15px 0;
     border-left: 4px solid #2271b1;
 }
 
-.preview-meta p {
+.result-meta p {
     margin: 5px 0;
 }
 
-.preview-content {
+.result-content {
     line-height: 1.8;
     margin: 20px 0;
+    padding: 20px;
+    background: #f9f9f9;
+    border: 1px solid #dcdcde;
+    border-radius: 4px;
+    max-height: 600px;
+    overflow-y: auto;
 }
 
-.preview-actions {
-    margin-top: 20px;
-    padding-top: 20px;
-    border-top: 1px solid #dcdcde;
+.result-content h2 {
+    margin-top: 1.5em;
+    padding-top: 0.5em;
+    border-top: 2px solid #e0e0e0;
+}
+
+.result-content h3 {
+    margin-top: 1.2em;
+}
+
+.result-content pre {
+    background: #282c34;
+    color: #abb2bf;
+    padding: 15px;
+    border-radius: 4px;
+    overflow-x: auto;
+}
+
+.result-content code {
+    background: #f0f0f1;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: 'Courier New', Courier, monospace;
+}
+
+.result-content pre code {
+    background: transparent;
+    padding: 0;
+}
+
+#preview-content {
+    padding: 20px;
+    background: #f6f7f7;
+    border: 1px solid #dcdcde;
+    border-radius: 4px;
 }
 </style>

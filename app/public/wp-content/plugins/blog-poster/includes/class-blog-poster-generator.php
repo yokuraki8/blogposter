@@ -517,6 +517,92 @@ PROMPT;
     }
 
     /**
+     * 導入部を生成
+     *
+     * @param array $outline アウトライン
+     * @return string 導入部
+     */
+    public function generate_intro( $outline ) {
+        $client = $this->get_ai_client();
+
+        if ( is_wp_error( $client ) ) {
+            return '';
+        }
+
+        $prompt = <<<PROMPT
+以下の記事の導入部を200〜300文字で作成してください。
+
+タイトル: {$outline['title']}
+想定読者: {$outline['target_reader']}
+読者の目標: {$outline['reader_goal']}
+
+【導入部の要件】
+- 読者の課題や疑問に共感する文から始める
+- この記事で何が得られるかを明示する
+- 読み進める動機を与える
+- 箇条書きは使わない
+
+Markdown形式で出力してください。見出しは不要です。
+PROMPT;
+
+        $response = $client->generate_text( $prompt );
+
+        return $response['success'] ? $response['data'] : '';
+    }
+
+    /**
+     * まとめを生成
+     *
+     * @param array  $outline アウトライン
+     * @param string $all_content 全コンテンツ
+     * @return string まとめ
+     */
+    public function generate_summary( $outline, $all_content ) {
+        $client = $this->get_ai_client();
+
+        if ( is_wp_error( $client ) ) {
+            return '';
+        }
+
+        $headings = $this->extract_headings( $all_content );
+
+        $prompt = <<<PROMPT
+以下の記事のまとめセクションを作成してください。
+
+【記事タイトル】
+{$outline['title']}
+
+【記事本文の要約】
+記事では以下のトピックを扱いました：
+{$headings}
+
+【まとめの要件】
+- H2「まとめ」から始める
+- 記事の要点を3〜5点で箇条書き
+- 読者が次に取るべき具体的なアクションを1つ提案
+- 200〜300文字程度
+
+Markdown形式で出力してください。
+PROMPT;
+
+        $response = $client->generate_text( $prompt );
+
+        return $response['success'] ? $response['data'] : '';
+    }
+
+    /**
+     * コンテンツから見出しを抽出
+     *
+     * @param string $content コンテンツ
+     * @return string 見出しリスト
+     */
+    private function extract_headings( $content ) {
+        preg_match_all( '/^##\s+(.+)$/m', $content, $matches );
+        $headings = isset( $matches[1] ) ? $matches[1] : array();
+        return ! empty( $headings ) ? implode( "\n", $headings ) : '（見出しなし）';
+    }
+
+    /**
      * Featured Image を生成
      *
      * @param string $topic トピック
