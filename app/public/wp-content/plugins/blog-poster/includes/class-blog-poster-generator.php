@@ -85,6 +85,7 @@ class Blog_Poster_Generator {
 
         foreach ( $article_json['blocks'] as $index => $block ) {
             if ( ! isset( $block['type'] ) || ! in_array( $block['type'], $allowed_types, true ) ) {
+                error_log( 'Blog Poster: Invalid block at index ' . $index . ': ' . json_encode( $block, JSON_UNESCAPED_UNICODE ) );
                 $issues[] = '不正なブロック種別: ' . ( $block['type'] ?? 'unknown' ) . ' (index: ' . $index . ')';
                 continue;
             }
