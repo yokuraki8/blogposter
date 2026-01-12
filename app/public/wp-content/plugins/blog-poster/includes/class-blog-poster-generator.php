@@ -54,6 +54,8 @@ class Blog_Poster_Generator {
         $json_str = $this->remove_all_control_chars_outside_strings( $json_str );
         $json_str = $this->sanitize_json_string( $json_str );
         $json_str = $this->remove_all_control_chars_outside_strings( $json_str );
+        $json_str = $this->sanitize_json_string_strict( $json_str );
+        $json_str = $this->sanitize_json_string_strict( $json_str );
 
         // 3. デバッグログ（最初の200文字）
         error_log( 'Blog Poster: Parsing JSON response (first 200 chars): ' . substr( $json_str, 0, 200 ) );
