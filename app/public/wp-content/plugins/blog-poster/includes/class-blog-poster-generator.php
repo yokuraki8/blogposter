@@ -40,13 +40,26 @@ class Blog_Poster_Generator {
      * @return array|WP_Error
      */
     private function parse_json_blocks_response( $response ) {
-        $json_str = preg_replace( '/```json\\s*\\n/', '', $response );
-        $json_str = preg_replace( '/```\\s*$/', '', $json_str );
+        // JSONブロックを抽出（より厳密に）
+        // 1. ```jsonブロックの開始から末尾の```までを抽出
+        $json_str = preg_replace( '/^.*?```json\\s*\\n/s', '', $response );
+        $json_str = preg_replace( '/\\n```.*$/s', '', $json_str );
+
+        // 2. 前後の不要な空白を削除
         $json_str = trim( $json_str );
 
+        // 3. デバッグログ（最初の200文字）
+        error_log( 'Blog Poster: Parsing JSON response (first 200 chars): ' . substr( $json_str, 0, 200 ) );
+
         $data = json_decode( $json_str, true );
+
         if ( json_last_error() !== JSON_ERROR_NONE ) {
-            return new WP_Error( 'json_parse_error', 'JSONパースエラー: ' . json_last_error_msg() );
+            $error_msg = json_last_error_msg();
+            error_log( 'Blog Poster: JSON parse error: ' . $error_msg );
+            error_log( 'Blog Poster: Response length: ' . strlen( $json_str ) );
+            error_log( 'Blog Poster: Response sample (first 500 chars): ' . substr( $json_str, 0, 500 ) );
+            error_log( 'Blog Poster: Response sample (last 500 chars): ' . substr( $json_str, -500 ) );
+            return new WP_Error( 'json_parse_error', 'JSONパースエラー: ' . $error_msg );
         }
 
         return $data;
@@ -403,21 +416,33 @@ PROMPT;
      * @return array|WP_Error パース結果またはエラー
      */
     private function parse_json_outline( $response ) {
-        // コードブロックを除去（```json ... ``` の形式に対応）
-        $json_str = preg_replace( '/```json\s*\n/', '', $response );
-        $json_str = preg_replace( '/```\s*$/', '', $json_str );
+        // JSONブロックを抽出（より厳密に）
+        // 1. ```jsonブロックの開始から末尾の```までを抽出
+        $json_str = preg_replace( '/^.*?```json\\s*\\n/s', '', $response );
+        $json_str = preg_replace( '/\\n```.*$/s', '', $json_str );
+
+        // 2. 前後の不要な空白を削除
         $json_str = trim( $json_str );
+
+        // 3. デバッグログ（最初の200文字）
+        error_log( 'Blog Poster: Parsing JSON outline (first 200 chars): ' . substr( $json_str, 0, 200 ) );
 
         $data = json_decode( $json_str, true );
 
         if ( json_last_error() !== JSON_ERROR_NONE ) {
-            return new WP_Error( 'json_parse_error', 'JSONパースエラー: ' . json_last_error_msg() );
+            $error_msg = json_last_error_msg();
+            error_log( 'Blog Poster: JSON parse error (outline): ' . $error_msg );
+            error_log( 'Blog Poster: Outline response length: ' . strlen( $json_str ) );
+            error_log( 'Blog Poster: Outline response sample (first 500 chars): ' . substr( $json_str, 0, 500 ) );
+            error_log( 'Blog Poster: Outline response sample (last 500 chars): ' . substr( $json_str, -500 ) );
+            return new WP_Error( 'json_parse_error', 'JSONパースエラー: ' . $error_msg );
         }
 
         // 必須フィールドの検証
         $required_fields = array( 'title', 'slug', 'meta_description', 'excerpt', 'sections' );
         foreach ( $required_fields as $field ) {
             if ( ! isset( $data[ $field ] ) ) {
+                error_log( "Blog Poster: Missing required field in outline: {$field}" );
                 return new WP_Error( 'missing_field', "必須フィールドが不足しています: {$field}" );
             }
         }
