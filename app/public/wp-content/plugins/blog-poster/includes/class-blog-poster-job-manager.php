@@ -72,14 +72,10 @@ class Blog_Poster_Job_Manager {
 			status varchar(20) DEFAULT 'pending',
 			current_step int(11) DEFAULT 0,
 			total_steps int(11) DEFAULT 3,
-			section_index int(11) DEFAULT 0,
-			sections_total int(11) DEFAULT 0,
-			subsection_index int(11) DEFAULT 0,
-			subsections_total int(11) DEFAULT 0,
-			previous_summary longtext,
-			outline longtext,
-			sections_content longtext,
-			final_content longtext,
+			outline_md longtext,
+			content_md longtext,
+			final_markdown longtext,
+			final_html longtext,
 			error_message text,
 			created_at datetime DEFAULT CURRENT_TIMESTAMP,
 			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -204,29 +200,37 @@ class Blog_Poster_Job_Manager {
 		try {
 			$additional_instructions = $job['additional_instructions'] ?? '';
 
-			$outline = $this->generator->generate_outline( $job['topic'], $additional_instructions );
+			$outline_md  = null;
+			$last_error  = '';
+			$max_attempt = 2;
 
-			if ( is_wp_error( $outline ) ) {
-				throw new Exception( $outline->get_error_message() );
+			for ( $attempt = 0; $attempt < $max_attempt; $attempt++ ) {
+				$outline_md = $this->generator->generate_outline_markdown( $job['topic'], $additional_instructions );
+
+				if ( ! is_wp_error( $outline_md ) ) {
+					break;
+				}
+
+				$last_error = $outline_md->get_error_message();
+				error_log( 'Blog Poster: Outline generation retry ' . ( $attempt + 1 ) . ' failed: ' . $last_error );
+			}
+
+			if ( is_wp_error( $outline_md ) || null === $outline_md ) {
+				throw new Exception( $last_error ?: 'アウトライン生成に失敗しました。' );
 			}
 
 			$this->update_job(
 				$job_id,
 				array(
-					'outline'      => wp_json_encode( $outline, JSON_UNESCAPED_UNICODE ),
+					'outline_md'   => $outline_md,
 					'current_step' => 1,
-					'section_index' => 0,
-					'sections_total' => isset( $outline['sections'] ) && is_array( $outline['sections'] ) ? count( $outline['sections'] ) : 0,
-					'subsection_index' => 0,
-					'subsections_total' => 0,
-					'previous_summary' => '',
 				)
 			);
 
 			return array(
 				'success' => true,
 				'message' => 'アウトライン生成完了',
-				'outline' => $outline,
+				'outline' => $outline_md,
 			);
 
 		} catch ( Exception $e ) {
@@ -245,7 +249,7 @@ class Blog_Poster_Job_Manager {
 	}
 
 	/**
-	 * Step 2: 本文生成
+	 * Step 2: 本文生成 (Markdown形式)
 	 *
 	 * @param int $job_id ジョブID
 	 * @return array 実行結果
@@ -269,161 +273,25 @@ class Blog_Poster_Job_Manager {
 		);
 
 		try {
-			$outline = json_decode( $job['outline'], true );
+			$outline_md = $job['outline_md'] ?? '';
 			$topic   = $job['topic'];
 			$additional_instructions = $job['additional_instructions'] ?? '';
-			$section_index = isset( $job['section_index'] ) ? (int) $job['section_index'] : 0;
-			$sections_total = isset( $job['sections_total'] ) ? (int) $job['sections_total'] : 0;
-			$subsection_index = isset( $job['subsection_index'] ) ? (int) $job['subsection_index'] : 0;
-			$subsections_total = isset( $job['subsections_total'] ) ? (int) $job['subsections_total'] : 0;
-			$previous_summary = isset( $job['previous_summary'] ) ? (string) $job['previous_summary'] : '';
 
-			if ( $this->generator->is_json_output_enabled() ) {
-				if ( ! isset( $outline['sections'] ) || ! is_array( $outline['sections'] ) ) {
-					throw new Exception( 'Invalid outline data' );
-				}
-
-				if ( 0 === $sections_total ) {
-					$sections_total = count( $outline['sections'] );
-				}
-
-				$blocks = array();
-				if ( ! empty( $job['sections_content'] ) ) {
-					$decoded_blocks = json_decode( $job['sections_content'], true );
-					if ( is_array( $decoded_blocks ) ) {
-						$blocks = $decoded_blocks;
-					}
-				}
-
-				if ( 0 === $section_index && empty( $blocks ) ) {
-					$intro_blocks = $this->generator->generate_intro_blocks( $outline );
-					if ( is_wp_error( $intro_blocks ) ) {
-						throw new Exception( $intro_blocks->get_error_message() );
-					}
-					$blocks = array_merge( $blocks, $intro_blocks );
-				}
-
-				if ( $section_index < $sections_total ) {
-					$current_section = $outline['sections'][ $section_index ];
-					$subsections = isset( $current_section['subsections'] ) && is_array( $current_section['subsections'] ) ? $current_section['subsections'] : array();
-					if ( 0 === $subsections_total ) {
-						$subsections_total = count( $subsections );
-					}
-
-					if ( 0 === $subsection_index && ! empty( $current_section['h2'] ) ) {
-						$last_block = ! empty( $blocks ) ? end( $blocks ) : null;
-						if ( ! is_array( $last_block ) || 'h2' !== ( $last_block['type'] ?? '' ) || $last_block['content'] !== $current_section['h2'] ) {
-							$blocks[] = array(
-								'type'    => 'h2',
-								'content' => $current_section['h2'],
-							);
-						}
-					}
-
-					if ( $subsection_index < $subsections_total ) {
-						$current_subsection = $subsections[ $subsection_index ];
-						$sub_blocks = $this->generator->generate_subsection_blocks(
-							$current_section,
-							$current_subsection,
-							$topic,
-							$previous_summary,
-							$additional_instructions
-						);
-
-						if ( is_wp_error( $sub_blocks ) ) {
-							throw new Exception( $sub_blocks->get_error_message() );
-						}
-
-						$blocks[] = array(
-							'type'    => 'h3',
-							'content' => $current_subsection['h3'],
-						);
-
-						foreach ( $sub_blocks as $block ) {
-							$blocks[] = $block;
-						}
-
-						$code_blocks = $this->generator->generate_subsection_code_blocks(
-							$current_section,
-							$current_subsection,
-							$topic,
-							$previous_summary,
-							$additional_instructions
-						);
-
-						if ( ! is_wp_error( $code_blocks ) ) {
-							$blocks = $this->generator->merge_section_blocks_with_code( $blocks, $code_blocks );
-						}
-
-						$subsection_index++;
-					}
-
-					if ( $subsection_index >= $subsections_total ) {
-						$section_index++;
-						$subsection_index = 0;
-						$subsections_total = 0;
-					}
-				}
-
-				$content_done = $section_index >= $sections_total;
-				$final_content = '';
-
-				if ( $content_done ) {
-					$summary_blocks = $this->generator->generate_summary_blocks( $outline, '' );
-					if ( is_wp_error( $summary_blocks ) ) {
-						throw new Exception( $summary_blocks->get_error_message() );
-					}
-
-					$blocks = array_merge( $blocks, $summary_blocks );
-
-					$article_json = array(
-						'meta'   => array(
-							'title'            => $outline['title'],
-							'slug'             => $outline['slug'],
-							'meta_description' => $outline['meta_description'],
-							'excerpt'          => $outline['excerpt'],
-							'keywords'         => isset( $outline['keywords'] ) ? $outline['keywords'] : array(),
-						),
-						'blocks' => $blocks,
-					);
-
-					$final_content = wp_json_encode( $article_json, JSON_UNESCAPED_UNICODE );
-				}
-
-				$this->update_job(
-					$job_id,
-					array(
-						'sections_content' => wp_json_encode( $blocks, JSON_UNESCAPED_UNICODE ),
-						'final_content'    => $final_content,
-						'current_step'     => 2,
-					'section_index'     => $section_index,
-					'sections_total'    => $sections_total,
-					'subsection_index'  => $subsection_index,
-					'subsections_total' => $subsections_total,
-					'previous_summary'  => $previous_summary,
-				)
-			);
-
-				return array(
-					'success'         => true,
-					'message'         => $content_done ? '本文生成完了' : '本文生成中',
-					'content_preview' => '' !== $final_content ? mb_substr( $final_content, 0, 500 ) . '...' : '',
-					'current_section' => $section_index,
-					'total_sections'  => $sections_total,
-					'current_subsection' => $subsection_index,
-					'total_subsections'  => $subsections_total,
-					'done'            => $content_done,
-				);
+			if ( empty( $outline_md ) ) {
+				throw new Exception( 'アウトラインが見つかりません。' );
 			}
 
-			// 旧Markdown方式
-			$intro = $this->generator->generate_intro( $outline );
+			// Markdownアウトラインから本文を生成
+			$content_md = '';
 
-			$sections         = array();
+			// セクション単位で本文を生成
+			// TODO: outline_mdをパースしてセクション情報を抽出
+			$sections_md = $this->extract_sections_from_outline_markdown( $outline_md );
+
 			$previous_summary = '';
 
-			foreach ( $outline['sections'] as $section ) {
-				$section_result = $this->generator->generate_section_content(
+			foreach ( $sections_md as $section ) {
+				$section_result = $this->generator->generate_section_markdown(
 					$section,
 					$topic,
 					$previous_summary,
@@ -431,32 +299,26 @@ class Blog_Poster_Job_Manager {
 				);
 
 				if ( is_wp_error( $section_result ) ) {
-					error_log( 'Blog Poster: Section generation failed for ' . $section['h2'] . ': ' . $section_result->get_error_message() );
+					error_log( 'Blog Poster: Section generation failed for ' . $section['title'] . ': ' . $section_result->get_error_message() );
 					continue;
 				}
 
-				$sections[]       = $section_result['content'];
-				$previous_summary = $section_result['summary'];
+				$content_md .= $section_result . "\n\n";
+				$previous_summary = $section_result;
 			}
-
-			$all_content = implode( "\n\n", $sections );
-			$summary     = $this->generator->generate_summary( $outline, $all_content );
-
-			$full_content = $intro . "\n\n" . $all_content . "\n\n" . $summary;
 
 			$this->update_job(
 				$job_id,
 				array(
-					'sections_content' => wp_json_encode( $sections, JSON_UNESCAPED_UNICODE ),
-					'final_content'    => $full_content,
-					'current_step'     => 2,
+					'content_md'   => $content_md,
+					'current_step' => 2,
 				)
 			);
 
 			return array(
 				'success'         => true,
 				'message'         => '本文生成完了',
-				'content_preview' => mb_substr( $full_content, 0, 500 ) . '...',
+				'content_preview' => mb_substr( $content_md, 0, 500 ) . '...',
 			);
 
 		} catch ( Exception $e ) {
@@ -475,7 +337,7 @@ class Blog_Poster_Job_Manager {
 	}
 
 	/**
-	 * Step 3: レビューと最終化
+	 * Step 3: レビューと最終化 (Markdown-First)
 	 *
 	 * @param int $job_id ジョブID
 	 * @return array 実行結果
@@ -499,148 +361,51 @@ class Blog_Poster_Job_Manager {
 		);
 
 		try {
-			$outline = json_decode( $job['outline'], true );
-			$content = $job['final_content'];
-			$topic   = $job['topic'];
-			$additional_instructions = $job['additional_instructions'] ?? '';
-			$section_index = isset( $job['section_index'] ) ? (int) $job['section_index'] : 0;
-			$sections_total = isset( $job['sections_total'] ) ? (int) $job['sections_total'] : 0;
+			$content_md = $job['content_md'] ?? '';
+			$topic      = $job['topic'];
+			$outline_md = $job['outline_md'] ?? '';
 
-			if ( $sections_total > 0 && $section_index < $sections_total ) {
-				throw new Exception( '本文生成が完了していません。' );
+			if ( empty( $content_md ) ) {
+				throw new Exception( '本文が見つかりません。' );
 			}
 
-			if ( $this->generator->is_json_output_enabled() ) {
-				$article_json    = json_decode( $content, true );
-				$json_validation = $this->generator->validate_article_json( $article_json );
+			// Markdown後処理
+			$final_markdown = $this->generator->postprocess_markdown( $content_md );
 
-				if ( ! $json_validation['valid'] ) {
-					$regenerated = $this->regenerate_content_from_outline( $outline, $topic, $additional_instructions );
-					if ( is_wp_error( $regenerated ) ) {
-						$message = 'JSON検証に失敗し、再生成も失敗しました: ' . $regenerated->get_error_message();
-						$this->update_job(
-							$job_id,
-							array(
-								'status'        => 'failed',
-								'error_message' => $message,
-							)
-						);
-						return array(
-							'success'    => false,
-							'message'    => $message,
-							'validation' => $json_validation,
-						);
-					}
-
-					$content         = $regenerated;
-					$article_json    = json_decode( $content, true );
-					$json_validation = $this->generator->validate_article_json( $article_json );
-
-					if ( ! $json_validation['valid'] ) {
-						$message = 'JSON再生成後の検証に失敗しました: ' . implode( ' / ', $json_validation['issues'] );
-						$this->update_job(
-							$job_id,
-							array(
-								'status'        => 'failed',
-								'error_message' => $message,
-							)
-						);
-						return array(
-							'success'    => false,
-							'message'    => $message,
-							'validation' => $json_validation,
-						);
-					}
-				}
-
-				$this->update_job(
-					$job_id,
-					array(
-						'status'        => 'completed',
-						'final_content' => $content,
-						'current_step'  => 3,
-					)
-				);
-
-				return array(
-					'success'          => true,
-					'message'          => '記事生成完了',
-					'title'            => $outline['title'],
-					'slug'             => $outline['slug'],
-					'meta_description' => $outline['meta_description'],
-					'excerpt'          => $outline['excerpt'],
-					'content'          => $content,
-					'keywords'         => isset( $outline['keywords'] ) ? $outline['keywords'] : array(),
-					'validation'       => $json_validation,
-				);
+			if ( is_wp_error( $final_markdown ) ) {
+				throw new Exception( $final_markdown->get_error_message() );
 			}
 
-			// 旧Markdown方式
-			$content = $this->generator->fix_code_blocks( $content );
+			// MarkdownからHTMLへ変換
+			$final_html = $this->generator->markdown_to_html( $final_markdown );
 
-			$content = $this->generator->fact_check_claude_references( $content );
-
-			$code_validation = $this->generator->validate_code_blocks( $content );
-			if ( ! $code_validation['valid'] ) {
-				$regenerated = $this->regenerate_content_from_outline( $outline, $topic, $additional_instructions );
-				if ( is_wp_error( $regenerated ) ) {
-					$message = 'コードブロック検証に失敗し、再生成も失敗しました: ' . $regenerated->get_error_message();
-					$this->update_job(
-						$job_id,
-						array(
-							'status'        => 'failed',
-							'error_message' => $message,
-						)
-					);
-					return array(
-						'success'    => false,
-						'message'    => $message,
-						'validation' => $code_validation,
-					);
-				}
-
-				$content = $this->generator->fix_code_blocks( $regenerated );
-				$content = $this->generator->fact_check_claude_references( $content );
-
-				$code_validation = $this->generator->validate_code_blocks( $content );
-				if ( ! $code_validation['valid'] ) {
-					$message = 'コードブロック再生成後の検証に失敗しました: ' . implode( ' / ', $code_validation['issues'] );
-					$this->update_job(
-						$job_id,
-						array(
-							'status'        => 'failed',
-							'error_message' => $message,
-						)
-					);
-					return array(
-						'success'    => false,
-						'message'    => $message,
-						'validation' => $code_validation,
-					);
-				}
+			if ( is_wp_error( $final_html ) ) {
+				throw new Exception( $final_html->get_error_message() );
 			}
-
-			$validation = $this->generator->validate_article( $content );
 
 			$this->update_job(
 				$job_id,
 				array(
-					'status'        => 'completed',
-					'final_content' => $content,
-					'current_step'  => 3,
+					'status'          => 'completed',
+					'final_markdown'  => $final_markdown,
+					'final_html'      => $final_html,
+					'current_step'    => 3,
 				)
 			);
+
+			// アウトラインからメタデータを抽出
+			$outline_metadata = $this->extract_metadata_from_outline_markdown( $outline_md );
 
 			return array(
 				'success'          => true,
 				'message'          => '記事生成完了',
-				'title'            => $outline['title'],
-				'slug'             => $outline['slug'],
-				'meta_description' => $outline['meta_description'],
-				'excerpt'          => $outline['excerpt'],
-				'content'          => $content,
-				'keywords'         => isset( $outline['keywords'] ) ? $outline['keywords'] : array(),
-				'validation'       => $validation,
+				'title'            => $outline_metadata['title'] ?? 'Untitled',
+				'slug'             => $outline_metadata['slug'] ?? '',
+				'meta_description' => $outline_metadata['meta_description'] ?? '',
+				'excerpt'          => $outline_metadata['excerpt'] ?? '',
+				'markdown'         => $final_markdown,
+				'html'             => $final_html,
+				'keywords'         => $outline_metadata['keywords'] ?? array(),
 			);
 
 		} catch ( Exception $e ) {
@@ -659,88 +424,52 @@ class Blog_Poster_Job_Manager {
 	}
 
 	/**
-	 * アウトラインから本文を再生成
+	 * Markdownアウトラインからセクション情報を抽出
 	 *
-	 * @param array  $outline アウトライン
-	 * @param string $topic トピック
-	 * @param string $additional_instructions 追加指示
-	 * @return string|WP_Error 本文
+	 * @param string $outline_md Markdownアウトライン
+	 * @return array セクション情報配列
 	 */
-	private function regenerate_content_from_outline( $outline, $topic, $additional_instructions ) {
-		if ( $this->generator->is_json_output_enabled() ) {
-			$intro_blocks = $this->generator->generate_intro_blocks( $outline );
-			if ( is_wp_error( $intro_blocks ) ) {
-				return $intro_blocks;
-			}
+	private function extract_sections_from_outline_markdown( $outline_md ) {
+		// TODO: Markdown形式のアウトラインをパースしてセクション配列に変換
+		// 実装例: h2ヘッダーごとにセクションを分割
+		$sections = array();
 
-			$blocks           = $intro_blocks;
-			$previous_summary = '';
+		// プレースホルダー実装
+		preg_match_all( '/^## (.+)$/m', $outline_md, $matches );
 
-			foreach ( $outline['sections'] as $section ) {
-				$section_result = $this->generator->generate_section_blocks(
-					$section,
-					$topic,
-					$previous_summary,
-					$additional_instructions
-				);
-
-				if ( is_wp_error( $section_result ) ) {
-					error_log( "Blog Poster: Regeneration failed for section " . $section['h2'] . ": " . $section_result->get_error_message() );
-					continue;
-				}
-
-				$blocks           = array_merge( $blocks, $section_result['blocks'] );
-				$previous_summary = isset( $section_result['summary'] ) ? $section_result['summary'] : '';
-			}
-
-			$summary_blocks = $this->generator->generate_summary_blocks( $outline, '' );
-			if ( is_wp_error( $summary_blocks ) ) {
-				return $summary_blocks;
-			}
-
-			$blocks = array_merge( $blocks, $summary_blocks );
-
-			return wp_json_encode(
-				array(
-					'meta'   => array(
-						'title'            => $outline['title'],
-						'slug'             => $outline['slug'],
-						'meta_description' => $outline['meta_description'],
-						'excerpt'          => $outline['excerpt'],
-						'keywords'         => isset( $outline['keywords'] ) ? $outline['keywords'] : array(),
-					),
-					'blocks' => $blocks,
-				),
-				JSON_UNESCAPED_UNICODE
+		foreach ( $matches[1] as $title ) {
+			$sections[] = array(
+				'title' => $title,
+				'content' => '',
 			);
 		}
 
-		$sections_content = array();
-		$previous_summary = '';
+		return ! empty( $sections ) ? $sections : array();
+	}
 
-		foreach ( $outline['sections'] as $section ) {
-			$section_result = $this->generator->generate_section_content(
-				$section,
-				$topic,
-				$previous_summary,
-				$additional_instructions
-			);
+	/**
+	 * Markdownアウトラインからメタデータを抽出
+	 *
+	 * @param string $outline_md Markdownアウトライン
+	 * @return array メタデータ配列
+	 */
+	private function extract_metadata_from_outline_markdown( $outline_md ) {
+		$metadata = array(
+			'title'            => 'Untitled',
+			'slug'             => '',
+			'meta_description' => '',
+			'excerpt'          => '',
+			'keywords'         => array(),
+		);
 
-			if ( is_wp_error( $section_result ) ) {
-				error_log( "Blog Poster: Regeneration failed for section " . $section['h2'] . ": " . $section_result->get_error_message() );
-				continue;
-			}
+		// TODO: Markdown形式のアウトラインからメタデータをパース
+		// 実装例: YAML Front Matterまたはコメント形式から抽出
 
-			$sections_content[] = $section_result['content'];
-			$previous_summary   = $section_result['summary'];
+		// プレースホルダー実装
+		if ( preg_match( '/^# (.+)$/m', $outline_md, $matches ) ) {
+			$metadata['title'] = trim( $matches[1] );
 		}
 
-		$article_data = $this->generator->assemble_article( $outline, $sections_content, $topic );
-
-		if ( is_wp_error( $article_data ) ) {
-			return $article_data;
-		}
-
-		return $article_data['content'];
+		return $metadata;
 	}
 }
