@@ -1513,7 +1513,7 @@ PROMPT;
      * @param string $additional_instructions 追加指示
      * @return array|WP_Error
      */
-    private function generate_subsection_code_blocks( $section, $subsection, $topic, $previous_summary = '', $additional_instructions = '' ) {
+    public function generate_subsection_code_blocks( $section, $subsection, $topic, $previous_summary = '', $additional_instructions = '' ) {
         $client = $this->get_ai_client();
         if ( is_wp_error( $client ) ) {
             return $client;
