@@ -31,25 +31,31 @@ class Blog_Poster_OpenAI_Client extends Blog_Poster_AI_Client {
             return $this->error_response( __( 'OpenAI APIキーが設定されていません。', 'blog-poster' ) );
         }
 
-        $url = self::API_BASE_URL . 'chat/completions';
-
         $adjusted_prompt = $this->apply_tone_settings( $prompt );
 
-        $body = array(
-            'model' => $this->model,
-            'messages' => array(
-                array(
-                    'role' => 'user',
-                    'content' => $adjusted_prompt
-                )
-            ),
-            'temperature' => $this->temperature,
-            'max_tokens' => $this->max_tokens,
-        );
+        $is_gpt5 = ( 0 === strpos( $this->model, 'gpt-5' ) );
 
-        if ( 0 === strpos( $this->model, 'gpt-5' ) ) {
-            $body['max_completion_tokens'] = $this->max_tokens;
-            unset( $body['max_tokens'] );
+        if ( $is_gpt5 ) {
+            $url = self::API_BASE_URL . 'responses';
+            $body = array(
+                'model' => $this->model,
+                'input' => $adjusted_prompt,
+                'temperature' => $this->temperature,
+                'max_output_tokens' => $this->max_tokens,
+            );
+        } else {
+            $url = self::API_BASE_URL . 'chat/completions';
+            $body = array(
+                'model' => $this->model,
+                'messages' => array(
+                    array(
+                        'role' => 'user',
+                        'content' => $adjusted_prompt
+                    )
+                ),
+                'temperature' => $this->temperature,
+                'max_tokens' => $this->max_tokens,
+            );
         }
 
         $headers = array(
