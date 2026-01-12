@@ -176,7 +176,7 @@ class Blog_Poster_Generator {
             'type' => 'json_schema',
             'json_schema' => array(
                 'name' => 'blog_poster_blocks',
-                'description' => 'Blog Poster content blocks JSON schema. The output must be an array of semantic blocks forming a full-length, detailed SEO blog post.',
+                'description' => 'Blog Poster content blocks JSON schema. The output must be a sequence of blocks forming a FULL-LENGTH, DETAILED, and COMPREHENSIVE SEO blog post. Do not summarize.',
                 'strict' => true,
                 'schema' => array(
                     'type' => 'object',
@@ -185,27 +185,33 @@ class Blog_Poster_Generator {
                     'properties' => array(
                         'blocks' => array(
                             'type' => 'array',
-                            'description' => 'A sequence of blocks representing the article body. Must include multiple H2/H3 sections, detailed paragraphs, and lists.',
+                            'description' => 'An ordered list of content blocks that make up the article body. Must be extensive and detailed.',
                             'items' => array(
                                 'oneOf' => array(
                                     array(
                                         'type' => 'object',
                                         'additionalProperties' => false,
-                                        'description' => 'Headings for sectioning the article.',
+                                        'description' => 'Section headings. Use H2 for main sections and H3 for subsections.',
                                         'required' => array( 'type', 'content' ),
                                         'properties' => array(
                                             'type' => array( 'type' => 'string', 'enum' => array( 'h2', 'h3' ) ),
-                                            'content' => array( 'type' => 'string', 'description' => 'The heading text. Do not include markdown symbols like ##.' ),
+                                            'content' => array(
+                                                'type' => 'string',
+                                                'description' => 'The heading text. Engaging and SEO-optimized.',
+                                            ),
                                         ),
                                     ),
                                     array(
                                         'type' => 'object',
                                         'additionalProperties' => false,
-                                        'description' => 'Standard body text paragraphs.',
+                                        'description' => 'Main content paragraphs. MUST be detailed and long-form.',
                                         'required' => array( 'type', 'content' ),
                                         'properties' => array(
                                             'type' => array( 'type' => 'string', 'const' => 'text' ),
-                                            'content' => array( 'type' => 'string', 'description' => 'Detailed paragraph text. Should be comprehensive and high quality. Use markdown for bolding if necessary.' ),
+                                            'content' => array(
+                                                'type' => 'string',
+                                                'description' => 'A comprehensive, detailed paragraph explaining the topic in depth. Avoid short summaries. Write multiple sentences to fully cover the context.',
+                                            ),
                                         ),
                                     ),
                                     array(
@@ -215,8 +221,8 @@ class Blog_Poster_Generator {
                                         'required' => array( 'type', 'content', 'language' ),
                                         'properties' => array(
                                             'type' => array( 'type' => 'string', 'const' => 'code' ),
-                                            'content' => array( 'type' => 'string' ),
-                                            'language' => array( 'type' => 'string' ),
+                                            'content' => array( 'type' => 'string', 'description' => 'The code snippet.' ),
+                                            'language' => array( 'type' => 'string', 'description' => 'Programming language (e.g., php, javascript, python).' ),
                                         ),
                                     ),
                                     array(
@@ -228,6 +234,7 @@ class Blog_Poster_Generator {
                                             'type' => array( 'type' => 'string', 'const' => 'list' ),
                                             'items' => array(
                                                 'type' => 'array',
+                                                'description' => 'List items. Each item should be descriptive.',
                                                 'items' => array( 'type' => 'string' ),
                                             ),
                                         ),
