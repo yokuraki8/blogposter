@@ -1649,7 +1649,7 @@ PROMPT;
      * @param array $code_blocks コードブロック配列
      * @return array
      */
-    private function merge_section_blocks_with_code( $blocks, $code_blocks ) {
+    public function merge_section_blocks_with_code( $blocks, $code_blocks ) {
         if ( empty( $code_blocks ) ) {
             return $blocks;
         }
