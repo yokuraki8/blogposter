@@ -40,6 +40,9 @@ class Blog_Poster_Generator {
      * @return array|WP_Error
      */
     private function parse_json_blocks_response( $response ) {
+        // JSONブロックを抽出前に正規化
+        $response = $this->normalize_line_endings( $response );
+
         // JSONブロックを抽出（より厳密に）
         // 1. ```jsonブロックの開始から末尾の```までを抽出
         $json_str = preg_replace( '/^.*?```json\\s*\\n/s', '', $response );
@@ -48,7 +51,9 @@ class Blog_Poster_Generator {
         // 2. 前後の不要な空白を削除
         $json_str = trim( $json_str );
         $json_str = $this->sanitize_json_string( $json_str );
+        $json_str = $this->remove_all_control_chars_outside_strings( $json_str );
         $json_str = $this->sanitize_json_string( $json_str );
+        $json_str = $this->remove_all_control_chars_outside_strings( $json_str );
 
         // 3. デバッグログ（最初の200文字）
         error_log( 'Blog Poster: Parsing JSON response (first 200 chars): ' . substr( $json_str, 0, 200 ) );
@@ -225,6 +230,69 @@ class Blog_Poster_Generator {
     }
 
     /**
+     * CRLF/LF正規化関数
+     *
+     * @param string $text テキスト
+     * @return string
+     */
+    private function normalize_line_endings( $text ) {
+        // CRLF → LF
+        $text = str_replace( "\r\n", "\n", $text );
+        // CR → LF
+        $text = str_replace( "\r", "\n", $text );
+        return $text;
+    }
+
+    /**
+     * 全制御文字の除去関数（0x00-0x1F範囲）
+     *
+     * @param string $json_str JSON文字列
+     * @return string
+     */
+    private function remove_all_control_chars_outside_strings( $json_str ) {
+        $result = '';
+        $in_string = false;
+        $escape = false;
+        $length = strlen( $json_str );
+
+        for ( $i = 0; $i < $length; $i++ ) {
+            $char = $json_str[ $i ];
+            $ord = ord( $char );
+
+            if ( $in_string ) {
+                $result .= $char;
+                if ( $escape ) {
+                    $escape = false;
+                    continue;
+                }
+                if ( '\\' === $char ) {
+                    $escape = true;
+                    continue;
+                }
+                if ( '"' === $char ) {
+                    $in_string = false;
+                }
+                continue;
+            }
+
+            if ( '"' === $char ) {
+                $in_string = true;
+                $result .= $char;
+                continue;
+            }
+
+            // 文字列外の制御文字は除去（\n, \r, \t, スペースは許可）
+            if ( $ord < 0x20 && $char !== "\n" && $char !== "\r" && $char !== "\t" && $char !== " " ) {
+                continue;
+            }
+
+            $result .= $char;
+        }
+
+        return $result;
+    }
+
+    /**
      * JSON文字列の制御文字を除去
      *
      * @param string $json_str JSON文字列
@@ -314,7 +382,14 @@ class Blog_Poster_Generator {
         }
 
         $client = new Blog_Poster_OpenAI_Client( $api_key, 'gpt-4.1', $settings );
-        $prompt = "You are a JSON repair tool. Return a JSON object with a single key 'fixed' that contains the corrected JSON (as an object or array, not a string). Do not add explanations or markdown.\n\nINVALID JSON:\n" . $json_str;
+        $prompt = "You are a JSON repair tool. Fix the invalid JSON below by:\n"
+            . "1. Escaping unescaped newlines/tabs inside strings (use \\n and \\t)\n"
+            . "2. Removing or escaping control characters (0x00-0x1F)\n"
+            . "3. Fixing syntax errors\n"
+            . "4. Ensuring valid UTF-8\n\n"
+            . "Return ONLY valid JSON with a single key 'fixed' containing the corrected structure.\n"
+            . "Do not add explanations or markdown.\n\n"
+            . "INVALID JSON:\n" . $json_str;
         $response = $client->generate_text( $prompt, array( 'type' => 'json_object' ) );
         if ( ! $response['success'] ) {
             return '';
@@ -848,6 +923,9 @@ PROMPT;
      * @return array|WP_Error パース結果またはエラー
      */
     private function parse_json_outline( $response ) {
+        // JSONブロックを抽出前に正規化
+        $response = $this->normalize_line_endings( $response );
+
         // JSONブロックを抽出（より厳密に）
         // 1. ```jsonブロックの開始から末尾の```までを抽出
         $json_str = preg_replace( '/^.*?```json\\s*\\n/s', '', $response );
@@ -856,7 +934,9 @@ PROMPT;
         // 2. 前後の不要な空白を削除
         $json_str = trim( $json_str );
         $json_str = $this->sanitize_json_string( $json_str );
+        $json_str = $this->remove_all_control_chars_outside_strings( $json_str );
         $json_str = $this->sanitize_json_string( $json_str );
+        $json_str = $this->remove_all_control_chars_outside_strings( $json_str );
 
         // 3. デバッグログ（最初の200文字）
         error_log( 'Blog Poster: Parsing JSON outline (first 200 chars): ' . substr( $json_str, 0, 200 ) );
