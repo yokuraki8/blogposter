@@ -973,6 +973,12 @@ class Blog_Poster_Generator {
      * @return array|WP_Error アウトラインデータまたはエラー
      */
     public function generate_outline( $topic, $additional_instructions = '' ) {
+        static $logged_outline_path = false;
+        if ( ! $logged_outline_path ) {
+            error_log( 'Blog Poster: Outline generator loaded from ' . __FILE__ . ' (fallback disabled)' );
+            $logged_outline_path = true;
+        }
+
         $client = $this->get_ai_client();
 
         if ( is_wp_error( $client ) ) {
