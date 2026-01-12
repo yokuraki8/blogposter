@@ -47,6 +47,8 @@ class Blog_Poster_Generator {
 
         // 2. 前後の不要な空白を削除
         $json_str = trim( $json_str );
+        $json_str = $this->sanitize_json_string( $json_str );
+        $json_str = $this->sanitize_json_string( $json_str );
 
         // 3. デバッグログ（最初の200文字）
         error_log( 'Blog Poster: Parsing JSON response (first 200 chars): ' . substr( $json_str, 0, 200 ) );
@@ -63,6 +65,17 @@ class Blog_Poster_Generator {
         }
 
         return $data;
+    }
+
+    /**
+     * JSON文字列の制御文字を除去
+     *
+     * @param string $json_str JSON文字列
+     * @return string
+     */
+    private function sanitize_json_string( $json_str ) {
+        // JSONで不正になる制御文字を除去（タブ/改行は保持）
+        return preg_replace( '/[\x00-\x08\x0B\x0C\x0E-\x1F]/', '', $json_str );
     }
 
     /**
