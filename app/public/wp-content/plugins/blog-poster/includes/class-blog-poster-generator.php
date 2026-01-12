@@ -284,15 +284,20 @@ class Blog_Poster_Generator {
         }
 
         $client = new Blog_Poster_OpenAI_Client( $api_key, 'gpt-4o-mini', $settings );
-        $prompt = "You are a JSON repair tool. Return ONLY valid JSON. Do not add explanations or markdown.\n\nINVALID JSON:\n" . $json_str;
-        $response = $client->generate_text( $prompt );
+        $prompt = "You are a JSON repair tool. Return a JSON object with a single key 'fixed' that contains the corrected JSON (as an object or array, not a string). Do not add explanations or markdown.\n\nINVALID JSON:\n" . $json_str;
+        $response = $client->generate_text( $prompt, array( 'type' => 'json_object' ) );
         if ( ! $response['success'] ) {
             return '';
         }
 
-        $fixed = $this->sanitize_json_string( trim( $response['data'] ) );
-        $fragment = $this->extract_json_fragment( $fixed );
-        return '' !== $fragment ? $fragment : $fixed;
+        $fixed_payload = $this->sanitize_json_string( trim( $response['data'] ) );
+        $decoded = $this->json_decode_safe( $fixed_payload );
+        if ( is_array( $decoded ) && array_key_exists( 'fixed', $decoded ) ) {
+            return wp_json_encode( $decoded['fixed'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES );
+        }
+
+        $fragment = $this->extract_json_fragment( $fixed_payload );
+        return '' !== $fragment ? $fragment : $fixed_payload;
     }
 
     /**

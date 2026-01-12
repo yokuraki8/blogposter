@@ -68,6 +68,9 @@ class Blog_Poster_OpenAI_Client extends Blog_Poster_AI_Client {
                 'temperature' => $this->temperature,
                 'max_tokens' => $this->max_tokens,
             );
+            if ( ! empty( $response_format ) ) {
+                $body['response_format'] = $response_format;
+            }
         }
 
         $headers = array(
