@@ -209,7 +209,7 @@ class Blog_Poster_Generator {
             case 'openai':
             default:
                 $api_key = isset( $settings['openai_api_key'] ) ? $settings['openai_api_key'] : '';
-                $model = isset( $settings['default_model']['openai'] ) ? $settings['default_model']['openai'] : 'gpt-4o-mini';
+                $model = isset( $settings['default_model']['openai'] ) ? $settings['default_model']['openai'] : 'gpt-5.2';
                 $client = new Blog_Poster_OpenAI_Client( $api_key, $model, $settings );
                 break;
         }

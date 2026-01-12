@@ -204,7 +204,7 @@ class Blog_Poster {
             'default_model' => array(
                 'gemini' => 'gemini-1.5-pro',
                 'claude' => 'claude-3-5-sonnet-20241022',
-                'openai' => 'gpt-4o'
+                'openai' => 'gpt-5.2'
             ),
             'temperature' => 0.7,
             'max_tokens' => 2000,
