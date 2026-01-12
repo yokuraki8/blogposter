@@ -1353,57 +1353,47 @@ PROMPT;
             return $client;
         }
 
+        $section_blocks = array(
+            array(
+                'type'    => 'h2',
+                'content' => $section['h2'],
+            ),
+        );
+
         $context = '';
         if ( ! empty( $previous_summary ) ) {
-            $context = "【これまでの流れ】\n{$previous_summary}\n\n";
+            $context = "【前章までの要約】\n{$previous_summary}\n\n";
         }
 
-        $subsections_list = '';
-        if ( isset( $section['subsections'] ) ) {
-            foreach ( $section['subsections'] as $sub ) {
-                $subsections_list .= "- {$sub['h3']} ({$sub['content_type']}): {$sub['key_points']}\n";
-            }
-        }
+        if ( ! empty( $section['subsections'] ) && is_array( $section['subsections'] ) ) {
+            foreach ( $section['subsections'] as $index => $subsection ) {
+                $h3_prompt = <<<PROMPT
+あなたは「{$topic}」に関する専門家ライターです。
+現在、記事のセクション「{$section['h2']}」内の小見出し（H3）パートの執筆を行っています。
 
-        $prompt = <<<PROMPT
-あなたは{$topic}に関する実務経験を持つテクニカルライターです。
+【執筆対象の小見出し】
+H3: {$subsection['h3']}
 
-{$context}以下のセクション内容をJSONブロック配列で出力してください。
+【このH3の要点・構成案】
+{$subsection['key_points']}
+Content Type: {$subsection['content_type']}
 
-【セクション情報】
-見出し: {$section['h2']}
-目的: {$section['purpose']}
-読者の状態変化: {$section['reader_state_before']} → {$section['reader_state_after']}
-含めるべき内容: {$section['key_content']}
+【前後の文脈】
+{$context}親セクションの目的: {$section['purpose']}
 
-【サブセクション構成】
-{$subsections_list}
-
-【重要: 詳細度の要件】
-- 各サブセクション（h3）ごとに、最低3〜5個のtextブロックを含めること
-- 説明は具体的かつ実践的に。抽象的な説明（「重要です」「便利です」）は避ける
-- 手順がある場合は、ステップごとに分割して説明する
-- 比較や対比がある場合は、listブロックで明確に整理する
-
-【コンテンツの質的要件】
-- 実装例: このパスではコードを生成しない（後段で生成する）
-- 具体例: 抽象的な説明ではなく、実際の値や出力を示す
-- 読者の行動: 「〜を理解する」ではなく「〜を実装する」「〜を確認する」
-- 結果の明示: 各手順の実行結果や出力を必ず説明する
-
-【最低出力量の目安】
-- 1サブセクション（h3）あたり: h3 1個 + text 3〜5個 (+ list必要時)
-- セクション全体: 最低12〜20個のブロック
+【重要: 執筆ルール】
+1. 出力は必ず指定されたJSONスキーマに従うこと。
+2. H3見出し自体は出力せず、本文（text, list, code）のみを出力すること。
+3. 要約は禁止。極めて詳細に、長文で執筆すること。
+4. このH3パートだけで、最低でも3〜5つのブロック（段落）を使って深掘りすること。
+5. 具体例や実務的な手順を含めること。
+6. {$additional_instructions}
 
 【出力ルール - 絶対遵守】
 - Markdown記号（#, -, ```, ** など）を使わない
 - JSON以外のテキストは出力しない
 - codeブロックはこのパスでは出力しない
 - textブロックは段落ごとに分割（1ブロック＝1〜3文を目安）
-- 先頭ブロックは必ずh2（見出し: {$section['h2']}）
-- サブセクションごとにh3を入れて構成する
-- 要約は禁止。長文で詳細に書くこと
-- 見出しの間は複数のtextブロックで詳述すること
 - 文字列内の改行・タブは必ず \\n / \\t にエスケープする
 - 文字列内に生の改行やタブを入れない
 - ルートは必ず { "blocks": [...] } のオブジェクト
@@ -1412,37 +1402,37 @@ PROMPT;
 { "blocks": [ ... ] }
 
 ブロック種別とフィールド名（必ず"content"フィールドを使用）:
-- h2: { "type": "h2", "content": "見出しテキスト" }
-- h3: { "type": "h3", "content": "見出しテキスト" }
 - text: { "type": "text", "content": "段落テキスト（1〜3文）" }
 - list: { "type": "list", "items": ["具体的な項目1", "具体的な項目2"] }
 
 【重要】"text"フィールドは使用禁止。必ず"content"フィールドを使用すること
-
-【悪い例（薄い内容）】
-{ "type": "text", "content": "エラーハンドリングは重要です。" }
-
-【良い例（詳細な内容）】
-{ "type": "text", "content": "fetch APIでエラーが発生した場合、ネットワークエラーとHTTPステータスエラーの2種類を区別して処理する必要があります。" }
-{ "type": "text", "content": "まずネットワークエラー（接続失敗、タイムアウト）をcatch句でキャッチします。次にHTTPステータスコードが200番台以外の場合、レスポンスは成功しているがAPIとしてはエラーとして扱います。" }
-
-{$additional_instructions}
 PROMPT;
 
-        $response_format = $this->should_use_openai_schema( $client ) ? $this->get_openai_blocks_schema() : null;
-        $response = $client->generate_text( $prompt, $response_format );
+                $response_format = $this->should_use_openai_schema( $client ) ? $this->get_openai_blocks_schema() : null;
+                $response = $client->generate_text( $h3_prompt, $response_format );
 
-        if ( ! $response['success'] ) {
-            return new WP_Error( 'api_error', $response['error'] ?? 'APIエラー' );
-        }
+                if ( ! $response['success'] ) {
+                    error_log( 'Blog Poster: Subsection generation failed for ' . $subsection['h3'] . ': ' . ( $response['error'] ?? 'APIエラー' ) );
+                    continue;
+                }
 
-        $data = $this->parse_json_blocks_response( $response['data'] );
-        if ( is_wp_error( $data ) ) {
-            return $data;
-        }
+                $data = $this->parse_json_blocks_response( $response['data'] );
+                if ( is_wp_error( $data ) || empty( $data['blocks'] ) || ! is_array( $data['blocks'] ) ) {
+                    continue;
+                }
 
-        if ( ! isset( $data['blocks'] ) || ! is_array( $data['blocks'] ) ) {
-            return new WP_Error( 'invalid_blocks', 'blocks が取得できませんでした。' );
+                $section_blocks[] = array(
+                    'type'    => 'h3',
+                    'content' => $subsection['h3'],
+                );
+
+                foreach ( $data['blocks'] as $generated_block ) {
+                    if ( isset( $generated_block['type'] ) && in_array( $generated_block['type'], array( 'h2', 'h3' ), true ) ) {
+                        continue;
+                    }
+                    $section_blocks[] = $generated_block;
+                }
+            }
         }
 
         $code_blocks = $this->generate_section_code_blocks( $section, $topic, $previous_summary, $additional_instructions );
@@ -1450,11 +1440,11 @@ PROMPT;
             return $code_blocks;
         }
 
-        $merged_blocks = $this->merge_section_blocks_with_code( $data['blocks'], $code_blocks );
+        $merged_blocks = $this->merge_section_blocks_with_code( $section_blocks, $code_blocks );
 
         return array(
             'blocks'  => $merged_blocks,
-            'summary' => isset( $data['summary'] ) ? $data['summary'] : '',
+            'summary' => $previous_summary,
         );
     }
 
