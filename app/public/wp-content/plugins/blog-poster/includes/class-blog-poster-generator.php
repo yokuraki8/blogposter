@@ -210,6 +210,42 @@ class Blog_Poster_Generator {
     }
 
     /**
+     * OpenAI Structured Outputs用のJSONスキーマ（コードブロック専用）
+     *
+     * @return array
+     */
+    private function get_openai_code_blocks_schema() {
+        return array(
+            'type' => 'json_schema',
+            'json_schema' => array(
+                'name' => 'blog_poster_code_blocks',
+                'description' => 'Blog Poster code blocks JSON schema',
+                'strict' => true,
+                'schema' => array(
+                    'type' => 'object',
+                    'additionalProperties' => false,
+                    'required' => array( 'code_blocks' ),
+                    'properties' => array(
+                        'code_blocks' => array(
+                            'type' => 'array',
+                            'items' => array(
+                                'type' => 'object',
+                                'additionalProperties' => false,
+                                'required' => array( 'h3', 'language', 'content' ),
+                                'properties' => array(
+                                    'h3' => array( 'type' => 'string' ),
+                                    'language' => array( 'type' => 'string' ),
+                                    'content' => array( 'type' => 'string' ),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        );
+    }
+
+    /**
      * OpenAI Structured Outputsを使うか
      *
      * @param Blog_Poster_AI_Client $client AIクライアント
@@ -1239,25 +1275,23 @@ PROMPT;
 【重要: 詳細度の要件】
 - 各サブセクション（h3）ごとに、最低3〜5個のtextブロックを含めること
 - 説明は具体的かつ実践的に。抽象的な説明（「重要です」「便利です」）は避ける
-- codeブロックは、完全に動作する実装例を含める（10行以上推奨）
 - 手順がある場合は、ステップごとに分割して説明する
 - 比較や対比がある場合は、listブロックで明確に整理する
 
 【コンテンツの質的要件】
-- 実装例: コピペで動くコードを必ず含める（省略禁止）
+- 実装例: このパスではコードを生成しない（後段で生成する）
 - 具体例: 抽象的な説明ではなく、実際の値や出力を示す
 - 読者の行動: 「〜を理解する」ではなく「〜を実装する」「〜を確認する」
 - 結果の明示: 各手順の実行結果や出力を必ず説明する
 
 【最低出力量の目安】
-- 1サブセクション（h3）あたり: h3 1個 + text 3〜5個 + code 1〜2個
-- セクション全体: 最低15〜25個のブロック
-- codeブロック: 1つあたり最低10行、理想は20〜30行
+- 1サブセクション（h3）あたり: h3 1個 + text 3〜5個 (+ list必要時)
+- セクション全体: 最低12〜20個のブロック
 
 【出力ルール - 絶対遵守】
 - Markdown記号（#, -, ```, ** など）を使わない
 - JSON以外のテキストは出力しない
-- codeブロックのcontentはコードのみ（説明文を含めない）
+- codeブロックはこのパスでは出力しない
 - textブロックは段落ごとに分割（1ブロック＝1〜3文を目安）
 - 先頭ブロックは必ずh2（見出し: {$section['h2']}）
 - サブセクションごとにh3を入れて構成する
@@ -1272,19 +1306,19 @@ PROMPT;
 - h2: { "type": "h2", "content": "見出しテキスト" }
 - h3: { "type": "h3", "content": "見出しテキスト" }
 - text: { "type": "text", "content": "段落テキスト（1〜3文）" }
-- code: { "type": "code", "language": "javascript", "content": "完全なコード例（10行以上）" }
 - list: { "type": "list", "items": ["具体的な項目1", "具体的な項目2"] }
 
 【重要】"text"フィールドは使用禁止。必ず"content"フィールドを使用すること
+【重要】各ブロックには必ず "language" と "items" を含めること（未使用の場合は空文字/空配列）
+- h2/h3/text: "language": "", "items": []
+- list: "content": "", "language": "", "items": [ ... ]
 
 【悪い例（薄い内容）】
 { "type": "text", "content": "エラーハンドリングは重要です。" }
-{ "type": "code", "language": "javascript", "content": "try { } catch(e) { }" }
 
 【良い例（詳細な内容）】
 { "type": "text", "content": "fetch APIでエラーが発生した場合、ネットワークエラーとHTTPステータスエラーの2種類を区別して処理する必要があります。" }
 { "type": "text", "content": "まずネットワークエラー（接続失敗、タイムアウト）をcatch句でキャッチします。次にHTTPステータスコードが200番台以外の場合、レスポンスは成功しているがAPIとしてはエラーとして扱います。" }
-{ "type": "code", "language": "javascript", "content": "async function fetchWithErrorHandling(url) {\\n  try {\\n    const response = await fetch(url);\\n    \\n    if (!response.ok) {\\n      throw new Error(\`HTTP error! status: \${response.status}\`);\\n    }\\n    \\n    const data = await response.json();\\n    return { success: true, data };\\n  } catch (error) {\\n    if (error.name === 'TypeError') {\\n      return { success: false, error: 'ネットワークエラー' };\\n    }\\n    return { success: false, error: error.message };\\n  }\\n}" }
 
 {$additional_instructions}
 PROMPT;
@@ -1305,10 +1339,149 @@ PROMPT;
             return new WP_Error( 'invalid_blocks', 'blocks が取得できませんでした。' );
         }
 
+        $code_blocks = $this->generate_section_code_blocks( $section, $topic, $previous_summary, $additional_instructions );
+        if ( is_wp_error( $code_blocks ) ) {
+            return $code_blocks;
+        }
+
+        $merged_blocks = $this->merge_section_blocks_with_code( $data['blocks'], $code_blocks );
+
         return array(
-            'blocks'  => $data['blocks'],
+            'blocks'  => $merged_blocks,
             'summary' => isset( $data['summary'] ) ? $data['summary'] : '',
         );
+    }
+
+    /**
+     * セクションのコードブロックだけを生成
+     *
+     * @param array  $section セクション情報
+     * @param string $topic トピック
+     * @param string $previous_summary 前セクションの要約
+     * @param string $additional_instructions 追加指示
+     * @return array|WP_Error
+     */
+    private function generate_section_code_blocks( $section, $topic, $previous_summary = '', $additional_instructions = '' ) {
+        $client = $this->get_ai_client();
+        if ( is_wp_error( $client ) ) {
+            return $client;
+        }
+
+        $context = '';
+        if ( ! empty( $previous_summary ) ) {
+            $context = "【これまでの流れ】\n{$previous_summary}\n\n";
+        }
+
+        $subsections_list = '';
+        if ( isset( $section['subsections'] ) ) {
+            foreach ( $section['subsections'] as $sub ) {
+                $subsections_list .= "- {$sub['h3']} ({$sub['content_type']}): {$sub['key_points']}\n";
+            }
+        }
+
+        $prompt = <<<PROMPT
+あなたは{$topic}に関する実務経験を持つテクニカルライターです。
+
+{$context}以下のセクションに対応する「コードブロックのみ」をJSONで出力してください。
+
+【セクション情報】
+見出し: {$section['h2']}
+含めるべき内容: {$section['key_content']}
+
+【サブセクション構成】
+{$subsections_list}
+
+【出力ルール - 絶対遵守】
+- JSON以外のテキストは出力しない
+- 文字列内の改行・タブは必ず \\n / \\t にエスケープする
+- 文字列内に生の改行やタブを入れない
+- 各h3につきコードブロックを0〜2個生成（必要がない場合は0）
+- codeブロックのcontentはコードのみ（説明文を含めない）
+
+【出力フォーマット - 厳密に従うこと】
+{
+  "code_blocks": [
+    { "h3": "サブセクション見出し", "language": "javascript", "content": "完全なコード例（10行以上）" }
+  ]
+}
+
+{$additional_instructions}
+PROMPT;
+
+        $response_format = $this->should_use_openai_schema( $client ) ? $this->get_openai_code_blocks_schema() : null;
+        $response = $client->generate_text( $prompt, $response_format );
+
+        if ( ! $response['success'] ) {
+            return new WP_Error( 'code_generation_failed', $response['error'] ?? 'APIエラー' );
+        }
+
+        $data = $this->parse_json_blocks_response( $response['data'] );
+        if ( is_wp_error( $data ) ) {
+            return $data;
+        }
+
+        if ( ! isset( $data['code_blocks'] ) || ! is_array( $data['code_blocks'] ) ) {
+            return array();
+        }
+
+        return $data['code_blocks'];
+    }
+
+    /**
+     * セクション本文ブロックにコードブロックを挿入
+     *
+     * @param array $blocks 本文ブロック
+     * @param array $code_blocks コードブロック配列
+     * @return array
+     */
+    private function merge_section_blocks_with_code( $blocks, $code_blocks ) {
+        if ( empty( $code_blocks ) ) {
+            return $blocks;
+        }
+
+        $by_h3 = array();
+        foreach ( $code_blocks as $code_block ) {
+            if ( ! isset( $code_block['h3'], $code_block['content'] ) ) {
+                continue;
+            }
+            $h3 = $code_block['h3'];
+            if ( ! isset( $by_h3[ $h3 ] ) ) {
+                $by_h3[ $h3 ] = array();
+            }
+            $by_h3[ $h3 ][] = array(
+                'type' => 'code',
+                'content' => $code_block['content'],
+                'language' => $code_block['language'] ?? 'text',
+                'items' => array(),
+            );
+        }
+
+        $merged = array();
+        $current_h3 = null;
+
+        foreach ( $blocks as $block ) {
+            if ( isset( $block['type'] ) && 'h3' === $block['type'] ) {
+                if ( null !== $current_h3 && isset( $by_h3[ $current_h3 ] ) ) {
+                    $merged = array_merge( $merged, $by_h3[ $current_h3 ] );
+                    unset( $by_h3[ $current_h3 ] );
+                }
+                $current_h3 = $block['content'] ?? null;
+            }
+            $merged[] = $block;
+        }
+
+        if ( null !== $current_h3 && isset( $by_h3[ $current_h3 ] ) ) {
+            $merged = array_merge( $merged, $by_h3[ $current_h3 ] );
+            unset( $by_h3[ $current_h3 ] );
+        }
+
+        if ( ! empty( $by_h3 ) ) {
+            foreach ( $by_h3 as $remaining ) {
+                $merged = array_merge( $merged, $remaining );
+            }
+        }
+
+        return $merged;
     }
 
     /**
