@@ -50,6 +50,7 @@ class Blog_Poster_Generator {
 
         // 2. 前後の不要な空白を削除
         $json_str = trim( $json_str );
+        $json_str = $this->normalize_blocks_json_content_single_sentence( $json_str );
         $json_str = $this->sanitize_json_string( $json_str );
         $json_str = $this->remove_all_control_chars_outside_strings( $json_str );
         $json_str = $this->sanitize_json_string( $json_str );
@@ -584,6 +585,115 @@ class Blog_Poster_Generator {
             },
             $json_str
         );
+    }
+
+    /**
+     * ブロックJSON内のcontentを1文に正規化（json_decode前の保険）
+     *
+     * @param string $json_str JSON文字列
+     * @return string
+     */
+    private function normalize_blocks_json_content_single_sentence( $json_str ) {
+        $length = strlen( $json_str );
+        $output = '';
+        $in_string = false;
+        $escape = false;
+        $string_buf = '';
+        $last_key = null;
+        $expecting_content_value = false;
+        $in_content_value = false;
+        $truncate_content = false;
+
+        for ( $i = 0; $i < $length; $i++ ) {
+            $ch = $json_str[ $i ];
+
+            if ( $in_string ) {
+                if ( $escape ) {
+                    if ( $in_content_value && $truncate_content ) {
+                        $escape = false;
+                        continue;
+                    }
+                    $output .= $ch;
+                    $string_buf .= $ch;
+                    $escape = false;
+                    continue;
+                }
+
+                if ( '\\' === $ch ) {
+                    if ( ! ( $in_content_value && $truncate_content ) ) {
+                        $output .= $ch;
+                    }
+                    $string_buf .= $ch;
+                    $escape = true;
+                    continue;
+                }
+
+                if ( '"' === $ch ) {
+                    $in_string = false;
+                    $output .= '"';
+                    if ( ! $in_content_value ) {
+                        $next_pos = $i + 1;
+                        while ( $next_pos < $length && ctype_space( $json_str[ $next_pos ] ) ) {
+                            $next_pos++;
+                        }
+                        if ( $next_pos < $length && ':' === $json_str[ $next_pos ] ) {
+                            $last_key = $string_buf;
+                        }
+                    } else {
+                        $in_content_value = false;
+                        $truncate_content = false;
+                    }
+                    $string_buf = '';
+                    continue;
+                }
+
+                if ( $in_content_value ) {
+                    if ( "\n" === $ch || "\r" === $ch || "\t" === $ch ) {
+                        if ( ! $truncate_content ) {
+                            $output .= ' ';
+                        }
+                        $string_buf .= ' ';
+                        continue;
+                    }
+                    if ( ! $truncate_content && ( '.' === $ch || '!' === $ch || '?' === $ch || '。' === $ch || '！' === $ch || '？' === $ch ) ) {
+                        $output .= $ch;
+                        $string_buf .= $ch;
+                        $truncate_content = true;
+                        continue;
+                    }
+                    if ( $truncate_content ) {
+                        continue;
+                    }
+                }
+
+                if ( ! ( $in_content_value && $truncate_content ) ) {
+                    $output .= $ch;
+                }
+                $string_buf .= $ch;
+                continue;
+            }
+
+            if ( ':' === $ch && 'content' === $last_key ) {
+                $expecting_content_value = true;
+                $last_key = null;
+            }
+
+            if ( '"' === $ch ) {
+                $in_string = true;
+                $string_buf = '';
+                $escape = false;
+                if ( $expecting_content_value ) {
+                    $in_content_value = true;
+                    $expecting_content_value = false;
+                }
+                $output .= '"';
+                continue;
+            }
+
+            $output .= $ch;
+        }
+
+        return $output;
     }
 
     /**
