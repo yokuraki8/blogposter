@@ -57,6 +57,15 @@ class Blog_Poster_Generator {
         $data = $this->json_decode_safe( $json_str );
 
         if ( json_last_error() !== JSON_ERROR_NONE ) {
+            if ( false !== strpos( json_last_error_msg(), 'Control character' ) ) {
+                $strict_json = $this->sanitize_json_string_strict( $json_str );
+                if ( $strict_json !== $json_str ) {
+                    $data = $this->json_decode_safe( $strict_json );
+                }
+            }
+        }
+
+        if ( json_last_error() !== JSON_ERROR_NONE ) {
             $fragment = $this->extract_json_fragment( $json_str );
             if ( '' !== $fragment && $fragment !== $json_str ) {
                 $data = $this->json_decode_safe( $fragment );
@@ -382,7 +391,7 @@ class Blog_Poster_Generator {
                     $escape = false;
                     continue;
                 }
-                if ( '\\\\' === $char ) {
+                if ( '\\' === $char ) {
                     $escape = true;
                     continue;
                 }
@@ -411,6 +420,42 @@ class Blog_Poster_Generator {
         }
 
         return '';
+    }
+
+    /**
+     * 文字列リテラル内の制御文字のみを厳密にエスケープ
+     *
+     * @param string $json_str JSON文字列
+     * @return string
+     */
+    private function sanitize_json_string_strict( $json_str ) {
+        $pattern = '/"(?:[^"\\\\]|\\\\.)*"/s';
+        return preg_replace_callback(
+            $pattern,
+            function ( $matches ) {
+                $chunk = $matches[0];
+                $body = substr( $chunk, 1, -1 );
+                $body = preg_replace_callback(
+                    '/[\\x00-\\x1F]/',
+                    function ( $control ) {
+                        $char = $control[0];
+                        switch ( $char ) {
+                            case "\n":
+                                return '\\n';
+                            case "\r":
+                                return '\\r';
+                            case "\t":
+                                return '\\t';
+                            default:
+                                return sprintf( '\\u%04x', ord( $char ) );
+                        }
+                    },
+                    $body
+                );
+                return '"' . $body . '"';
+            },
+            $json_str
+        );
     }
 
     /**
@@ -818,6 +863,15 @@ PROMPT;
         $this->log_json_debug_samples( 'outline', $json_str );
 
         $data = $this->json_decode_safe( $json_str );
+
+        if ( json_last_error() !== JSON_ERROR_NONE ) {
+            if ( false !== strpos( json_last_error_msg(), 'Control character' ) ) {
+                $strict_json = $this->sanitize_json_string_strict( $json_str );
+                if ( $strict_json !== $json_str ) {
+                    $data = $this->json_decode_safe( $strict_json );
+                }
+            }
+        }
 
         if ( json_last_error() !== JSON_ERROR_NONE ) {
             $fragment = $this->extract_json_fragment( $json_str );
