@@ -1,6 +1,6 @@
 <?php
 /**
- * 記事生成管理クラス
+ * 記事生成管理クラス - Markdown-Firstアーキテクチャ
  *
  * @package BlogPoster
  */
@@ -12,805 +12,22 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 /**
  * Blog_Poster_Generator クラス
+ *
+ * Markdown-First方式で記事を生成
+ * - JSON Schema不要
+ * - 複雑なsanitize処理不要
+ * - シンプルなフロー: Outline生成 → Section生成 → 結合 → HTML変換
  */
 class Blog_Poster_Generator {
-    /**
-     * JSON出力を有効にするか
-     *
-     * @return bool
-     */
-    private function use_json_output() {
-        $settings = get_option( 'blog_poster_settings', array() );
-        return ! isset( $settings['use_json_output'] ) || (bool) $settings['use_json_output'];
-    }
-
-    /**
-     * JSON出力の有効状態を取得
-     *
-     * @return bool
-     */
-    public function is_json_output_enabled() {
-        return $this->use_json_output();
-    }
-
-    /**
-     * JSONレスポンスをパース
-     *
-     * @param string $response レスポンス
-     * @return array|WP_Error
-     */
-    private function parse_json_blocks_response( $response ) {
-        // JSONブロックを抽出前に正規化
-        $response = $this->normalize_line_endings( $response );
-
-        // JSONブロックを抽出（より厳密に）
-        // 1. ```jsonブロックの開始から末尾の```までを抽出
-        $json_str = preg_replace( '/^.*?```json\\s*\\n/s', '', $response );
-        $json_str = preg_replace( '/\\n```.*$/s', '', $json_str );
-
-        // 2. 前後の不要な空白を削除
-        $json_str = trim( $json_str );
-        $json_str = str_replace( array( "\r\n", "\r", "\n", "\t" ), array( '\\n', '\\n', '\\n', '\\t' ), $json_str );
-        $json_str = preg_replace( '/[\x00-\x1F]/u', ' ', $json_str );
-        $json_str = $this->sanitize_json_string( $json_str );
-        $json_str = $this->remove_all_control_chars_outside_strings( $json_str );
-        $json_str = $this->sanitize_json_string( $json_str );
-        $json_str = $this->remove_all_control_chars_outside_strings( $json_str );
-        $json_str = $this->sanitize_json_string_strict( $json_str );
-        $json_str = $this->normalize_json_string_newlines( $json_str );
-        $json_str = $this->sanitize_json_string_strict( $json_str );
-
-        // 3. デバッグログ（最初の200文字）
-        error_log( 'Blog Poster: Parsing JSON response (first 200 chars): ' . substr( $json_str, 0, 200 ) );
-        $this->log_json_debug_samples( 'response', $json_str );
-
-        $data = $this->json_decode_safe( $json_str );
-
-        if ( json_last_error() !== JSON_ERROR_NONE ) {
-            if ( false !== strpos( json_last_error_msg(), 'Control character' ) ) {
-                $strict_json = $this->sanitize_json_string_strict( $json_str );
-                if ( $strict_json !== $json_str ) {
-                    $data = $this->json_decode_safe( $strict_json );
-                }
-                if ( json_last_error() !== JSON_ERROR_NONE ) {
-                    $forced_json = $this->sanitize_json_string_force_control_chars( $json_str );
-                    if ( $forced_json !== $json_str ) {
-                        $data = $this->json_decode_safe( $forced_json );
-                    }
-                }
-            }
-        }
-
-        if ( json_last_error() !== JSON_ERROR_NONE ) {
-            $fragment = $this->extract_json_fragment( $json_str );
-            if ( '' !== $fragment && $fragment !== $json_str ) {
-                $data = $this->json_decode_safe( $fragment );
-            }
-        }
-
-        if ( json_last_error() !== JSON_ERROR_NONE ) {
-            $error_msg = json_last_error_msg();
-            error_log( 'Blog Poster: JSON parse error: ' . $error_msg );
-            error_log( 'Blog Poster: Response length: ' . strlen( $json_str ) );
-            error_log( 'Blog Poster: Response sample (first 500 chars): ' . substr( $json_str, 0, 500 ) );
-            error_log( 'Blog Poster: Response sample (last 500 chars): ' . substr( $json_str, -500 ) );
-            return new WP_Error( 'json_parse_error', 'JSONパースエラー: ' . $error_msg );
-        }
-
-        return $this->normalize_blocks_single_sentence( $data );
-    }
-
-    /**
-     * OpenAI Structured Outputs用のJSONスキーマ（アウトライン）
-     *
-     * @return array
-     */
-    private function get_openai_outline_schema() {
-        return array(
-            'type' => 'json_schema',
-            'json_schema' => array(
-                'name' => 'blog_poster_outline',
-                'description' => 'Blog Poster outline JSON schema',
-                'strict' => true,
-                'schema' => array(
-                    'type' => 'object',
-                    'additionalProperties' => false,
-                    'required' => array( 'title', 'slug', 'meta_description', 'excerpt', 'target_reader', 'reader_goal', 'keywords', 'sections' ),
-                    'properties' => array(
-                        'title' => array( 'type' => 'string' ),
-                        'slug' => array( 'type' => 'string' ),
-                        'meta_description' => array( 'type' => 'string' ),
-                        'excerpt' => array( 'type' => 'string' ),
-                        'target_reader' => array( 'type' => 'string' ),
-                        'reader_goal' => array( 'type' => 'string' ),
-                        'keywords' => array(
-                            'type' => 'array',
-                            'items' => array( 'type' => 'string' ),
-                        ),
-                        'sections' => array(
-                            'type' => 'array',
-                            'items' => array(
-                                'type' => 'object',
-                                'additionalProperties' => false,
-                                'required' => array( 'h2', 'purpose', 'reader_state_before', 'reader_state_after', 'key_content', 'subsections' ),
-                                'properties' => array(
-                                    'h2' => array( 'type' => 'string' ),
-                                    'purpose' => array( 'type' => 'string' ),
-                                    'reader_state_before' => array( 'type' => 'string' ),
-                                    'reader_state_after' => array( 'type' => 'string' ),
-                                    'key_content' => array( 'type' => 'string' ),
-                                    'subsections' => array(
-                                        'type' => 'array',
-                                        'items' => array(
-                                            'type' => 'object',
-                                            'additionalProperties' => false,
-                                            'required' => array( 'h3', 'content_type', 'key_points' ),
-                                            'properties' => array(
-                                                'h3' => array( 'type' => 'string' ),
-                                                'content_type' => array( 'type' => 'string' ),
-                                                'key_points' => array( 'type' => 'string' ),
-                                            ),
-                                        ),
-                                    ),
-                                ),
-                            ),
-                        ),
-                    ),
-                ),
-            ),
-        );
-    }
-
-    /**
-     * OpenAI Structured Outputs用のJSONスキーマ（ブロック）
-     *
-     * @return array
-     */
-    private function get_openai_blocks_schema() {
-        return array(
-            'type' => 'json_schema',
-            'json_schema' => array(
-                'name' => 'blog_poster_blocks',
-                'description' => 'Blog Poster content blocks. Output a detailed article body.',
-                'strict' => true,
-                'schema' => array(
-                    'type' => 'object',
-                    'additionalProperties' => false,
-                    'required' => array( 'blocks' ),
-                    'properties' => array(
-                        'blocks' => array(
-                            'type' => 'array',
-                            'description' => 'List of content blocks.',
-                            'items' => array(
-                                'type' => 'object',
-                                'additionalProperties' => false,
-                                'required' => array( 'type', 'content', 'language', 'items' ),
-                                'properties' => array(
-                                    'type' => array(
-                                        'type' => 'string',
-                                        'enum' => array( 'text', 'code', 'list' ),
-                                        'description' => 'The type of the block.',
-                                    ),
-                                    'content' => array(
-                                        'type' => array( 'string', 'null' ),
-                                        'description' => 'The text content. Required for "text" and "code". Set to null for "list".',
-                                    ),
-                                    'language' => array(
-                                        'type' => array( 'string', 'null' ),
-                                        'description' => 'Programming language. Required for "code". Set to null for others.',
-                                    ),
-                                    'items' => array(
-                                        'type' => array( 'array', 'null' ),
-                                        'description' => 'List items. Required for "list". Set to null for others.',
-                                        'items' => array( 'type' => 'string' ),
-                                    ),
-                                ),
-                            ),
-                        ),
-                    ),
-                ),
-            ),
-        );
-    }
-
-    /**
-     * OpenAI Structured Outputs用のJSONスキーマ（コードブロック専用）
-     *
-     * @return array
-     */
-    private function get_openai_code_blocks_schema() {
-        return array(
-            'type' => 'json_schema',
-            'json_schema' => array(
-                'name' => 'blog_poster_code_blocks',
-                'description' => 'Blog Poster code blocks JSON schema',
-                'strict' => true,
-                'schema' => array(
-                    'type' => 'object',
-                    'additionalProperties' => false,
-                    'required' => array( 'code_blocks' ),
-                    'properties' => array(
-                        'code_blocks' => array(
-                            'type' => 'array',
-                            'items' => array(
-                                'type' => 'object',
-                                'additionalProperties' => false,
-                                'required' => array( 'h3', 'language', 'content' ),
-                                'properties' => array(
-                                    'h3' => array( 'type' => 'string' ),
-                                    'language' => array( 'type' => 'string' ),
-                                    'content' => array( 'type' => 'string' ),
-                                ),
-                            ),
-                        ),
-                    ),
-                ),
-            ),
-        );
-    }
-
-    /**
-     * OpenAI Structured Outputsを使うか
-     *
-     * @param Blog_Poster_AI_Client $client AIクライアント
-     * @return bool
-     */
-    private function should_use_openai_schema( $client ) {
-        return ( $client instanceof Blog_Poster_OpenAI_Client )
-            && 0 === strpos( $client->get_model(), 'gpt-5' );
-    }
-
-    /**
-     * CRLF/LF正規化関数
-     *
-     * @param string $text テキスト
-     * @return string
-     */
-    private function normalize_line_endings( $text ) {
-        // CRLF → LF
-        $text = str_replace( "\r\n", "\n", $text );
-        // CR → LF
-        $text = str_replace( "\r", "\n", $text );
-        return $text;
-    }
-
-    /**
-     * 全制御文字の除去関数（0x00-0x1F範囲）
-     *
-     * @param string $json_str JSON文字列
-     * @return string
-     */
-    private function remove_all_control_chars_outside_strings( $json_str ) {
-        $result = '';
-        $in_string = false;
-        $escape = false;
-        $length = strlen( $json_str );
-
-        for ( $i = 0; $i < $length; $i++ ) {
-            $char = $json_str[ $i ];
-            $ord = ord( $char );
-
-            if ( $in_string ) {
-                $result .= $char;
-                if ( $escape ) {
-                    $escape = false;
-                    continue;
-                }
-                if ( '\\' === $char ) {
-                    $escape = true;
-                    continue;
-                }
-                if ( '"' === $char ) {
-                    $in_string = false;
-                }
-                continue;
-            }
-
-            if ( '"' === $char ) {
-                $in_string = true;
-                $result .= $char;
-                continue;
-            }
-
-            // 文字列外の制御文字は除去（\n, \r, \t, スペースは許可）
-            if ( $ord < 0x20 && $char !== "\n" && $char !== "\r" && $char !== "\t" && $char !== " " ) {
-                continue;
-            }
-
-            $result .= $char;
-        }
-
-        return $result;
-    }
-
-    /**
-     * JSON文字列の制御文字を除去
-     *
-     * @param string $json_str JSON文字列
-     * @return string
-     */
-    private function sanitize_json_string( $json_str ) {
-        // BOM除去
-        $json_str = preg_replace( '/^\xEF\xBB\xBF/', '', $json_str );
-        // JSON文字列内の未エスケープ改行/タブをエスケープ、その他制御文字は無害化
-        $result = '';
-        $in_string = false;
-        $escape = false;
-        $length = strlen( $json_str );
-
-        for ( $i = 0; $i < $length; $i++ ) {
-            $char = $json_str[ $i ];
-            $ord  = ord( $char );
-
-            if ( $in_string ) {
-                if ( $escape ) {
-                    $escape = false;
-                    $result .= $char;
-                    continue;
-                }
-
-                if ( '\\' === $char ) {
-                    $escape = true;
-                    $result .= $char;
-                    continue;
-                }
-
-                if ( '"' === $char ) {
-                    $in_string = false;
-                    $result .= $char;
-                    continue;
-                }
-
-                if ( "\n" === $char ) {
-                    $result .= '\\n';
-                    continue;
-                }
-                if ( "\r" === $char ) {
-                    $result .= '\\r';
-                    continue;
-                }
-                if ( "\t" === $char ) {
-                    $result .= '\\t';
-                    continue;
-                }
-
-                if ( $ord < 0x20 ) {
-                    $result .= sprintf( '\\u%04x', $ord );
-                    continue;
-                }
-
-                $result .= $char;
-                continue;
-            }
-
-            if ( '"' === $char ) {
-                $in_string = true;
-                $result .= $char;
-                continue;
-            }
-
-            if ( $ord < 0x20 ) {
-                continue;
-            }
-
-            $result .= $char;
-        }
-
-        return $result;
-    }
-
-    /**
-     * JSON修復（OpenAI fallback）
-     *
-     * @param string $json_str JSON文字列
-     * @return string
-     */
-    private function repair_json_with_openai( $json_str ) {
-        $settings = get_option( 'blog_poster_settings', array() );
-        $api_key = isset( $settings['openai_api_key'] ) ? $settings['openai_api_key'] : '';
-        if ( empty( $api_key ) ) {
-            return '';
-        }
-
-        $client = new Blog_Poster_OpenAI_Client( $api_key, 'gpt-4.1', $settings );
-        $prompt = "You are a JSON repair tool. Fix the invalid JSON below by:\n"
-            . "1. Escaping unescaped newlines/tabs inside strings (use \\n and \\t)\n"
-            . "2. Removing or escaping control characters (0x00-0x1F)\n"
-            . "3. Fixing syntax errors\n"
-            . "4. Ensuring valid UTF-8\n\n"
-            . "Return ONLY valid JSON with a single key 'fixed' containing the corrected structure.\n"
-            . "Do not add explanations or markdown.\n\n"
-            . "INVALID JSON:\n" . $json_str;
-        $response = $client->generate_text( $prompt, array( 'type' => 'json_object' ) );
-        if ( ! $response['success'] ) {
-            return '';
-        }
-
-        $fixed_payload = $this->sanitize_json_string( trim( $response['data'] ) );
-        $decoded = $this->json_decode_safe( $fixed_payload );
-        if ( is_array( $decoded ) && array_key_exists( 'fixed', $decoded ) ) {
-            return wp_json_encode( $decoded['fixed'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES );
-        }
-
-        $fragment = $this->extract_json_fragment( $fixed_payload );
-        return '' !== $fragment ? $fragment : $fixed_payload;
-    }
-
-    /**
-     * UTF-8不正を許容したJSONデコード
-     *
-     * @param string $json_str JSON文字列
-     * @return array|null
-     */
-    private function json_decode_safe( $json_str ) {
-        $flags = 0;
-        if ( defined( 'JSON_INVALID_UTF8_SUBSTITUTE' ) ) {
-            $flags |= JSON_INVALID_UTF8_SUBSTITUTE;
-        }
-        return json_decode( $json_str, true, 512, $flags );
-    }
-
-    /**
-     * JSON文字列の先頭/末尾を16進ダンプで記録
-     *
-     * @param string $label ラベル
-     * @param string $json_str JSON文字列
-     * @return void
-     */
-    private function log_json_debug_samples( $label, $json_str ) {
-        $head = substr( $json_str, 0, 200 );
-        $tail = substr( $json_str, -200 );
-        error_log( 'Blog Poster: JSON ' . $label . ' head hex: ' . bin2hex( $head ) );
-        error_log( 'Blog Poster: JSON ' . $label . ' tail hex: ' . bin2hex( $tail ) );
-    }
-
-    /**
-     * JSON断片を抽出
-     *
-     * @param string $text 入力テキスト
-     * @return string
-     */
-    private function extract_json_fragment( $text ) {
-        $start = null;
-        $length = strlen( $text );
-        for ( $i = 0; $i < $length; $i++ ) {
-            $char = $text[ $i ];
-            if ( '{' === $char || '[' === $char ) {
-                $start = $i;
-                break;
-            }
-        }
-
-        if ( null === $start ) {
-            return '';
-        }
-
-        $stack = array();
-        $in_string = false;
-        $escape = false;
-
-        for ( $i = $start; $i < $length; $i++ ) {
-            $char = $text[ $i ];
-
-            if ( $in_string ) {
-                if ( $escape ) {
-                    $escape = false;
-                    continue;
-                }
-                if ( '\\' === $char ) {
-                    $escape = true;
-                    continue;
-                }
-                if ( '"' === $char ) {
-                    $in_string = false;
-                }
-                continue;
-            }
-
-            if ( '"' === $char ) {
-                $in_string = true;
-                continue;
-            }
-
-            if ( '{' === $char || '[' === $char ) {
-                $stack[] = $char;
-                continue;
-            }
-
-            if ( '}' === $char || ']' === $char ) {
-                array_pop( $stack );
-                if ( empty( $stack ) ) {
-                    return substr( $text, $start, $i - $start + 1 );
-                }
-            }
-        }
-
-        return '';
-    }
-
-    /**
-     * 文字列リテラル内の制御文字のみを厳密にエスケープ
-     *
-     * @param string $json_str JSON文字列
-     * @return string
-     */
-    private function sanitize_json_string_strict( $json_str ) {
-        $pattern = '/"(?:[^"\\\\]|\\\\.)*"/s';
-        return preg_replace_callback(
-            $pattern,
-            function ( $matches ) {
-                $chunk = $matches[0];
-                $body = substr( $chunk, 1, -1 );
-                $body = preg_replace_callback(
-                    '/[\\x00-\\x1F]/',
-                    function ( $control ) {
-                        $char = $control[0];
-                        switch ( $char ) {
-                            case "\n":
-                                return '\\n';
-                            case "\r":
-                                return '\\r';
-                            case "\t":
-                                return '\\t';
-                            default:
-                                return sprintf( '\\u%04x', ord( $char ) );
-                        }
-                    },
-                    $body
-                );
-                return '"' . $body . '"';
-            },
-            $json_str
-        );
-    }
-
-    /**
-     * 文字列内外の制御文字を強制的にエスケープ（最終フォールバック）
-     *
-     * @param string $json_str JSON文字列
-     * @return string
-     */
-    private function sanitize_json_string_force_control_chars( $json_str ) {
-        return preg_replace_callback(
-            '/[\\x00-\\x1F]/',
-            function ( $control ) {
-                $char = $control[0];
-                switch ( $char ) {
-                    case "\n":
-                        return '\\n';
-                    case "\r":
-                        return '\\r';
-                    case "\t":
-                        return '\\t';
-                    default:
-                        return sprintf( '\\u%04x', ord( $char ) );
-                }
-            },
-            $json_str
-        );
-    }
-
-    /**
-     * content/key_points内の生改行を強制的に\\nへ置換
-     *
-     * @param string $json_str JSON文字列
-     * @return string
-     */
-    private function normalize_json_string_newlines( $json_str ) {
-        $patterns = array(
-            '/("content"\\s*:\\s*")([^"\\\\]*(?:\\\\.[^"\\\\]*)*)"/s',
-            '/("key_points"\\s*:\\s*")([^"\\\\]*(?:\\\\.[^"\\\\]*)*)"/s',
-        );
-
-        foreach ( $patterns as $pattern ) {
-            $json_str = preg_replace_callback(
-                $pattern,
-                function ( $matches ) {
-                    $prefix = $matches[1];
-                    $body = $matches[2];
-                    $body = str_replace( array( "\r\n", "\r", "\n" ), '\\n', $body );
-                    return $prefix . $body . '"';
-                },
-                $json_str
-            );
-        }
-
-        return $json_str;
-    }
-
-    /**
-     * アウトラインのkey_points/key_contentを1文に正規化
-     *
-     * @param array $outline_data アウトライン
-     * @return array
-     */
-    private function normalize_outline_single_sentence( $outline_data ) {
-        if ( ! is_array( $outline_data ) ) {
-            return $outline_data;
-        }
-
-        if ( isset( $outline_data['sections'] ) && is_array( $outline_data['sections'] ) ) {
-            foreach ( $outline_data['sections'] as $index => $section ) {
-                if ( isset( $section['key_content'] ) && is_string( $section['key_content'] ) ) {
-                    $outline_data['sections'][ $index ]['key_content'] = $this->normalize_single_sentence( $section['key_content'] );
-                }
-                if ( isset( $section['subsections'] ) && is_array( $section['subsections'] ) ) {
-                    foreach ( $section['subsections'] as $sub_index => $subsection ) {
-                        if ( isset( $subsection['key_points'] ) && is_string( $subsection['key_points'] ) ) {
-                            $outline_data['sections'][ $index ]['subsections'][ $sub_index ]['key_points'] = $this->normalize_single_sentence( $subsection['key_points'] );
-                        }
-                    }
-                }
-            }
-        }
-
-        return $outline_data;
-    }
-
-    /**
-     * ブロック配列のcontentを1文に正規化
-     *
-     * @param array $blocks_data ブロックJSON
-     * @return array
-     */
-    private function normalize_blocks_single_sentence( $blocks_data ) {
-        if ( ! is_array( $blocks_data ) || ! isset( $blocks_data['blocks'] ) || ! is_array( $blocks_data['blocks'] ) ) {
-            return $blocks_data;
-        }
-
-        foreach ( $blocks_data['blocks'] as $index => $block ) {
-            if ( ! isset( $block['content'] ) || ! is_string( $block['content'] ) ) {
-                continue;
-            }
-
-            if ( in_array( $block['type'] ?? '', array( 'text', 'h2', 'h3' ), true ) ) {
-                $blocks_data['blocks'][ $index ]['content'] = $this->normalize_single_sentence( $block['content'] );
-            }
-        }
-
-        return $blocks_data;
-    }
-
-    /**
-     * 文字列を1文に正規化（改行・句点以降を除去）
-     *
-     * @param string $text テキスト
-     * @return string
-     */
-    private function normalize_single_sentence( $text ) {
-        $text = str_replace( array( "\r\n", "\r", "\n" ), ' ', $text );
-        $text = trim( preg_replace( '/\\s+/', ' ', $text ) );
-        $pos = mb_strpos( $text, '。' );
-        if ( false !== $pos ) {
-            $text = mb_substr( $text, 0, $pos + 1 );
-        }
-        return $text;
-    }
-
-    /**
-     * JSONブロックを検証
-     *
-     * @param array $article_json JSONデータ
-     * @return array
-     */
-    public function validate_article_json( $article_json ) {
-        $issues = array();
-
-        if ( ! is_array( $article_json ) || ! isset( $article_json['blocks'] ) || ! is_array( $article_json['blocks'] ) ) {
-            return array(
-                'valid'  => false,
-                'issues' => array( 'blocks が不正です。' ),
-            );
-        }
-
-        $allowed_types = array( 'h2', 'h3', 'text', 'code', 'list' );
-
-        foreach ( $article_json['blocks'] as $index => $block ) {
-            if ( ! isset( $block['type'] ) || ! in_array( $block['type'], $allowed_types, true ) ) {
-                error_log( 'Blog Poster: Invalid block at index ' . $index . ': ' . json_encode( $block, JSON_UNESCAPED_UNICODE ) );
-                $issues[] = '不正なブロック種別: ' . ( $block['type'] ?? 'unknown' ) . ' (index: ' . $index . ')';
-                continue;
-            }
-
-            if ( in_array( $block['type'], array( 'h2', 'h3', 'text' ), true ) ) {
-                if ( empty( $block['content'] ) ) {
-                    $issues[] = 'content が空です (index: ' . $index . ')';
-                }
-            } elseif ( 'code' === $block['type'] ) {
-                if ( empty( $block['content'] ) ) {
-                    $issues[] = 'code.content が空です (index: ' . $index . ')';
-                }
-                if ( empty( $block['language'] ) ) {
-                    $issues[] = 'code.language が空です (index: ' . $index . ')';
-                }
-                if ( isset( $block['content'] ) ) {
-                    $code_text = $block['content'];
-                    $has_md    = preg_match( '/^\s*#{1,6}\s/m', $code_text )
-                        || preg_match( '/^\s*[-*]\s+/m', $code_text )
-                        || preg_match( '/^\s*\d+\.\s+/m', $code_text );
-                    $has_ja    = preg_match( '/[ぁ-んァ-ン一-龯]/u', $code_text );
-                    $sentence_count = preg_match_all( '/[。！？]/u', $code_text );
-                    $code_token_count  = preg_match_all( '/[;{}<>$=]/', $code_text );
-                    $code_token_count += preg_match_all( '/\b(public|private|protected|return|const|let|var|import|export|function|class)\b/i', $code_text );
-                    $looks_like_prose = $has_ja && $sentence_count >= 2 && $code_token_count < 2;
-
-                    if ( $has_md || $looks_like_prose ) {
-                        $issues[] = 'code.content に説明文が混入しています (index: ' . $index . ')';
-                    }
-                    if ( false !== strpos( $code_text, '```' ) ) {
-                        $issues[] = 'code.content にバッククォートが含まれています (index: ' . $index . ')';
-                    }
-                }
-            } elseif ( 'list' === $block['type'] ) {
-                if ( empty( $block['items'] ) || ! is_array( $block['items'] ) ) {
-                    $issues[] = 'list.items が不正です (index: ' . $index . ')';
-                }
-            }
-
-            if ( isset( $block['content'] ) && is_string( $block['content'] ) && false !== strpos( $block['content'], '```' ) ) {
-                $issues[] = 'content にバッククォートが含まれています (index: ' . $index . ')';
-            }
-        }
-
-        return array(
-            'valid'  => empty( $issues ),
-            'issues' => $issues,
-        );
-    }
-
-    /**
-     * JSONブロックをHTMLに変換
-     *
-     * @param array $article_json JSONデータ
-     * @return string
-     */
-    public function render_article_json_to_html( $article_json ) {
-        if ( ! is_array( $article_json ) || ! isset( $article_json['blocks'] ) ) {
-            return '';
-        }
-
-        $html_parts = array();
-
-        foreach ( $article_json['blocks'] as $block ) {
-            $type = isset( $block['type'] ) ? $block['type'] : '';
-            switch ( $type ) {
-                case 'h2':
-                    $html_parts[] = '<h2>' . wp_kses_post( $block['content'] ) . '</h2>';
-                    break;
-                case 'h3':
-                    $html_parts[] = '<h3>' . wp_kses_post( $block['content'] ) . '</h3>';
-                    break;
-                case 'text':
-                    $html_parts[] = '<p>' . wp_kses_post( $block['content'] ) . '</p>';
-                    break;
-                case 'code':
-                    $language = isset( $block['language'] ) ? sanitize_text_field( $block['language'] ) : 'text';
-                    $code     = isset( $block['content'] ) ? $block['content'] : '';
-                    $html_parts[] = '<pre><code class="language-' . esc_attr( $language ) . '">' . esc_html( $code ) . '</code></pre>';
-                    break;
-                case 'list':
-                    if ( isset( $block['items'] ) && is_array( $block['items'] ) ) {
-                        $items = array();
-                        foreach ( $block['items'] as $item ) {
-                            $items[] = '<li>' . esc_html( $item ) . '</li>';
-                        }
-                        $html_parts[] = '<ul>' . implode( '', $items ) . '</ul>';
-                    }
-                    break;
-            }
-        }
-
-        return implode( "\n", $html_parts );
-    }
 
     /**
      * AIクライアントを取得
      *
-     * @return Blog_Poster_AI_Client|WP_Error
+     * @return object|WP_Error AIクライアントまたはエラー
      */
     private function get_ai_client() {
         $settings = get_option( 'blog_poster_settings', array() );
-        $provider = isset( $settings['ai_provider'] ) ? $settings['ai_provider'] : 'openai';
+        $provider = isset( $settings['ai_provider'] ) ? $settings['ai_provider'] : 'claude';
 
         $api_key = '';
         $model = '';
@@ -824,7 +41,7 @@ class Blog_Poster_Generator {
 
             case 'claude':
                 $api_key = isset( $settings['claude_api_key'] ) ? $settings['claude_api_key'] : '';
-                $model = isset( $settings['default_model']['claude'] ) ? $settings['default_model']['claude'] : 'claude-sonnet-4-5-20250514';
+                $model = isset( $settings['default_model']['claude'] ) ? $settings['default_model']['claude'] : 'claude-3-5-sonnet-20241022';
                 $client = new Blog_Poster_Claude_Client( $api_key, $model, $settings );
                 break;
 
@@ -844,9 +61,9 @@ class Blog_Poster_Generator {
     }
 
     /**
-     * ブログ記事を生成（3フェーズ方式）
+     * 記事生成のメインエントリーポイント
      *
-     * @param string $topic トピック/キーワード
+     * @param string $topic トピック
      * @param string $additional_instructions 追加指示
      * @return array|WP_Error 生成結果またはエラー
      */
@@ -854,1445 +71,619 @@ class Blog_Poster_Generator {
         if ( function_exists( 'set_time_limit' ) ) {
             set_time_limit( 600 );
         }
-        // Phase 1: アウトライン生成（最大3回試行）
-        $outline = null;
-        $max_outline_attempts = 3;
 
-        for ( $i = 0; $i < $max_outline_attempts; $i++ ) {
-            $outline = $this->generate_outline( $topic, $additional_instructions );
+        error_log( "Blog Poster: Starting Markdown-First article generation for topic: {$topic}" );
 
-            if ( ! is_wp_error( $outline ) ) {
-                break;
-            }
-
-            error_log( "Blog Poster: Outline generation attempt " . ( $i + 1 ) . " failed: " . $outline->get_error_message() );
+        // 1. Outline生成
+        $outline_result = $this->generate_outline_markdown( $topic, $additional_instructions );
+        if ( is_wp_error( $outline_result ) ) {
+            return $outline_result;
         }
 
-        if ( is_wp_error( $outline ) ) {
-            return new WP_Error( 'outline_generation_failed', 'アウトライン生成に3回失敗しました。' );
+        if ( ! $outline_result['success'] ) {
+            return new WP_Error( 'outline_failed', __( 'アウトライン生成に失敗しました。', 'blog-poster' ) );
         }
 
-        // JSON方式
-        if ( $this->use_json_output() ) {
-            $intro_blocks = $this->generate_intro_blocks( $outline );
-            if ( is_wp_error( $intro_blocks ) ) {
-                return $intro_blocks;
+        $outline_sections = $outline_result['sections'];
+        $meta = $outline_result['meta'];
+
+        error_log( 'Blog Poster: Outline generated with ' . count( $outline_sections ) . ' sections' );
+
+        // 2. Section単位で生成
+        $sections_md = array();
+        $previous_context = '';
+
+        foreach ( $outline_sections as $index => $section ) {
+            error_log( "Blog Poster: Generating section {$index}: {$section['title']}" );
+
+            $result = $this->generate_section_markdown( $outline_sections, $index, $previous_context, $additional_instructions );
+
+            if ( is_wp_error( $result ) ) {
+                return $result;
             }
 
-            $blocks           = $intro_blocks;
-            $previous_summary = '';
-
-            foreach ( $outline['sections'] as $section ) {
-                $section_result = $this->generate_section_blocks( $section, $topic, $previous_summary, $additional_instructions );
-
-                if ( is_wp_error( $section_result ) ) {
-                    error_log( "Blog Poster: Section generation failed for " . $section['h2'] . ": " . $section_result->get_error_message() );
-                    continue;
-                }
-
-                $blocks           = array_merge( $blocks, $section_result['blocks'] );
-                $previous_summary = isset( $section_result['summary'] ) ? $section_result['summary'] : '';
+            if ( ! $result['success'] ) {
+                return new WP_Error( 'section_failed', sprintf( __( 'セクション%d生成に失敗しました。', 'blog-poster' ), $index + 1 ) );
             }
 
-            $summary_blocks = $this->generate_summary_blocks( $outline, '' );
-            if ( is_wp_error( $summary_blocks ) ) {
-                return $summary_blocks;
-            }
-
-            $blocks = array_merge( $blocks, $summary_blocks );
-
-            $article_data = array(
-                'title'            => $outline['title'],
-                'slug'             => $outline['slug'],
-                'meta_description' => $outline['meta_description'],
-                'excerpt'          => $outline['excerpt'],
-                'content'          => wp_json_encode(
-                    array(
-                        'meta'   => array(
-                            'title'            => $outline['title'],
-                            'slug'             => $outline['slug'],
-                            'meta_description' => $outline['meta_description'],
-                            'excerpt'          => $outline['excerpt'],
-                            'keywords'         => isset( $outline['keywords'] ) ? $outline['keywords'] : array(),
-                        ),
-                        'blocks' => $blocks,
-                    ),
-                    JSON_UNESCAPED_UNICODE
-                ),
-                'keywords'         => isset( $outline['keywords'] ) ? $outline['keywords'] : array(),
-            );
-        } else {
-            // Phase 2: セクションごとに生成
-            $sections_content = array();
-            $previous_summary = '';
-
-            foreach ( $outline['sections'] as $section ) {
-                $section_result = $this->generate_section_content( $section, $topic, $previous_summary, $additional_instructions );
-
-                if ( is_wp_error( $section_result ) ) {
-                    error_log( "Blog Poster: Section generation failed for " . $section['h2'] . ": " . $section_result->get_error_message() );
-                    continue;
-                }
-
-                $sections_content[] = $section_result['content'];
-                $previous_summary = $section_result['summary'];
-            }
-
-            // Phase 3: 記事組み立て
-            $article_data = $this->assemble_article( $outline, $sections_content, $topic );
-
-            if ( is_wp_error( $article_data ) ) {
-                return $article_data;
-            }
-
-            // コードブロック修正
-            $article_data['content'] = $this->fix_code_blocks( $article_data['content'] );
-
-            // Claude関連の虚偽記述をチェック
-            $article_data['content'] = $this->fact_check_claude_references( $article_data['content'] );
+            $sections_md[] = $result['section_md'];
+            $previous_context = $result['context'];
         }
+
+        // 3. 結合
+        $frontmatter = $this->build_frontmatter( $meta );
+        $final_md = $frontmatter . "\n\n" . implode( "\n\n", $sections_md );
+
+        // 4. 後処理
+        $final_md = $this->postprocess_markdown( $final_md );
+
+        // 5. HTML変換
+        $html = $this->markdown_to_html( $final_md );
+
+        error_log( 'Blog Poster: Article generation completed successfully' );
 
         return array(
             'success' => true,
-            'article' => $article_data,
-            'tokens' => isset( $article_data['tokens'] ) ? $article_data['tokens'] : 0,
-            'model' => isset( $article_data['model'] ) ? $article_data['model'] : '',
+            'title' => $meta['title'],
+            'slug' => $meta['slug'],
+            'excerpt' => $meta['excerpt'],
+            'keywords' => isset( $meta['keywords'] ) ? $meta['keywords'] : array(),
+            'markdown' => $final_md,
+            'html' => $html,
         );
     }
 
     /**
-     * Phase 1: アウトラインをJSON形式で生成
+     * Markdown形式のアウトライン生成
      *
      * @param string $topic トピック
      * @param string $additional_instructions 追加指示
-     * @return array|WP_Error アウトラインデータまたはエラー
+     * @return array|WP_Error ['success' => bool, 'outline_md' => string, 'meta' => array, 'sections' => array]
      */
-    public function generate_outline( $topic, $additional_instructions = '' ) {
-        static $logged_outline_path = false;
-        if ( ! $logged_outline_path ) {
-            error_log( 'Blog Poster: Outline generator loaded from ' . __FILE__ . ' (fallback disabled)' );
-            $logged_outline_path = true;
-        }
-
-        $client = $this->get_ai_client();
-
-        if ( is_wp_error( $client ) ) {
-            return $client;
-        }
-
-        $prompt = <<<PROMPT
-あなたは{$topic}に関する実務経験を持つテクニカルライターです。
-
-以下のトピックについて、読者が実行できる高品質な記事のアウトラインをJSON形式で生成してください。
-
-トピック: {$topic}
-
-【アウトラインの要件】
-1. 5-7個のH2セクションを作成
-2. 各H2の下に2-4個のH3サブセクションを配置
-3. 各セクションの目的と読者の状態変化を明記
-4. 読者が「実行できる」ことを重視
-
-【JSON出力形式】
-{
-  "title": "（50文字以内、具体的で魅力的なタイトル）",
-  "slug": "（英数字とハイフンのみ）",
-  "meta_description": "（120文字以内）",
-  "excerpt": "（100-200文字）",
-  "target_reader": "（ターゲット読者の具体像）",
-  "reader_goal": "（この記事で達成できること）",
-  "keywords": ["キーワード1", "キーワード2", "..."],
-  "sections": [
-    {
-      "h2": "セクション見出し",
-      "purpose": "このセクションの目的",
-      "reader_state_before": "読者の現在の状態",
-      "reader_state_after": "読者がこのセクションを読んだ後の状態",
-      "key_content": "含めるべき重要な内容（具体例、コード、手順など）",
-      "subsections": [
-        {
-          "h3": "サブセクション見出し",
-          "content_type": "code/explanation/step-by-step",
-          "key_points": "このサブセクションで伝えるべきポイント"
-        }
-      ]
-    }
-  ]
-}
-
-{$additional_instructions}
-
-【Output Rules】
-1. Output strictly valid JSON.
-2. Do NOT include any newlines inside string values (\\n is also forbidden).
-3. key_points と key_content は必ず1文で完結させる（句点で終える）。
-4. The root element must be a single JSON object (not an array).
-
-上記のJSON形式で、実行可能な記事のアウトラインを生成してください。
-PROMPT;
-
-        $response_format = $this->should_use_openai_schema( $client ) ? $this->get_openai_outline_schema() : null;
-        $response = $client->generate_text( $prompt, $response_format );
-
-        if ( ! $response['success'] ) {
-            return new WP_Error( 'outline_generation_failed', $response['error'] );
-        }
-
-        // JSONをパース
-        $outline_data = $this->parse_json_outline( $response['data'] );
-
-        if ( is_wp_error( $outline_data ) ) {
-            return $outline_data;
-        }
-
-        return $outline_data;
-    }
-
-    /**
-     * GPT-5.2アウトライン失敗時のフォールバック生成
-     *
-     * @param string $prompt プロンプト
-     * @param array|null $response_format Structured Outputs
-     * @return array|WP_Error
-     */
-    private function generate_outline_with_openai_fallback( $prompt, $response_format ) {
-        $settings = get_option( 'blog_poster_settings', array() );
-        $api_key = isset( $settings['openai_api_key'] ) ? $settings['openai_api_key'] : '';
-        if ( empty( $api_key ) ) {
-            return new WP_Error( 'outline_fallback_failed', 'OpenAI APIキーが設定されていません。' );
-        }
-
-        $client = new Blog_Poster_OpenAI_Client( $api_key, 'gpt-4.1', $settings );
-        $response = $client->generate_text( $prompt, $response_format );
-        if ( ! $response['success'] ) {
-            return new WP_Error( 'outline_fallback_failed', $response['error'] );
-        }
-
-        return $this->parse_json_outline( $response['data'] );
-    }
-
-    /**
-     * JSON形式のアウトラインをパース
-     *
-     * @param string $response AI応答
-     * @return array|WP_Error パース結果またはエラー
-     */
-    private function parse_json_outline( $response ) {
-        // JSONブロックを抽出前に正規化
-        $response = $this->normalize_line_endings( $response );
-
-        // JSONブロックを抽出（より厳密に）
-        // 1. ```jsonブロックの開始から末尾の```までを抽出
-        $json_str = preg_replace( '/^.*?```json\\s*\\n/s', '', $response );
-        $json_str = preg_replace( '/\\n```.*$/s', '', $json_str );
-
-        // 2. 前後の不要な空白を削除
-        $json_str = trim( $json_str );
-        $json_str = $this->sanitize_json_string( $json_str );
-        $json_str = $this->remove_all_control_chars_outside_strings( $json_str );
-        $json_str = $this->sanitize_json_string( $json_str );
-        $json_str = $this->remove_all_control_chars_outside_strings( $json_str );
-        $json_str = $this->sanitize_json_string_strict( $json_str );
-        $json_str = $this->normalize_json_string_newlines( $json_str );
-
-        // 3. デバッグログ（最初の200文字）
-        error_log( 'Blog Poster: Parsing JSON outline (first 200 chars): ' . substr( $json_str, 0, 200 ) );
-        $this->log_json_debug_samples( 'outline', $json_str );
-
-        $data = $this->json_decode_safe( $json_str );
-
-        if ( json_last_error() !== JSON_ERROR_NONE ) {
-            if ( false !== strpos( json_last_error_msg(), 'Control character' ) ) {
-                $strict_json = $this->sanitize_json_string_strict( $json_str );
-                if ( $strict_json !== $json_str ) {
-                    $data = $this->json_decode_safe( $strict_json );
-                }
-                if ( json_last_error() !== JSON_ERROR_NONE ) {
-                    $forced_json = $this->sanitize_json_string_force_control_chars( $json_str );
-                    if ( $forced_json !== $json_str ) {
-                        $data = $this->json_decode_safe( $forced_json );
-                    }
-                }
-            }
-        }
-
-        if ( json_last_error() !== JSON_ERROR_NONE ) {
-            $fragment = $this->extract_json_fragment( $json_str );
-            if ( '' !== $fragment && $fragment !== $json_str ) {
-                $data = $this->json_decode_safe( $fragment );
-            }
-        }
-
-        if ( json_last_error() !== JSON_ERROR_NONE ) {
-            $error_msg = json_last_error_msg();
-            error_log( 'Blog Poster: JSON parse error (outline): ' . $error_msg );
-            error_log( 'Blog Poster: Outline response length: ' . strlen( $json_str ) );
-            error_log( 'Blog Poster: Outline response sample (first 500 chars): ' . substr( $json_str, 0, 500 ) );
-            error_log( 'Blog Poster: Outline response sample (last 500 chars): ' . substr( $json_str, -500 ) );
-            return new WP_Error( 'json_parse_error', 'JSONパースエラー: ' . $error_msg );
-        }
-
-        // 配列で返ってきた場合は先頭要素を採用
-        if ( is_array( $data ) && isset( $data[0] ) && is_array( $data[0] ) ) {
-            $data = $data[0];
-        }
-
-        // 必須フィールドの検証
-        $required_fields = array( 'title', 'slug', 'meta_description', 'excerpt', 'sections' );
-        foreach ( $required_fields as $field ) {
-            if ( ! isset( $data[ $field ] ) ) {
-                error_log( "Blog Poster: Missing required field in outline: {$field}" );
-                return new WP_Error( 'missing_field', "必須フィールドが不足しています: {$field}" );
-            }
-        }
-
-        return $data;
-    }
-
-    /**
-     * Phase 2: 個別セクションのコンテンツを生成
-     *
-     * @param array  $section セクション情報
-     * @param string $topic トピック
-     * @param string $previous_summary 前セクションの要約
-     * @param string $additional_instructions 追加指示
-     * @return array|WP_Error 生成結果またはエラー
-     */
-    public function generate_section_content( $section, $topic, $previous_summary = '', $additional_instructions = '' ) {
-        $client = $this->get_ai_client();
-
-        if ( is_wp_error( $client ) ) {
-            return $client;
-        }
-
-        $context = '';
-        if ( ! empty( $previous_summary ) ) {
-            $context = "【これまでの流れ】\n{$previous_summary}\n\n";
-        }
-
-        $subsections_list = '';
-        if ( isset( $section['subsections'] ) ) {
-            foreach ( $section['subsections'] as $sub ) {
-                $subsections_list .= "### {$sub['h3']}\n";
-                $subsections_list .= "タイプ: {$sub['content_type']}\n";
-                $subsections_list .= "ポイント: {$sub['key_points']}\n\n";
-            }
-        }
-
-        $prompt = <<<PROMPT
-あなたは{$topic}に関する実務経験を持つテクニカルライターです。
-
-{$context}以下のセクションの内容を、Markdown形式で具体的に記述してください。
-
-【セクション情報】
-見出し: {$section['h2']}
-目的: {$section['purpose']}
-読者の状態変化: {$section['reader_state_before']} → {$section['reader_state_after']}
-含めるべき内容: {$section['key_content']}
-
-【サブセクション構成】
-{$subsections_list}
-
-【記述要件】
-1. 完全に動作するコード例を含める（省略なし、コピペで動く状態）
-2. コードブロックは必ず```php、```javascript等の言語指定付きで記述
-3. 各ステップの実行結果を説明
-4. 抽象的な説明（「〜が重要です」）は禁止
-5. 読者が実際に手を動かせる情報のみ
-
-【コードブロックの記述ルール - 最重要】
-このルールは絶対に守ってください：
-
-【絶対禁止事項 - 違反厳禁】
-以下の行為は絶対に禁止します。1つでも違反があればNG判定されます：
-
-❌ コードブロック内にMarkdown見出し（#, ##, ###等）を絶対に含めない
-❌ コードブロック内に箇条書き（-, *, 1. 等）を絶対に含めない
-❌ コードブロック内に日本語の説明文を絶対に含めない（コメント以外）
-❌ コードと説明文を同じブロック内に混在させない
-❌ 開始タグ（```言語名）と終了タグ（```）の数を必ず一致させる
-
-【正しいコードブロック構造】
-1. コードブロック開始：```言語名
-   - 例：```php、```javascript、```bash、```html
-   - 3つのバッククォートの後に言語名を入力
-   - バッククォートは3つ以上使用しない
-
-2. コードブロック終了：```
-   - 3つのバッククォートのみで閉じる
-   - 同じ行に何も入力しない
-   - 開始と終了は必ず1対1で対応させる
-
-3. コードブロックの内容
-   - コードのみを記述（純粋なプログラムコード）
-   - コメント（//, /*, #等）は可
-   - 説明文、見出し、箇条書きは絶対に含めない
-   - コードとテキストは必ず別ブロックに分ける
-
-4. 説明文の配置
-   - コードブロックの外（前後）に必ず配置
-   - コードブロックを```で閉じてから説明を書く
-   - 説明後に新しいコードブロックを開く
-
-5. 複数のコードブロック
-   - 前のコードブロックを必ず```で閉じてから、新しいコードブロックを開く
-   - ブロック間には必ず空行を入れる
-
-6. 禁止事項の詳細
-   - HTMLエンティティ化されたタグ（<!--?php、&lt;?php等）は使用しない
-   - <?phpは必ず```php内に記述
-   - バッククォートを4つ以上使用しない
-   - 引用符（"や'）をバッククォートの直後に付けない
-
-【正しいコードブロック記述例】
-例1: PHPコード
-```php
-<?php
-function example_function() {
-    echo "Hello World";
-}
-```
-
-例2: コードとテキストの混在
-```javascript
-// ブラウザのコンソールで実行
-console.log("Hello");
-```
-
-ここで説明を書きます。
-
-```javascript
-// 次のコード例
-console.log("World");
-```
-
-【修正方法 - 万が一ルール違反があった場合】
-1. バッククォートが1-2個しかない場合：3つに増やす
-2. バッククォートが4個以上の場合：3個に減らす
-3. 閉じタグがない場合：末尾に```を追加
-4. HTMLエンティティ化されている場合：元のタグに戻す
-
-{$additional_instructions}
-
-このセクションの内容をMarkdown形式で記述してください。
-上記のコードブロック記述ルールを絶対に守ってください。
-PROMPT;
-
-        $response_format = $this->should_use_openai_schema( $client ) ? $this->get_openai_blocks_schema() : null;
-        $response = $client->generate_text( $prompt, $response_format );
-
-        if ( ! $response['success'] ) {
-            return new WP_Error( 'section_generation_failed', $response['error'] );
-        }
-
-        $content = $response['data'];
-
-        // このセクションの要約を生成（次のセクションへの文脈として使用）
-        $summary = $this->generate_section_summary( $section['h2'], $content );
-
-        return array(
-            'content' => $content,
-            'summary' => $summary,
-        );
-    }
-
-    /**
-     * Phase 2: セクションのJSONブロックを生成
-     *
-     * @param array  $section セクション情報
-     * @param string $topic トピック
-     * @param string $previous_summary 前セクションの要約
-     * @param string $additional_instructions 追加指示
-     * @return array|WP_Error
-     */
-    public function generate_section_blocks( $section, $topic, $previous_summary = '', $additional_instructions = '' ) {
-        $client = $this->get_ai_client();
-
-        if ( is_wp_error( $client ) ) {
-            return $client;
-        }
-
-        $section_blocks = array(
-            array(
-                'type'    => 'h2',
-                'content' => $section['h2'],
-            ),
-        );
-
-        $context = '';
-        if ( ! empty( $previous_summary ) ) {
-            $context = "【前章までの要約】\n{$previous_summary}\n\n";
-        }
-
-        if ( ! empty( $section['subsections'] ) && is_array( $section['subsections'] ) ) {
-            foreach ( $section['subsections'] as $index => $subsection ) {
-                $h3_prompt = <<<PROMPT
-あなたは「{$topic}」に関する専門家ライターです。
-現在、記事のセクション「{$section['h2']}」内の小見出し（H3）パートの執筆を行っています。
-
-【執筆対象の小見出し】
-H3: {$subsection['h3']}
-
-【このH3の要点・構成案】
-{$subsection['key_points']}
-Content Type: {$subsection['content_type']}
-
-【前後の文脈】
-{$context}親セクションの目的: {$section['purpose']}
-
-【重要: 執筆ルール】
-1. 出力は必ず指定されたJSONスキーマに従うこと。
-2. H3見出し自体は出力せず、本文（text, list, code）のみを出力すること。
-3. 要約は禁止。極めて詳細に、長文で執筆すること。
-4. このH3パートだけで、最低でも3〜5つのブロック（段落）を使って深掘りすること。
-5. 具体例や実務的な手順を含めること。
-6. {$additional_instructions}
-
-【出力ルール - 絶対遵守】
-- Markdown記号（#, -, ```, ** など）を使わない
-- JSON以外のテキストは出力しない
-- codeブロックはこのパスでは出力しない
-- textブロックは段落ごとに分割（1ブロック＝1〜3文を目安）
-- 文字列内の改行・タブは必ず \\n / \\t にエスケープする
-- 文字列内に生の改行やタブを入れない
-- ルートは必ず { "blocks": [...] } のオブジェクト
-
-【出力フォーマット - 厳密に従うこと】
-{ "blocks": [ ... ] }
-
-ブロック種別とフィールド名（必ず"content"フィールドを使用）:
-- text: { "type": "text", "content": "段落テキスト（1〜3文）" }
-- list: { "type": "list", "items": ["具体的な項目1", "具体的な項目2"] }
-
-【重要】"text"フィールドは使用禁止。必ず"content"フィールドを使用すること
-PROMPT;
-
-                $response_format = $this->should_use_openai_schema( $client ) ? $this->get_openai_blocks_schema() : null;
-                $response = $client->generate_text( $h3_prompt, $response_format );
-
-                if ( ! $response['success'] ) {
-                    error_log( 'Blog Poster: Subsection generation failed for ' . $subsection['h3'] . ': ' . ( $response['error'] ?? 'APIエラー' ) );
-                    continue;
-                }
-
-                $data = $this->parse_json_blocks_response( $response['data'] );
-                if ( is_wp_error( $data ) || empty( $data['blocks'] ) || ! is_array( $data['blocks'] ) ) {
-                    continue;
-                }
-
-                $section_blocks[] = array(
-                    'type'    => 'h3',
-                    'content' => $subsection['h3'],
-                );
-
-                foreach ( $data['blocks'] as $generated_block ) {
-                    if ( isset( $generated_block['type'] ) && in_array( $generated_block['type'], array( 'h2', 'h3' ), true ) ) {
-                        continue;
-                    }
-                    $section_blocks[] = $generated_block;
-                }
-            }
-        }
-
-        $code_blocks = $this->generate_section_code_blocks( $section, $topic, $previous_summary, $additional_instructions );
-        if ( is_wp_error( $code_blocks ) ) {
-            return $code_blocks;
-        }
-
-        $merged_blocks = $this->merge_section_blocks_with_code( $section_blocks, $code_blocks );
-
-        return array(
-            'blocks'  => $merged_blocks,
-            'summary' => $previous_summary,
-        );
-    }
-
-    /**
-     * サブセクション（H3）の本文ブロックを生成（H3見出しは含めない）
-     *
-     * @param array  $section セクション情報
-     * @param array  $subsection サブセクション情報
-     * @param string $topic トピック
-     * @param string $previous_summary 前セクションの要約
-     * @param string $additional_instructions 追加指示
-     * @return array|WP_Error
-     */
-    public function generate_subsection_blocks( $section, $subsection, $topic, $previous_summary = '', $additional_instructions = '' ) {
-        $client = $this->get_ai_client();
-
-        if ( is_wp_error( $client ) ) {
-            return $client;
-        }
-
-        $context = '';
-        if ( ! empty( $previous_summary ) ) {
-            $context = "【前章までの要約】\n{$previous_summary}\n\n";
-        }
-
-        $prompt = <<<PROMPT
-あなたは「{$topic}」に関する専門家ライターです。
-現在、記事のセクション「{$section['h2']}」内の小見出し（H3）パートの執筆を行っています。
-
-【執筆対象の小見出し】
-H3: {$subsection['h3']}
-
-【このH3の要点・構成案】
-{$subsection['key_points']}
-Content Type: {$subsection['content_type']}
-
-【前後の文脈】
-{$context}親セクションの目的: {$section['purpose']}
-
-【重要: 執筆ルール】
-1. 出力は必ず指定されたJSONスキーマに従うこと。
-2. H3見出し自体は出力せず、本文（text, list）のみを出力すること。
-3. 要約は禁止。極めて詳細に、長文で執筆すること。
-4. このH3パートだけで、最低でも3〜5つのブロック（段落）を使って深掘りすること。
-5. 具体例や実務的な手順を含めること。
-6. {$additional_instructions}
-
-【出力ルール - 絶対遵守】
-- Markdown記号（#, -, ```, ** など）を使わない
-- JSON以外のテキストは出力しない
-- codeブロックはこのパスでは出力しない
-- textブロックは段落ごとに分割（1ブロック＝1〜3文を目安）
-- 文字列内の改行・タブは必ず \\n / \\t にエスケープする
-- 文字列内に生の改行やタブを入れない
-- ルートは必ず { "blocks": [...] } のオブジェクト
-
-【出力フォーマット - 厳密に従うこと】
-{ "blocks": [ ... ] }
-
-ブロック種別とフィールド名（必ず"content"フィールドを使用）:
-- text: { "type": "text", "content": "段落テキスト（1〜3文）" }
-- list: { "type": "list", "items": ["具体的な項目1", "具体的な項目2"] }
-
-【重要】"text"フィールドは使用禁止。必ず"content"フィールドを使用すること
-PROMPT;
-
-        $response_format = $this->should_use_openai_schema( $client ) ? $this->get_openai_blocks_schema() : null;
-        $response = $client->generate_text( $prompt, $response_format );
-
-        if ( ! $response['success'] ) {
-            return new WP_Error( 'api_error', $response['error'] ?? 'APIエラー' );
-        }
-
-        $data = $this->parse_json_blocks_response( $response['data'] );
-        if ( is_wp_error( $data ) ) {
-            return $data;
-        }
-
-        if ( empty( $data['blocks'] ) || ! is_array( $data['blocks'] ) ) {
-            return new WP_Error( 'invalid_blocks', 'blocks が取得できませんでした。' );
-        }
-
-        $blocks = array();
-        foreach ( $data['blocks'] as $block ) {
-            if ( isset( $block['type'] ) && in_array( $block['type'], array( 'h2', 'h3' ), true ) ) {
-                continue;
-            }
-            $blocks[] = $block;
-        }
-
-        return $blocks;
-    }
-
-    /**
-     * サブセクション（H3）のコードブロックのみ生成
-     *
-     * @param array  $section セクション情報
-     * @param array  $subsection サブセクション情報
-     * @param string $topic トピック
-     * @param string $previous_summary 前セクションの要約
-     * @param string $additional_instructions 追加指示
-     * @return array|WP_Error
-     */
-    public function generate_subsection_code_blocks( $section, $subsection, $topic, $previous_summary = '', $additional_instructions = '' ) {
+    public function generate_outline_markdown( $topic, $additional_instructions = '' ) {
         $client = $this->get_ai_client();
         if ( is_wp_error( $client ) ) {
             return $client;
         }
 
-        $context = '';
-        if ( ! empty( $previous_summary ) ) {
-            $context = "【前章までの要約】\n{$previous_summary}\n\n";
-        }
+        $prompt = $this->build_outline_prompt( $topic, $additional_instructions );
 
-        $prompt = <<<PROMPT
-あなたは{$topic}に関する実務経験を持つテクニカルライターです。
+        try {
+            $response = $client->generate_content( $prompt, array( 'max_tokens' => 4000 ) );
 
-{$context}以下のH3に対応する「コードブロックのみ」をJSONで出力してください。
-
-【親セクション】
-見出し: {$section['h2']}
-
-【執筆対象の小見出し】
-H3: {$subsection['h3']}
-含めるべき内容: {$subsection['key_points']}
-
-【出力ルール - 絶対遵守】
-- JSON以外のテキストは出力しない
-- 文字列内の改行・タブは必ず \\n / \\t にエスケープする
-- 文字列内に生の改行やタブを入れない
-- ルートは必ず { "code_blocks": [...] } のオブジェクト
-
-【出力フォーマット - 厳密に従うこと】
-{ "code_blocks": [ { "h3": "{$subsection['h3']}", "language": "php", "content": "..." } ] }
-
-{$additional_instructions}
-PROMPT;
-
-        $response_format = $this->should_use_openai_schema( $client ) ? $this->get_openai_code_blocks_schema() : null;
-        $response = $client->generate_text( $prompt, $response_format );
-
-        if ( ! $response['success'] ) {
-            return new WP_Error( 'api_error', $response['error'] ?? 'APIエラー' );
-        }
-
-        $data = $this->parse_json_blocks_response( $response['data'] );
-        if ( is_wp_error( $data ) ) {
-            return $data;
-        }
-
-        if ( ! isset( $data['code_blocks'] ) || ! is_array( $data['code_blocks'] ) ) {
-            return new WP_Error( 'invalid_blocks', 'code_blocks が取得できませんでした。' );
-        }
-
-        return $data['code_blocks'];
-    }
-
-    /**
-     * セクションのコードブロックだけを生成
-     *
-     * @param array  $section セクション情報
-     * @param string $topic トピック
-     * @param string $previous_summary 前セクションの要約
-     * @param string $additional_instructions 追加指示
-     * @return array|WP_Error
-     */
-    private function generate_section_code_blocks( $section, $topic, $previous_summary = '', $additional_instructions = '' ) {
-        $client = $this->get_ai_client();
-        if ( is_wp_error( $client ) ) {
-            return $client;
-        }
-
-        $context = '';
-        if ( ! empty( $previous_summary ) ) {
-            $context = "【これまでの流れ】\n{$previous_summary}\n\n";
-        }
-
-        $subsections_list = '';
-        if ( isset( $section['subsections'] ) ) {
-            foreach ( $section['subsections'] as $sub ) {
-                $subsections_list .= "- {$sub['h3']} ({$sub['content_type']}): {$sub['key_points']}\n";
+            if ( is_wp_error( $response ) ) {
+                return $response;
             }
-        }
 
-        $prompt = <<<PROMPT
-あなたは{$topic}に関する実務経験を持つテクニカルライターです。
+            $outline_md = $response['content'];
 
-{$context}以下のセクションに対応する「コードブロックのみ」をJSONで出力してください。
+            // YAML frontmatterとセクション構造を解析
+            $parsed = $this->parse_markdown_frontmatter( $outline_md );
 
-【セクション情報】
-見出し: {$section['h2']}
-含めるべき内容: {$section['key_content']}
-
-【サブセクション構成】
-{$subsections_list}
-
-【出力ルール - 絶対遵守】
-- JSON以外のテキストは出力しない
-- 文字列内の改行・タブは必ず \\n / \\t にエスケープする
-- 文字列内に生の改行やタブを入れない
-- 各h3につきコードブロックを0〜2個生成（必要がない場合は0）
-- codeブロックのcontentはコードのみ（説明文を含めない）
-
-【出力フォーマット - 厳密に従うこと】
-{
-  "code_blocks": [
-    { "h3": "サブセクション見出し", "language": "javascript", "content": "完全なコード例（10行以上）" }
-  ]
-}
-
-{$additional_instructions}
-PROMPT;
-
-        $response_format = $this->should_use_openai_schema( $client ) ? $this->get_openai_code_blocks_schema() : null;
-        $response = $client->generate_text( $prompt, $response_format );
-
-        if ( ! $response['success'] ) {
-            return new WP_Error( 'code_generation_failed', $response['error'] ?? 'APIエラー' );
-        }
-
-        $data = $this->parse_json_blocks_response( $response['data'] );
-        if ( is_wp_error( $data ) ) {
-            return $data;
-        }
-
-        if ( ! isset( $data['code_blocks'] ) || ! is_array( $data['code_blocks'] ) ) {
-            return array();
-        }
-
-        return $data['code_blocks'];
-    }
-
-    /**
-     * セクション本文ブロックにコードブロックを挿入
-     *
-     * @param array $blocks 本文ブロック
-     * @param array $code_blocks コードブロック配列
-     * @return array
-     */
-    public function merge_section_blocks_with_code( $blocks, $code_blocks ) {
-        if ( empty( $code_blocks ) ) {
-            return $blocks;
-        }
-
-        $by_h3 = array();
-        foreach ( $code_blocks as $code_block ) {
-            if ( ! isset( $code_block['h3'], $code_block['content'] ) ) {
-                continue;
-            }
-            $h3 = $code_block['h3'];
-            if ( ! isset( $by_h3[ $h3 ] ) ) {
-                $by_h3[ $h3 ] = array();
-            }
-            $by_h3[ $h3 ][] = array(
-                'type' => 'code',
-                'content' => $code_block['content'],
-                'language' => $code_block['language'] ?? 'text',
-                'items' => array(),
+            return array(
+                'success' => true,
+                'outline_md' => $outline_md,
+                'meta' => $parsed['meta'],
+                'sections' => $parsed['sections'],
             );
+
+        } catch ( Exception $e ) {
+            error_log( 'Blog Poster: Outline generation error: ' . $e->getMessage() );
+            return new WP_Error( 'outline_error', $e->getMessage() );
         }
-
-        $merged = array();
-        $current_h3 = null;
-
-        foreach ( $blocks as $block ) {
-            if ( isset( $block['type'] ) && 'h3' === $block['type'] ) {
-                if ( null !== $current_h3 && isset( $by_h3[ $current_h3 ] ) ) {
-                    $merged = array_merge( $merged, $by_h3[ $current_h3 ] );
-                    unset( $by_h3[ $current_h3 ] );
-                }
-                $current_h3 = $block['content'] ?? null;
-            }
-            $merged[] = $block;
-        }
-
-        if ( null !== $current_h3 && isset( $by_h3[ $current_h3 ] ) ) {
-            $merged = array_merge( $merged, $by_h3[ $current_h3 ] );
-            unset( $by_h3[ $current_h3 ] );
-        }
-
-        if ( ! empty( $by_h3 ) ) {
-            foreach ( $by_h3 as $remaining ) {
-                $merged = array_merge( $merged, $remaining );
-            }
-        }
-
-        return $merged;
     }
 
     /**
-     * セクションの要約を生成
+     * Section単位でMarkdown本文生成
      *
-     * @param string $heading 見出し
-     * @param string $content コンテンツ
-     * @return string 要約
+     * @param array $outline_sections アウトラインのセクション配列
+     * @param int $section_index 生成するセクションのインデックス
+     * @param string $previous_context 前セクションの要約
+     * @param string $additional_instructions 追加指示
+     * @return array|WP_Error ['success' => bool, 'section_md' => string, 'context' => string]
      */
-    private function generate_section_summary( $heading, $content ) {
-        // 簡易的な要約（最初の200文字程度）
-        $text_only = strip_tags( $content );
-        $text_only = preg_replace( '/```.*?```/s', '', $text_only );
-        $summary = mb_substr( $text_only, 0, 200 ) . '...';
-
-        return "{$heading}: {$summary}";
-    }
-
-    /**
-     * Phase 3: 記事を組み立て
-     *
-     * @param array $outline アウトライン
-     * @param array $sections_content セクションコンテンツ配列
-     * @param string $topic トピック
-     * @return array|WP_Error 記事データまたはエラー
-     */
-    private function assemble_article( $outline, $sections_content, $topic ) {
+    public function generate_section_markdown( $outline_sections, $section_index, $previous_context = '', $additional_instructions = '' ) {
         $client = $this->get_ai_client();
-
         if ( is_wp_error( $client ) ) {
             return $client;
         }
 
-        // 導入文を生成
-        $intro_prompt = <<<PROMPT
-以下の記事の導入文を200-300文字で作成してください。
+        $section = $outline_sections[ $section_index ];
+        $prompt = $this->build_section_prompt( $section, $previous_context, $additional_instructions );
 
-タイトル: {$outline['title']}
-読者のゴール: {$outline['reader_goal']}
+        try {
+            $response = $client->generate_content( $prompt, array( 'max_tokens' => 8000 ) );
 
-【導入文の要件】
-- この記事で得られる具体的な成果を明記
-- 読者の課題を明確にする
-- 抽象的な説明を避ける
-PROMPT;
+            if ( is_wp_error( $response ) ) {
+                return $response;
+            }
 
-        $response_format = $this->should_use_openai_schema( $client ) ? $this->get_openai_blocks_schema() : null;
-        $intro_response = $client->generate_text( $intro_prompt, $response_format );
-        $intro = $intro_response['success'] ? $intro_response['data'] : '';
+            $section_md = $response['content'];
 
-        // まとめを生成
-        $summary_prompt = <<<PROMPT
-以下の記事のまとめを200-300文字で作成してください。
+            // 次のセクションのためのコンテキスト要約を生成
+            $context = $this->extract_section_context( $section_md );
 
-タイトル: {$outline['title']}
+            return array(
+                'success' => true,
+                'section_md' => $section_md,
+                'context' => $context,
+            );
 
-【まとめの要件】
-- 要点を3-5個、箇条書きで記載
-- 次のアクション提案を含める
-- 読者が実行すべき具体的なステップを提示
-PROMPT;
+        } catch ( Exception $e ) {
+            error_log( 'Blog Poster: Section generation error: ' . $e->getMessage() );
+            return new WP_Error( 'section_error', $e->getMessage() );
+        }
+    }
 
-        $response_format = $this->should_use_openai_schema( $client ) ? $this->get_openai_blocks_schema() : null;
-        $summary_response = $client->generate_text( $summary_prompt, $response_format );
-        $summary = $summary_response['success'] ? $summary_response['data'] : '';
+    /**
+     * Outline生成プロンプトを構築
+     *
+     * @param string $topic トピック
+     * @param string $additional_instructions 追加指示
+     * @return string プロンプト
+     */
+    private function build_outline_prompt( $topic, $additional_instructions = '' ) {
+        $additional_text = ! empty( $additional_instructions ) ? "\n追加指示: {$additional_instructions}" : '';
 
-        // 本文を組み立て
-        $body = $intro . "\n\n";
-        $body .= implode( "\n\n", $sections_content );
-        $body .= "\n\n## まとめ\n\n" . $summary;
+        return "あなたは日本語ブログ記事のプロフェッショナルライターです。
+
+トピック: {$topic}{$additional_text}
+
+以下の形式で記事のアウトラインを作成してください:
+
+---
+title: \"記事タイトル（SEO最適化、30-60文字）\"
+slug: \"url-friendly-slug\"
+excerpt: \"記事の抜粋（120-160文字）\"
+keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
+---
+
+## セクション1のタイトル
+
+### サブセクション1-1
+- キーポイント
+
+### サブセクション1-2
+- キーポイント
+
+## セクション2のタイトル
+
+### サブセクション2-1
+- キーポイント
+
+要件:
+- H2セクションを5-7個作成
+- 各H2の下にH3を2-4個配置
+- 読者の課題解決を意識した構成
+- 具体例やコード例を含むセクション構成
+
+出力はMarkdown形式のみ。説明文は不要です。";
+    }
+
+    /**
+     * Section生成プロンプトを構築
+     *
+     * @param array $section セクション情報
+     * @param string $previous_context 前セクションのコンテキスト
+     * @param string $additional_instructions 追加指示
+     * @return string プロンプト
+     */
+    private function build_section_prompt( $section, $previous_context = '', $additional_instructions = '' ) {
+        $section_title = $section['title'];
+        $subsections_text = '';
+
+        if ( ! empty( $section['subsections'] ) ) {
+            $subsections_list = array();
+            foreach ( $section['subsections'] as $sub ) {
+                $subsections_list[] = "### {$sub['title']}";
+                if ( ! empty( $sub['points'] ) ) {
+                    foreach ( $sub['points'] as $point ) {
+                        $subsections_list[] = "- {$point}";
+                    }
+                }
+            }
+            $subsections_text = implode( "\n", $subsections_list );
+        }
+
+        $context_text = ! empty( $previous_context ) ? "\n前のセクションの内容: {$previous_context}" : '';
+        $additional_text = ! empty( $additional_instructions ) ? "\n追加指示: {$additional_instructions}" : '';
+
+        return "以下のセクションの本文を、Markdown形式で詳細に執筆してください。
+
+セクション: ## {$section_title}
+{$subsections_text}{$context_text}{$additional_text}
+
+要件:
+- 各サブセクションは300-500文字で詳細に
+- 具体例、手順、コード例を必ず含める
+- コードブロックは\`\`\`言語名\\nコード\\n\`\`\`形式で
+- 読者が実行できる内容を提供
+- 技術的に正確な情報のみ
+
+出力はMarkdown形式のみ。余計な説明不要。セクションタイトル(##)から開始してください。";
+    }
+
+    /**
+     * MarkdownからYAML frontmatterとセクション構造を解析
+     *
+     * @param string $markdown Markdownテキスト
+     * @return array ['meta' => array, 'body' => string, 'sections' => array]
+     */
+    private function parse_markdown_frontmatter( $markdown ) {
+        $meta = array();
+        $body = $markdown;
+        $sections = array();
+
+        // YAML frontmatterを抽出
+        if ( preg_match( '/^---\s*\n(.*?)\n---\s*\n/s', $markdown, $matches ) ) {
+            $frontmatter = $matches[1];
+            $body = trim( substr( $markdown, strlen( $matches[0] ) ) );
+
+            // 簡易YAML解析（key: value形式）
+            $lines = explode( "\n", $frontmatter );
+            foreach ( $lines as $line ) {
+                $line = trim( $line );
+
+                // title, slug, excerpt
+                if ( preg_match( '/^(title|slug|excerpt):\s*"([^"]*)"/', $line, $m ) ) {
+                    $meta[ $m[1] ] = $m[2];
+                } elseif ( preg_match( '/^(title|slug|excerpt):\s*(.+)$/', $line, $m ) ) {
+                    $meta[ $m[1] ] = trim( $m[2] );
+                }
+
+                // keywords配列
+                if ( preg_match( '/^keywords:\s*\[(.*)\]/', $line, $m ) ) {
+                    $keywords_str = $m[1];
+                    $keywords = array();
+                    if ( preg_match_all( '/"([^"]*)"/', $keywords_str, $kw_matches ) ) {
+                        $keywords = $kw_matches[1];
+                    }
+                    $meta['keywords'] = $keywords;
+                }
+            }
+        }
+
+        // セクション構造を解析（H2とH3）
+        $lines = explode( "\n", $body );
+        $current_section = null;
+        $current_subsection = null;
+
+        foreach ( $lines as $line ) {
+            $line = trim( $line );
+
+            // H2セクション
+            if ( preg_match( '/^##\s+(.+)$/', $line, $m ) ) {
+                if ( $current_section !== null ) {
+                    $sections[] = $current_section;
+                }
+                $current_section = array(
+                    'title' => trim( $m[1] ),
+                    'subsections' => array(),
+                );
+                $current_subsection = null;
+            }
+
+            // H3サブセクション
+            elseif ( preg_match( '/^###\s+(.+)$/', $line, $m ) ) {
+                if ( $current_section !== null ) {
+                    $current_subsection = array(
+                        'title' => trim( $m[1] ),
+                        'points' => array(),
+                    );
+                    $current_section['subsections'][] = $current_subsection;
+                }
+            }
+
+            // リストポイント
+            elseif ( preg_match( '/^-\s+(.+)$/', $line, $m ) ) {
+                if ( $current_subsection !== null ) {
+                    $last_idx = count( $current_section['subsections'] ) - 1;
+                    $current_section['subsections'][ $last_idx ]['points'][] = trim( $m[1] );
+                }
+            }
+        }
+
+        // 最後のセクションを追加
+        if ( $current_section !== null ) {
+            $sections[] = $current_section;
+        }
 
         return array(
-            'title' => $outline['title'],
-            'slug' => $outline['slug'],
-            'meta_description' => $outline['meta_description'],
-            'excerpt' => $outline['excerpt'],
-            'content' => $body,
-            'keywords' => isset( $outline['keywords'] ) ? $outline['keywords'] : array(),
+            'meta' => $meta,
+            'body' => $body,
+            'sections' => $sections,
         );
     }
 
     /**
-     * コードブロックを修正（v0.2.6 - 完全版）
+     * YAML frontmatterを構築
      *
-     * @param string $content コンテンツ
-     * @return string 修正されたコンテンツ
+     * @param array $meta メタデータ
+     * @return string frontmatter文字列
      */
-    public function fix_code_blocks( $content ) {
-        // 修正前の検証
-        $open_count_before = preg_match_all( '/```\w*/', $content, $open_matches_before );
-        $close_count_before = preg_match_all( '/^```\s*$/m', $content, $close_matches_before );
+    private function build_frontmatter( $meta ) {
+        $lines = array( '---' );
 
-        // パターン1: 記事全体を囲む```markdownブロックを削除
-        $content = preg_replace( '/^```(?:markdown|md)\s*\n/', '', $content );
-        $content = preg_replace( '/\n```\s*$/', '', $content );
-
-        // パターン2: 5つ以上のバッククォートを3つに修正
-        $content = preg_replace( '/`{4,}(php|javascript|js|html|css|bash|sh|python|py|java|c|cpp|go|rust|sql|json|xml|yaml|yml|markdown|md)?/', '```$1', $content );
-
-        // パターン3: バッククォート1-2個で始まる壊れたコードブロックを修正
-        $content = preg_replace( '/^`{1,2}(php|javascript|js|html|css|bash|sh|python|py|java|c|cpp|go|rust|sql|json|xml|yaml|yml)\s*$/m', '```$1', $content );
-
-        // パターン4: 引用符付きのコードブロック開始を修正（```php" → ```php）
-        $content = preg_replace( '/```(php|javascript|js|html|css|bash|sh|python|py|java|c|cpp|go|rust|sql|json|xml|yaml|yml)["\']/', '```$1', $content );
-
-        // パターン5: HTMLエンティティ化されたタグを修正
-        $html_entity_replacements = array(
-            '<!--?php'  => '<?php',
-            '?-->'      => '?>',
-            '&lt;?php'  => '<?php',
-            '?&gt;'     => '?>',
-            '&lt;?'     => '<?',
-            '&gt;'      => '>',
-            '&lt;'      => '<',
-            '&amp;'     => '&',
-            '&quot;'    => '"',
-        );
-        $content = strtr( $content, $html_entity_replacements );
-
-        // パターン6: 空のコードブロックを削除
-        $content = preg_replace( '/```\w*\s*\n\s*```/m', '', $content );
-
-        // パターン7: 行単位での構造チェックと修正（最重要）
-        $lines = explode( "\n", $content );
-        $fixed_lines = array();
-        $in_code_block = false;
-
-        for ( $i = 0; $i < count( $lines ); $i++ ) {
-            $line = $lines[ $i ];
-            $trimmed = trim( $line );
-
-            // コードブロック開始を検出（```で始まり、言語指定がある場合とない場合）
-            if ( preg_match( '/^```(\w*)/', $trimmed ) ) {
-                // すでにコードブロック内なら前のブロックを閉じる
-                if ( $in_code_block ) {
-                    $fixed_lines[] = '```';
-                }
-                $in_code_block = true;
-                $fixed_lines[] = $line;
-            }
-            // コードブロック終了を検出（```のみの行）
-            elseif ( trim( $line ) === '```' ) {
-                if ( $in_code_block ) {
-                    $in_code_block = false;
-                }
-                $fixed_lines[] = $line;
-            }
-            // その他の行
-            else {
-                $fixed_lines[] = $line;
-            }
+        if ( isset( $meta['title'] ) ) {
+            $lines[] = 'title: "' . str_replace( '"', '\\"', $meta['title'] ) . '"';
         }
 
-        // 最後に開いたままのコードブロックがあれば閉じる
-        if ( $in_code_block ) {
-            $fixed_lines[] = '```';
+        if ( isset( $meta['slug'] ) ) {
+            $lines[] = 'slug: "' . str_replace( '"', '\\"', $meta['slug'] ) . '"';
         }
 
-        $content = implode( "\n", $fixed_lines );
+        if ( isset( $meta['excerpt'] ) ) {
+            $lines[] = 'excerpt: "' . str_replace( '"', '\\"', $meta['excerpt'] ) . '"';
+        }
 
-        // パターン8: 誤って囲まれた文章ブロックをアンラップ
-        $lines         = explode( "\n", $content );
-        $sanitized     = array();
-        $block_lines   = array();
-        $fence_open    = '';
+        if ( isset( $meta['keywords'] ) && is_array( $meta['keywords'] ) ) {
+            $keywords_str = array();
+            foreach ( $meta['keywords'] as $kw ) {
+                $keywords_str[] = '"' . str_replace( '"', '\\"', $kw ) . '"';
+            }
+            $lines[] = 'keywords: [' . implode( ', ', $keywords_str ) . ']';
+        }
+
+        $lines[] = '---';
+
+        return implode( "\n", $lines );
+    }
+
+    /**
+     * セクションからコンテキスト要約を抽出
+     *
+     * @param string $section_md セクションのMarkdown
+     * @return string コンテキスト要約（300文字程度）
+     */
+    private function extract_section_context( $section_md ) {
+        // 最初の300文字を抽出（見出しやコードブロックを除外）
+        $lines = explode( "\n", $section_md );
+        $text_lines = array();
         $in_code_block = false;
 
         foreach ( $lines as $line ) {
-            if ( preg_match( '/^```/', trim( $line ) ) ) {
-                if ( ! $in_code_block ) {
-                    $in_code_block = true;
-                    $fence_open    = $line;
-                    $block_lines   = array();
-                } else {
-                    $block_text = implode( "\n", $block_lines );
-                    $is_empty   = '' === trim( $block_text );
-                    $has_code   = preg_match( '/[;{}<>$=]/', $block_text )
-                        || preg_match( '/<\?php|\bfunction\b|\bclass\b|=>/i', $block_text );
-                    $has_md     = preg_match( '/^\s{0,3}#{1,6}\s/m', $block_text )
-                        || preg_match( '/^\s*[-*]\s+/m', $block_text )
-                        || preg_match( '/^\s*\d+\.\s+/m', $block_text );
-                    $has_ja     = preg_match( '/[ぁ-んァ-ン一-龯]/u', $block_text );
-
-                    if ( $is_empty || ( $has_md || ( $has_ja && ! $has_code ) ) ) {
-                        $sanitized = array_merge( $sanitized, $block_lines );
-                    } else {
-                        $sanitized[] = $fence_open;
-                        $sanitized   = array_merge( $sanitized, $block_lines );
-                        $sanitized[] = '```';
-                    }
-
-                    $in_code_block = false;
-                    $fence_open    = '';
-                    $block_lines   = array();
-                }
+            // コードブロック制御
+            if ( preg_match( '/^```/', $line ) ) {
+                $in_code_block = ! $in_code_block;
                 continue;
             }
 
             if ( $in_code_block ) {
-                $block_lines[] = $line;
-            } else {
-                $sanitized[] = $line;
+                continue;
+            }
+
+            // 見出し行をスキップ
+            if ( preg_match( '/^#{2,}/', $line ) ) {
+                continue;
+            }
+
+            $line = trim( $line );
+            if ( ! empty( $line ) ) {
+                $text_lines[] = $line;
             }
         }
 
-        if ( $in_code_block ) {
-            $block_text = implode( "\n", $block_lines );
-            $is_empty   = '' === trim( $block_text );
-            $has_code   = preg_match( '/[;{}<>$=]/', $block_text )
-                || preg_match( '/<\?php|\bfunction\b|\bclass\b|=>/i', $block_text );
-            $has_md     = preg_match( '/^\s{0,3}#{1,6}\s/m', $block_text )
-                || preg_match( '/^\s*[-*]\s+/m', $block_text )
-                || preg_match( '/^\s*\d+\.\s+/m', $block_text );
-            $has_ja     = preg_match( '/[ぁ-んァ-ン一-龯]/u', $block_text );
+        $context = implode( ' ', $text_lines );
 
-            if ( $is_empty || ( $has_md || ( $has_ja && ! $has_code ) ) ) {
-                $sanitized = array_merge( $sanitized, $block_lines );
-            } else {
-                $sanitized[] = $fence_open;
-                $sanitized   = array_merge( $sanitized, $block_lines );
-                $sanitized[] = '```';
-            }
+        // 300文字に制限
+        if ( mb_strlen( $context ) > 300 ) {
+            $context = mb_substr( $context, 0, 300 ) . '...';
         }
 
-        $content = implode( "\n", $sanitized );
-
-        // パターン9: 過度な空行の削減（3行以上の連続空行を2行に）
-        $content = preg_replace( '/\n\s*\n\s*\n+/', "\n\n", $content );
-
-        // 修正後の検証
-        $open_count_after = preg_match_all( '/^```\w*/m', $content, $open_matches_after, PREG_OFFSET_CAPTURE );
-        $close_count_after = preg_match_all( '/^```\s*$/m', $content, $close_matches_after );
-
-        // ログ出力（本番では必ず削除または集約）
-        if ( $open_count_after !== $close_count_after ) {
-            error_log( "Blog Poster v0.2.6: Code block mismatch after fix. Open: {$open_count_after}, Close: {$close_count_after}" );
-        }
-
-        return $content;
+        return $context;
     }
 
     /**
-     * Claude関連の虚偽記述をチェック・修正
+     * Markdownの最小限の修正
      *
-     * @param string $content コンテンツ
-     * @return string 修正されたコンテンツ
+     * @param string $markdown Markdownテキスト
+     * @return string 修正後のMarkdown
      */
-    public function fact_check_claude_references( $content ) {
-        // パターン1: Claudeの「インストール」「プラグイン」に関する虚偽記述を検出
-        $false_patterns = array(
-            '/Claude.*?プラグイン.*?インストール/u',
-            '/Claude.*?をインストール/u',
-            '/Claude.*?ダウンロード.*?インストール/u',
-            '/Claude.*?プラグインディレクトリ/u',
-            '/wp-content\/plugins\/claude/i',
+    private function postprocess_markdown( $markdown ) {
+        // 1. コードブロック開始/終了の一致確認
+        $open_count = preg_match_all( '/^```\w*/m', $markdown, $open_matches );
+        $close_count = preg_match_all( '/^```\s*$/m', $markdown, $close_matches );
+
+        error_log( "Blog Poster: Code block check - Open: {$open_count}, Close: {$close_count}" );
+
+        // 開始が終了より多い場合、末尾に```を追加
+        if ( $open_count > $close_count ) {
+            $diff = $open_count - $close_count;
+            for ( $i = 0; $i < $diff; $i++ ) {
+                $markdown .= "\n```";
+            }
+            error_log( "Blog Poster: Added {$diff} closing code block(s)" );
+        }
+
+        // 2. 連続する空行を2つまでに制限
+        $markdown = preg_replace( "/\n{4,}/", "\n\n\n", $markdown );
+
+        // 3. 末尾の余分な空白削除
+        $markdown = rtrim( $markdown ) . "\n";
+
+        return $markdown;
+    }
+
+    /**
+     * MarkdownをHTMLに変換
+     *
+     * @param string $markdown Markdownテキスト
+     * @return string HTML
+     */
+    public function markdown_to_html( $markdown ) {
+        if ( ! class_exists( 'Parsedown' ) ) {
+            require_once plugin_dir_path( dirname( __FILE__ ) ) . 'vendor/parsedown/Parsedown.php';
+        }
+
+        $parsedown = new Parsedown();
+        $parsedown->setSafeMode( false );
+        $html = $parsedown->text( $markdown );
+
+        // コードブロックのシンタックスハイライトクラス追加
+        $html = $this->add_code_block_classes( $html );
+
+        return $html;
+    }
+
+    /**
+     * コードブロックにクラスを追加
+     *
+     * @param string $html HTML
+     * @return string 修正後のHTML
+     */
+    private function add_code_block_classes( $html ) {
+        // <pre><code class="language-php"> 形式に変換
+        $html = preg_replace_callback(
+            '/<pre><code class="([^"]+)">/',
+            function( $matches ) {
+                $lang = $matches[1];
+                return '<pre><code class="language-' . esc_attr( $lang ) . ' hljs">';
+            },
+            $html
         );
 
-        $has_false_info = false;
-        foreach ( $false_patterns as $pattern ) {
-            if ( preg_match( $pattern, $content ) ) {
-                $has_false_info = true;
-                error_log( "Blog Poster: Detected false Claude reference matching pattern: {$pattern}" );
-                break;
-            }
-        }
-
-        if ( $has_false_info ) {
-            // 虚偽記述が見つかった場合、該当部分を修正
-            $content = preg_replace(
-                '/Claude.*?プラグイン.*?インストール[^。]*。/u',
-                'ClaudeのAPIキーを取得して設定します。',
-                $content
-            );
-
-            $content = preg_replace(
-                '/Claude.*?をインストール[^。]*。/u',
-                'Claude APIを使用するには、Anthropic公式サイトでAPIキーを取得します。',
-                $content
-            );
-
-            // ログに記録
-            error_log( "Blog Poster: Fixed false Claude references in generated article" );
-        }
-
-        return $content;
+        return $html;
     }
 
     /**
-     * 記事の品質を検証
+     * 記事の検証
      *
-     * @param string $content コンテンツ
+     * @param string $content 記事内容
      * @return array 検証結果
      */
     public function validate_article( $content ) {
         $issues = array();
 
+        // 最小文字数チェック
+        $char_count = mb_strlen( strip_tags( $content ) );
+        if ( $char_count < 1000 ) {
+            $issues[] = array(
+                'type' => 'warning',
+                'message' => sprintf( __( '記事が短すぎます（%d文字）。少なくとも1000文字以上を推奨します。', 'blog-poster' ), $char_count ),
+            );
+        }
+
         // コードブロックの検証
-        if ( preg_match( '/`php/', $content ) || preg_match( '/`javascript/', $content ) ) {
-            $issues[] = 'コードブロックが正しく記述されていません（```phpではなく`phpになっています）';
-        }
-
-        // コードブロックが途中で切れていないか確認
-        $open_count = preg_match_all( '/```\w+/', $content, $open_matches );
-        $close_count = preg_match_all( '/^```\s*$/m', $content, $close_matches );
-
-        if ( $open_count !== $close_count ) {
-            $issues[] = 'コードブロックが閉じられていません（開始: ' . $open_count . '個, 終了: ' . $close_count . '個）';
-        }
-
-        // 「〜が重要です」「〜できます」で終わる段落の検出
-        if ( preg_match( '/[重要|大切]です。?\n\n/', $content ) ) {
-            $issues[] = '抽象的な説明（「〜が重要です」）で終わる段落があります';
-        }
-
-        // コード例の完全性チェック（基本的な検証）
-        if ( preg_match( '/```php\s*\n.*?\$\w+.*?```/s', $content ) ) {
-            // PHPコードがある場合、変数が定義されているか簡易チェック
-            preg_match_all( '/```php\s*\n(.*?)```/s', $content, $matches );
-            foreach ( $matches[1] as $code_block ) {
-                // 変数の使用を検出
-                preg_match_all( '/\$(\w+)/', $code_block, $vars );
-                if ( ! empty( $vars[1] ) ) {
-                    // 最初に使われる変数が代入または関数パラメータで定義されているか
-                    $first_var = $vars[1][0];
-                    if ( ! preg_match( "/\\\${$first_var}\s*=/", $code_block ) &&
-                         ! preg_match( "/function.*?\\\${$first_var}/", $code_block ) ) {
-                        // 一部のケースでは問題ないので、厳しすぎないように
-                    }
-                }
-            }
-        }
-
-        if ( empty( $issues ) ) {
-            return array( 'valid' => true );
+        $code_validation = $this->validate_code_blocks( $content );
+        if ( ! $code_validation['valid'] ) {
+            $issues[] = array(
+                'type' => 'error',
+                'message' => $code_validation['message'],
+            );
         }
 
         return array(
-            'valid' => false,
-            'issues' => implode( "\n", $issues ),
+            'valid' => empty( $issues ) || ! $this->has_errors( $issues ),
+            'issues' => $issues,
+            'char_count' => $char_count,
         );
     }
 
     /**
-     * コードブロックの健全性を検証
+     * エラーが含まれているかチェック
      *
-     * @param string $content コンテンツ
+     * @param array $issues 問題配列
+     * @return bool
+     */
+    private function has_errors( $issues ) {
+        foreach ( $issues as $issue ) {
+            if ( $issue['type'] === 'error' ) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * コードブロックの検証
+     *
+     * @param string $content 記事内容
      * @return array 検証結果
      */
     public function validate_code_blocks( $content ) {
-        $issues       = array();
-        $lines        = explode( "\n", $content );
-        $in_block     = false;
-        $block_lines  = array();
-        $block_start  = 0;
-        $fence_line   = '';
+        $open_count = preg_match_all( '/```\w*/m', $content, $open_matches );
+        $close_count = preg_match_all( '/```\s*$/m', $content, $close_matches );
 
-        foreach ( $lines as $index => $line ) {
-            $trimmed = trim( $line );
-            if ( preg_match( '/^```/', $trimmed ) ) {
-                if ( ! $in_block ) {
-                    $in_block    = true;
-                    $block_lines = array();
-                    $block_start = $index + 1;
-                    $fence_line  = $trimmed;
-                } else {
-                    $block_text = implode( "\n", $block_lines );
-                    $is_empty   = '' === trim( $block_text );
-                    $code_token_count  = preg_match_all( '/[;{}<>$=]/', $block_text );
-                    $code_token_count += preg_match_all( '/<\?php|\bfunction\b|\bclass\b|=>/i', $block_text );
-                    $code_token_count += preg_match_all( '/\b(public|private|protected|return|const|let|var|import|export)\b/i', $block_text );
-                    $has_md     = preg_match( '/^\s*#{1,6}\s/m', $block_text )
-                        || preg_match( '/^\s*[-*]\s+/m', $block_text )
-                        || preg_match( '/^\s*\d+\.\s+/m', $block_text );
-                    $has_ja     = preg_match( '/[ぁ-んァ-ン一-龯]/u', $block_text );
-                    $sentence_count = preg_match_all( '/[。！？]/u', $block_text );
-                    $looks_like_prose = $has_ja && $sentence_count >= 2 && $code_token_count < 2;
-
-                    if ( $is_empty ) {
-                        $issues[] = '空のコードブロックが検出されました（開始行: ' . $block_start . '）';
-                    } elseif ( $has_md && $has_ja ) {
-                        $issues[] = 'コードブロック内に見出し/箇条書きが混入しています（開始行: ' . $block_start . '）';
-                    } elseif ( $looks_like_prose ) {
-                        $issues[] = 'コードブロック内に文章・見出し・箇条書きが混入しています（開始行: ' . $block_start . '）';
-                    }
-
-                    $in_block    = false;
-                    $block_lines = array();
-                    $block_start = 0;
-                    $fence_line  = '';
-                }
-                continue;
-            }
-
-            if ( $in_block ) {
-                $block_lines[] = $line;
-            }
-        }
-
-        if ( $in_block ) {
-            $issues[] = 'コードブロックが閉じられていません（開始行: ' . $block_start . '）';
+        if ( $open_count !== $close_count ) {
+            return array(
+                'valid' => false,
+                'message' => sprintf(
+                    __( 'コードブロックの開始と終了が一致しません（開始: %d, 終了: %d）。', 'blog-poster' ),
+                    $open_count,
+                    $close_count
+                ),
+            );
         }
 
         return array(
-            'valid'  => empty( $issues ),
-            'issues' => $issues,
+            'valid' => true,
+            'message' => __( 'コードブロックは正常です。', 'blog-poster' ),
         );
     }
 
     /**
-     * 導入部を生成
-     *
-     * @param array $outline アウトライン
-     * @return string 導入部
-     */
-    public function generate_intro( $outline ) {
-        $client = $this->get_ai_client();
-
-        if ( is_wp_error( $client ) ) {
-            return '';
-        }
-
-        $prompt = <<<PROMPT
-以下の記事の導入部を200〜300文字で作成してください。
-
-タイトル: {$outline['title']}
-想定読者: {$outline['target_reader']}
-読者の目標: {$outline['reader_goal']}
-
-【導入部の要件】
-- 読者の課題や疑問に共感する文から始める
-- この記事で何が得られるかを明示する
-- 読み進める動機を与える
-- 箇条書きは使わない
-
-Markdown形式で出力してください。見出しは不要です。
-PROMPT;
-
-        $response = $client->generate_text( $prompt );
-
-        return $response['success'] ? $response['data'] : '';
-    }
-
-    /**
-     * まとめを生成
-     *
-     * @param array  $outline アウトライン
-     * @param string $all_content 全コンテンツ
-     * @return string まとめ
-     */
-    public function generate_summary( $outline, $all_content ) {
-        $client = $this->get_ai_client();
-
-        if ( is_wp_error( $client ) ) {
-            return '';
-        }
-
-        $headings = $this->extract_headings( $all_content );
-
-        $prompt = <<<PROMPT
-以下の記事のまとめセクションを作成してください。
-
-【記事タイトル】
-{$outline['title']}
-
-【記事本文の要約】
-記事では以下のトピックを扱いました：
-{$headings}
-
-【まとめの要件】
-- H2「まとめ」から始める
-- 記事の要点を3〜5点で箇条書き
-- 読者が次に取るべき具体的なアクションを1つ提案
-- 200〜300文字程度
-
-Markdown形式で出力してください。
-PROMPT;
-
-        $response = $client->generate_text( $prompt );
-
-        return $response['success'] ? $response['data'] : '';
-    }
-
-    /**
-     * JSONブロックで導入部を生成
-     *
-     * @param array $outline アウトライン
-     * @return array|WP_Error
-     */
-    public function generate_intro_blocks( $outline ) {
-        $client = $this->get_ai_client();
-
-        if ( is_wp_error( $client ) ) {
-            return $client;
-        }
-
-        $prompt = <<<PROMPT
-以下の記事の導入部をJSONブロック配列で作成してください。
-
-タイトル: {$outline['title']}
-想定読者: {$outline['target_reader']}
-読者の目標: {$outline['reader_goal']}
-
-【要件】
-- 読者の課題への共感から始める
-- この記事で得られることを明示
-- 箇条書きは使わない
-- Markdown記号は使わない
-- JSON以外のテキストを出力しない
-- 文字列内の改行・タブは必ず \\n / \\t にエスケープする
-- 文字列内に生の改行やタブを入れない
-- ルートは必ず { "blocks": [...] } のオブジェクト
-
-【出力フォーマット - 厳密に従うこと】
-{ "blocks": [ { "type": "text", "content": "..." } ] }
-
-【重要】"text"フィールドは使用禁止。必ず"content"フィールドを使用すること
-PROMPT;
-
-        $response = $client->generate_text( $prompt );
-        if ( ! $response['success'] ) {
-            return new WP_Error( 'api_error', $response['error'] ?? 'APIエラー' );
-        }
-
-        $data = $this->parse_json_blocks_response( $response['data'] );
-        if ( is_wp_error( $data ) ) {
-            return $data;
-        }
-
-        return isset( $data['blocks'] ) ? $data['blocks'] : array();
-    }
-
-    /**
-     * JSONブロックでまとめを生成
-     *
-     * @param array  $outline アウトライン
-     * @param string $all_content 本文
-     * @return array|WP_Error
-     */
-    public function generate_summary_blocks( $outline, $all_content ) {
-        $client = $this->get_ai_client();
-
-        if ( is_wp_error( $client ) ) {
-            return $client;
-        }
-
-        $prompt = <<<PROMPT
-以下の記事のまとめをJSONブロック配列で作成してください。
-
-タイトル: {$outline['title']}
-
-【要件】
-- 要点を3-5個のlistで記述
-- 次のアクション提案をtextで1段落追加
-- Markdown記号は使わない
-- JSON以外のテキストを出力しない
-- 文字列内の改行・タブは必ず \\n / \\t にエスケープする
-- 文字列内に生の改行やタブを入れない
-- ルートは必ず { "blocks": [...] } のオブジェクト
-
-【出力フォーマット - 厳密に従うこと】
-{ "blocks": [
-  { "type": "h2", "content": "まとめ" },
-  { "type": "list", "items": ["...","..."] },
-  { "type": "text", "content": "..." }
-] }
-
-【重要】"text"フィールドは使用禁止。必ず"content"フィールドを使用すること
-PROMPT;
-
-        $response = $client->generate_text( $prompt );
-        if ( ! $response['success'] ) {
-            return new WP_Error( 'api_error', $response['error'] ?? 'APIエラー' );
-        }
-
-        $data = $this->parse_json_blocks_response( $response['data'] );
-        if ( is_wp_error( $data ) ) {
-            return $data;
-        }
-
-        return isset( $data['blocks'] ) ? $data['blocks'] : array();
-    }
-
-    /**
-     * コンテンツから見出しを抽出
-     *
-     * @param string $content コンテンツ
-     * @return string 見出しリスト
-     */
-    private function extract_headings( $content ) {
-        preg_match_all( '/^##\s+(.+)$/m', $content, $matches );
-        $headings = isset( $matches[1] ) ? $matches[1] : array();
-        return ! empty( $headings ) ? implode( "\n", $headings ) : '（見出しなし）';
-    }
-
-    /**
-     * Featured Image を生成
+     * アイキャッチ画像を生成
      *
      * @param string $topic トピック
-     * @return string|WP_Error 画像URLまたはエラー
+     * @return array|WP_Error 画像URLまたはエラー
      */
     public function generate_featured_image( $topic ) {
-        // TODO: Phase 4で実装
-        return new WP_Error( 'not_implemented', __( '画像生成機能は開発中です。', 'blog-poster' ) );
+        $client = $this->get_ai_client();
+        if ( is_wp_error( $client ) ) {
+            return $client;
+        }
+
+        // 画像生成に対応しているプロバイダーのみ
+        if ( ! method_exists( $client, 'generate_image' ) ) {
+            return new WP_Error(
+                'not_supported',
+                __( '現在のAIプロバイダーは画像生成に対応していません。', 'blog-poster' )
+            );
+        }
+
+        $prompt = "A professional blog featured image for an article about: {$topic}. Modern, clean, and visually appealing.";
+
+        try {
+            $result = $client->generate_image( $prompt );
+
+            if ( is_wp_error( $result ) ) {
+                return $result;
+            }
+
+            return array(
+                'success' => true,
+                'url' => $result['url'],
+            );
+
+        } catch ( Exception $e ) {
+            error_log( 'Blog Poster: Featured image generation error: ' . $e->getMessage() );
+            return new WP_Error( 'image_error', $e->getMessage() );
+        }
+    }
+
+    /**
+     * 記事のJSON表現を検証（後方互換性）
+     *
+     * @param array $article_json 記事JSON
+     * @return array 検証結果
+     */
+    public function validate_article_json( $article_json ) {
+        return array(
+            'valid' => false,
+            'message' => __( 'JSON形式は非推奨です。Markdown形式を使用してください。', 'blog-poster' ),
+        );
+    }
+
+    /**
+     * 記事JSONをHTMLにレンダリング（後方互換性）
+     *
+     * @param array $article_json 記事JSON
+     * @return string|WP_Error HTML
+     */
+    public function render_article_json_to_html( $article_json ) {
+        return new WP_Error(
+            'deprecated',
+            __( 'この機能は廃止されました。Markdown形式を使用してください。', 'blog-poster' )
+        );
     }
 }

@@ -11,7 +11,7 @@
  * Plugin Name:       Blog Poster
  * Plugin URI:        https://bridgesystem.me/blog-poster
  * Description:       AI駆動型ブログ記事自動生成プラグイン。Google Gemini、Anthropic Claude、OpenAIの3つのAIモデルに対応し、高品質な日本語記事を自動生成します。
- * Version:           0.2.6-alpha
+ * Version:           0.3.0-alpha
  * Requires at least: 6.0
  * Requires PHP:      8.0
  * Author:            Bridge System
@@ -28,7 +28,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // プラグインのバージョン定義
-define( 'BLOG_POSTER_VERSION', '0.2.6-alpha' );
+define( 'BLOG_POSTER_VERSION', '0.3.0-alpha' );
 define( 'BLOG_POSTER_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'BLOG_POSTER_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'BLOG_POSTER_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -169,7 +169,7 @@ class Blog_Poster {
 
         dbDelta( $sql );
 
-        // ジョブ管理テーブル
+        // ジョブ管理テーブル（v0.3.0-alpha: Markdown-Firstアーキテクチャに簡略化）
         $jobs_table = $wpdb->prefix . 'blog_poster_jobs';
         $sql_jobs = "CREATE TABLE IF NOT EXISTS $jobs_table (
             id bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -178,14 +178,10 @@ class Blog_Poster {
             status varchar(20) DEFAULT 'pending',
             current_step int(11) DEFAULT 0,
             total_steps int(11) DEFAULT 3,
-            section_index int(11) DEFAULT 0,
-            sections_total int(11) DEFAULT 0,
-            subsection_index int(11) DEFAULT 0,
-            subsections_total int(11) DEFAULT 0,
-            previous_summary longtext,
-            outline longtext,
-            sections_content longtext,
-            final_content longtext,
+            outline_md longtext,
+            content_md longtext,
+            final_markdown longtext,
+            final_html longtext,
             error_message text,
             created_at datetime DEFAULT CURRENT_TIMESTAMP,
             updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -208,8 +204,8 @@ class Blog_Poster {
             'openai_api_key' => '',
             'default_model' => array(
                 'gemini' => 'gemini-1.5-pro',
-                'claude' => 'claude-3-5-sonnet-20241022',
-                'openai' => 'gpt-5.2'
+                'claude' => 'claude-3-5-sonnet-20241022', // v0.3.0-alpha: デフォルト推奨
+                'openai' => 'gpt-4o' // v0.3.0-alpha: gpt-5.2の不安定性を回避
             ),
             'temperature' => 0.7,
             'max_tokens' => 2000,
