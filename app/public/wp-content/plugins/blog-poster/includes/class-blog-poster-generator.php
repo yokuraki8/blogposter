@@ -64,6 +64,13 @@ class Blog_Poster_Generator {
         }
 
         if ( json_last_error() !== JSON_ERROR_NONE ) {
+            $repaired = $this->repair_json_with_openai( $json_str );
+            if ( '' !== $repaired ) {
+                $data = json_decode( $repaired, true );
+            }
+        }
+
+        if ( json_last_error() !== JSON_ERROR_NONE ) {
             $error_msg = json_last_error_msg();
             error_log( 'Blog Poster: JSON parse error: ' . $error_msg );
             error_log( 'Blog Poster: Response length: ' . strlen( $json_str ) );
@@ -194,6 +201,8 @@ class Blog_Poster_Generator {
      * @return string
      */
     private function sanitize_json_string( $json_str ) {
+        // BOM除去
+        $json_str = preg_replace( '/^\xEF\xBB\xBF/', '', $json_str );
         // JSON文字列内の未エスケープ改行/タブをエスケープ、その他制御文字は無害化
         $result = '';
         $in_string = false;
@@ -259,6 +268,31 @@ class Blog_Poster_Generator {
         }
 
         return $result;
+    }
+
+    /**
+     * JSON修復（OpenAI fallback）
+     *
+     * @param string $json_str JSON文字列
+     * @return string
+     */
+    private function repair_json_with_openai( $json_str ) {
+        $settings = get_option( 'blog_poster_settings', array() );
+        $api_key = isset( $settings['openai_api_key'] ) ? $settings['openai_api_key'] : '';
+        if ( empty( $api_key ) ) {
+            return '';
+        }
+
+        $client = new Blog_Poster_OpenAI_Client( $api_key, 'gpt-4o-mini', $settings );
+        $prompt = "You are a JSON repair tool. Return ONLY valid JSON. Do not add explanations or markdown.\n\nINVALID JSON:\n" . $json_str;
+        $response = $client->generate_text( $prompt );
+        if ( ! $response['success'] ) {
+            return '';
+        }
+
+        $fixed = $this->sanitize_json_string( trim( $response['data'] ) );
+        $fragment = $this->extract_json_fragment( $fixed );
+        return '' !== $fragment ? $fragment : $fixed;
     }
 
     /**
@@ -665,6 +699,12 @@ class Blog_Poster_Generator {
 
 {$additional_instructions}
 
+【Output Rules】
+1. Output strictly valid JSON.
+2. Escape all control characters inside strings (use \\n for newlines, \\t for tabs).
+3. Do NOT include raw newlines or tabs inside string values.
+4. The root element must be a single JSON object (not an array).
+
 上記のJSON形式で、実行可能な記事のアウトラインを生成してください。
 PROMPT;
 
@@ -710,6 +750,13 @@ PROMPT;
             $fragment = $this->extract_json_fragment( $json_str );
             if ( '' !== $fragment && $fragment !== $json_str ) {
                 $data = json_decode( $fragment, true );
+            }
+        }
+
+        if ( json_last_error() !== JSON_ERROR_NONE ) {
+            $repaired = $this->repair_json_with_openai( $json_str );
+            if ( '' !== $repaired ) {
+                $data = json_decode( $repaired, true );
             }
         }
 
@@ -935,6 +982,9 @@ PROMPT;
 - textはプレーンテキストのみ
 - 先頭ブロックは必ずh2（見出し: {$section['h2']}）
 - サブセクションごとにh3を入れて構成する
+- 文字列内の改行・タブは必ず \\n / \\t にエスケープする
+- 文字列内に生の改行やタブを入れない
+- ルートは必ず { "blocks": [...] } のオブジェクト
 
 【出力フォーマット - 厳密に従うこと】
 { "blocks": [ ... ] }
@@ -1479,6 +1529,9 @@ PROMPT;
 - 箇条書きは使わない
 - Markdown記号は使わない
 - JSON以外のテキストを出力しない
+- 文字列内の改行・タブは必ず \\n / \\t にエスケープする
+- 文字列内に生の改行やタブを入れない
+- ルートは必ず { "blocks": [...] } のオブジェクト
 
 【出力フォーマット - 厳密に従うこと】
 { "blocks": [ { "type": "text", "content": "..." } ] }
@@ -1523,6 +1576,9 @@ PROMPT;
 - 次のアクション提案をtextで1段落追加
 - Markdown記号は使わない
 - JSON以外のテキストを出力しない
+- 文字列内の改行・タブは必ず \\n / \\t にエスケープする
+- 文字列内に生の改行やタブを入れない
+- ルートは必ず { "blocks": [...] } のオブジェクト
 
 【出力フォーマット - 厳密に従うこと】
 { "blocks": [
