@@ -149,7 +149,7 @@ class Blog_Poster_Generator {
         $prompt = $this->build_outline_prompt( $topic, $additional_instructions );
 
         try {
-            $response = $client->generate_content( $prompt, array( 'max_tokens' => 4000 ) );
+            $response = $client->generate_text( $prompt, array( 'max_tokens' => 4000 ) );
 
             if ( is_wp_error( $response ) ) {
                 return $response;
@@ -192,7 +192,7 @@ class Blog_Poster_Generator {
         $prompt = $this->build_section_prompt( $section, $previous_context, $additional_instructions );
 
         try {
-            $response = $client->generate_content( $prompt, array( 'max_tokens' => 8000 ) );
+            $response = $client->generate_text( $prompt, array( 'max_tokens' => 8000 ) );
 
             if ( is_wp_error( $response ) ) {
                 return $response;
