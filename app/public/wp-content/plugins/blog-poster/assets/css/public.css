@@ -1,0 +1,14 @@
+/* Front-end code block styling */
+.entry-content pre,
+.entry-content pre code,
+.wp-block-code,
+.wp-block-code code {
+    background-color: #f2f2f2;
+}
+
+.entry-content pre,
+.wp-block-code {
+    padding: 12px 16px;
+    overflow-x: auto;
+    border-radius: 4px;
+}
