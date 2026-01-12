@@ -283,7 +283,7 @@ class Blog_Poster_Generator {
             return '';
         }
 
-        $client = new Blog_Poster_OpenAI_Client( $api_key, 'gpt-4o-mini', $settings );
+        $client = new Blog_Poster_OpenAI_Client( $api_key, 'gpt-4.1', $settings );
         $prompt = "You are a JSON repair tool. Return a JSON object with a single key 'fixed' that contains the corrected JSON (as an object or array, not a string). Do not add explanations or markdown.\n\nINVALID JSON:\n" . $json_str;
         $response = $client->generate_text( $prompt, array( 'type' => 'json_object' ) );
         if ( ! $response['success'] ) {
