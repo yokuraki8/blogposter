@@ -410,25 +410,50 @@ class Blog_Poster_Job_Manager {
 		try {
 			$outline = json_decode( $job['outline'], true );
 			$content = $job['final_content'];
+			$topic   = $job['topic'];
+			$additional_instructions = $job['additional_instructions'] ?? '';
 
 			if ( $this->generator->is_json_output_enabled() ) {
 				$article_json    = json_decode( $content, true );
 				$json_validation = $this->generator->validate_article_json( $article_json );
 
 				if ( ! $json_validation['valid'] ) {
-					$message = 'JSON検証に失敗しました: ' . implode( ' / ', $json_validation['issues'] );
-					$this->update_job(
-						$job_id,
-						array(
-							'status'        => 'failed',
-							'error_message' => $message,
-						)
-					);
-					return array(
-						'success'    => false,
-						'message'    => $message,
-						'validation' => $json_validation,
-					);
+					$regenerated = $this->regenerate_content_from_outline( $outline, $topic, $additional_instructions );
+					if ( is_wp_error( $regenerated ) ) {
+						$message = 'JSON検証に失敗し、再生成も失敗しました: ' . $regenerated->get_error_message();
+						$this->update_job(
+							$job_id,
+							array(
+								'status'        => 'failed',
+								'error_message' => $message,
+							)
+						);
+						return array(
+							'success'    => false,
+							'message'    => $message,
+							'validation' => $json_validation,
+						);
+					}
+
+					$content         = $regenerated;
+					$article_json    = json_decode( $content, true );
+					$json_validation = $this->generator->validate_article_json( $article_json );
+
+					if ( ! $json_validation['valid'] ) {
+						$message = 'JSON再生成後の検証に失敗しました: ' . implode( ' / ', $json_validation['issues'] );
+						$this->update_job(
+							$job_id,
+							array(
+								'status'        => 'failed',
+								'error_message' => $message,
+							)
+						);
+						return array(
+							'success'    => false,
+							'message'    => $message,
+							'validation' => $json_validation,
+						);
+					}
 				}
 
 				$this->update_job(
@@ -460,19 +485,42 @@ class Blog_Poster_Job_Manager {
 
 			$code_validation = $this->generator->validate_code_blocks( $content );
 			if ( ! $code_validation['valid'] ) {
-				$message = 'コードブロック検証に失敗しました: ' . implode( ' / ', $code_validation['issues'] );
-				$this->update_job(
-					$job_id,
-					array(
-						'status'        => 'failed',
-						'error_message' => $message,
-					)
-				);
-				return array(
-					'success'    => false,
-					'message'    => $message,
-					'validation' => $code_validation,
-				);
+				$regenerated = $this->regenerate_content_from_outline( $outline, $topic, $additional_instructions );
+				if ( is_wp_error( $regenerated ) ) {
+					$message = 'コードブロック検証に失敗し、再生成も失敗しました: ' . $regenerated->get_error_message();
+					$this->update_job(
+						$job_id,
+						array(
+							'status'        => 'failed',
+							'error_message' => $message,
+						)
+					);
+					return array(
+						'success'    => false,
+						'message'    => $message,
+						'validation' => $code_validation,
+					);
+				}
+
+				$content = $this->generator->fix_code_blocks( $regenerated );
+				$content = $this->generator->fact_check_claude_references( $content );
+
+				$code_validation = $this->generator->validate_code_blocks( $content );
+				if ( ! $code_validation['valid'] ) {
+					$message = 'コードブロック再生成後の検証に失敗しました: ' . implode( ' / ', $code_validation['issues'] );
+					$this->update_job(
+						$job_id,
+						array(
+							'status'        => 'failed',
+							'error_message' => $message,
+						)
+					);
+					return array(
+						'success'    => false,
+						'message'    => $message,
+						'validation' => $code_validation,
+					);
+				}
 			}
 
 			$validation = $this->generator->validate_article( $content );
@@ -511,5 +559,91 @@ class Blog_Poster_Job_Manager {
 				'message' => $e->getMessage(),
 			);
 		}
+	}
+
+	/**
+	 * アウトラインから本文を再生成
+	 *
+	 * @param array  $outline アウトライン
+	 * @param string $topic トピック
+	 * @param string $additional_instructions 追加指示
+	 * @return string|WP_Error 本文
+	 */
+	private function regenerate_content_from_outline( $outline, $topic, $additional_instructions ) {
+		if ( $this->generator->is_json_output_enabled() ) {
+			$intro_blocks = $this->generator->generate_intro_blocks( $outline );
+			if ( is_wp_error( $intro_blocks ) ) {
+				return $intro_blocks;
+			}
+
+			$blocks           = $intro_blocks;
+			$previous_summary = '';
+
+			foreach ( $outline['sections'] as $section ) {
+				$section_result = $this->generator->generate_section_blocks(
+					$section,
+					$topic,
+					$previous_summary,
+					$additional_instructions
+				);
+
+				if ( is_wp_error( $section_result ) ) {
+					error_log( "Blog Poster: Regeneration failed for section " . $section['h2'] . ": " . $section_result->get_error_message() );
+					continue;
+				}
+
+				$blocks           = array_merge( $blocks, $section_result['blocks'] );
+				$previous_summary = isset( $section_result['summary'] ) ? $section_result['summary'] : '';
+			}
+
+			$summary_blocks = $this->generator->generate_summary_blocks( $outline, '' );
+			if ( is_wp_error( $summary_blocks ) ) {
+				return $summary_blocks;
+			}
+
+			$blocks = array_merge( $blocks, $summary_blocks );
+
+			return wp_json_encode(
+				array(
+					'meta'   => array(
+						'title'            => $outline['title'],
+						'slug'             => $outline['slug'],
+						'meta_description' => $outline['meta_description'],
+						'excerpt'          => $outline['excerpt'],
+						'keywords'         => isset( $outline['keywords'] ) ? $outline['keywords'] : array(),
+					),
+					'blocks' => $blocks,
+				),
+				JSON_UNESCAPED_UNICODE
+			);
+		}
+
+		$sections_content = array();
+		$previous_summary = '';
+
+		foreach ( $outline['sections'] as $section ) {
+			$section_result = $this->generator->generate_section_content(
+				$section,
+				$topic,
+				$previous_summary,
+				$additional_instructions
+			);
+
+			if ( is_wp_error( $section_result ) ) {
+				error_log( "Blog Poster: Regeneration failed for section " . $section['h2'] . ": " . $section_result->get_error_message() );
+				continue;
+			}
+
+			$sections_content[] = $section_result['content'];
+			$previous_summary   = $section_result['summary'];
+		}
+
+		$article_data = $this->generator->assemble_article( $outline, $sections_content, $topic );
+
+		if ( is_wp_error( $article_data ) ) {
+			return $article_data;
+		}
+
+		return $article_data['content'];
 	}
 }
