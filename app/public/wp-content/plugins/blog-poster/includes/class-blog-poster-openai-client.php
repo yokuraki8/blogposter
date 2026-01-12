@@ -68,7 +68,33 @@ class Blog_Poster_OpenAI_Client extends Blog_Poster_AI_Client {
         $tokens = 0;
 
         if ( isset( $response['choices'][0]['message']['content'] ) ) {
-            $text = $response['choices'][0]['message']['content'];
+            $content = $response['choices'][0]['message']['content'];
+            if ( is_array( $content ) ) {
+                $parts = array();
+                foreach ( $content as $item ) {
+                    if ( isset( $item['text'] ) ) {
+                        $parts[] = $item['text'];
+                    }
+                }
+                $text = implode( '', $parts );
+            } else {
+                $text = $content;
+            }
+        } elseif ( isset( $response['output'][0]['content'] ) ) {
+            $parts = array();
+            foreach ( $response['output'][0]['content'] as $item ) {
+                if ( isset( $item['text'] ) ) {
+                    $parts[] = $item['text'];
+                }
+            }
+            $text = implode( '', $parts );
+        } elseif ( isset( $response['output_text'] ) ) {
+            $text = $response['output_text'];
+        }
+
+        if ( '' === $text ) {
+            error_log( 'Blog Poster: OpenAI empty content response: ' . wp_json_encode( $response, JSON_UNESCAPED_UNICODE ) );
+            return $this->error_response( __( 'OpenAIのレスポンスが空です。', 'blog-poster' ) );
         }
 
         if ( isset( $response['usage']['total_tokens'] ) ) {
