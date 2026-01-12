@@ -886,6 +886,9 @@ class Blog_Poster_Generator {
      * @return array|WP_Error 生成結果またはエラー
      */
     public function generate_article( $topic, $additional_instructions = '' ) {
+        if ( function_exists( 'set_time_limit' ) ) {
+            set_time_limit( 600 );
+        }
         // Phase 1: アウトライン生成（最大3回試行）
         $outline = null;
         $max_outline_attempts = 3;
