@@ -50,6 +50,7 @@ class Blog_Poster_OpenAI_Client extends Blog_Poster_AI_Client {
         if ( 0 === strpos( $this->model, 'gpt-5' ) ) {
             $body['max_completion_tokens'] = $this->max_tokens;
             unset( $body['max_tokens'] );
+            $body['reasoning'] = array( 'effort' => 'low' );
         }
 
         $headers = array(
