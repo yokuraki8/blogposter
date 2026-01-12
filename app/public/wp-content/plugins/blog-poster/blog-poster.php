@@ -256,20 +256,24 @@ add_action( 'admin_init', function() {
     $col = $wpdb->get_results( "SHOW COLUMNS FROM $table_name LIKE 'section_index'" );
     if ( empty( $col ) ) {
         $wpdb->query( "ALTER TABLE $table_name ADD COLUMN section_index int(9) DEFAULT 0" );
+        error_log( 'Blog Poster: Added section_index column' );
     }
 
     $col = $wpdb->get_results( "SHOW COLUMNS FROM $table_name LIKE 'sections_total'" );
     if ( empty( $col ) ) {
         $wpdb->query( "ALTER TABLE $table_name ADD COLUMN sections_total int(9) DEFAULT 0" );
+        error_log( 'Blog Poster: Added sections_total column' );
     }
 
     $col = $wpdb->get_results( "SHOW COLUMNS FROM $table_name LIKE 'previous_summary'" );
     if ( empty( $col ) ) {
         $wpdb->query( "ALTER TABLE $table_name ADD COLUMN previous_summary longtext DEFAULT NULL" );
+        error_log( 'Blog Poster: Added previous_summary column' );
     }
 
     $col = $wpdb->get_results( "SHOW COLUMNS FROM $table_name LIKE 'current_step'" );
     if ( empty( $col ) ) {
         $wpdb->query( "ALTER TABLE $table_name ADD COLUMN current_step varchar(50) DEFAULT 'init'" );
+        error_log( 'Blog Poster: Added current_step column' );
     }
 } );
