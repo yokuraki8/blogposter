@@ -758,11 +758,42 @@ PROMPT;
         // JSONをパース
         $outline_data = $this->parse_json_outline( $response['data'] );
 
+        if ( is_wp_error( $outline_data ) && $this->should_use_openai_schema( $client ) ) {
+            $fallback_outline = $this->generate_outline_with_openai_fallback( $prompt, $response_format );
+            if ( is_wp_error( $fallback_outline ) ) {
+                return $outline_data;
+            }
+            return $fallback_outline;
+        }
+
         if ( is_wp_error( $outline_data ) ) {
             return $outline_data;
         }
 
         return $outline_data;
+    }
+
+    /**
+     * GPT-5.2アウトライン失敗時のフォールバック生成
+     *
+     * @param string $prompt プロンプト
+     * @param array|null $response_format Structured Outputs
+     * @return array|WP_Error
+     */
+    private function generate_outline_with_openai_fallback( $prompt, $response_format ) {
+        $settings = get_option( 'blog_poster_settings', array() );
+        $api_key = isset( $settings['openai_api_key'] ) ? $settings['openai_api_key'] : '';
+        if ( empty( $api_key ) ) {
+            return new WP_Error( 'outline_fallback_failed', 'OpenAI APIキーが設定されていません。' );
+        }
+
+        $client = new Blog_Poster_OpenAI_Client( $api_key, 'gpt-4.1', $settings );
+        $response = $client->generate_text( $prompt, $response_format );
+        if ( ! $response['success'] ) {
+            return new WP_Error( 'outline_fallback_failed', $response['error'] );
+        }
+
+        return $this->parse_json_outline( $response['data'] );
     }
 
     /**
