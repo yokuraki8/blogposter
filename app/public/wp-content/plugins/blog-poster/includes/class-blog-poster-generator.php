@@ -810,6 +810,8 @@ PROMPT;
 
         // 2. 前後の不要な空白を削除
         $json_str = trim( $json_str );
+        $json_str = $this->sanitize_json_string( $json_str );
+        $json_str = $this->sanitize_json_string( $json_str );
 
         // 3. デバッグログ（最初の200文字）
         error_log( 'Blog Poster: Parsing JSON outline (first 200 chars): ' . substr( $json_str, 0, 200 ) );
