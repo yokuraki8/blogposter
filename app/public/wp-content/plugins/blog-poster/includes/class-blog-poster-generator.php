@@ -177,37 +177,19 @@ class Blog_Poster_Generator {
                         'blocks' => array(
                             'type' => 'array',
                             'items' => array(
-                                'oneOf' => array(
-                                    array(
-                                        'type' => 'object',
-                                        'additionalProperties' => false,
-                                        'required' => array( 'type', 'content' ),
-                                        'properties' => array(
-                                            'type' => array( 'type' => 'string', 'enum' => array( 'h2', 'h3', 'text' ) ),
-                                            'content' => array( 'type' => 'string' ),
-                                        ),
+                                'type' => 'object',
+                                'additionalProperties' => false,
+                                'required' => array( 'type' ),
+                                'properties' => array(
+                                    'type' => array(
+                                        'type' => 'string',
+                                        'enum' => array( 'h2', 'h3', 'text', 'code', 'list' ),
                                     ),
-                                    array(
-                                        'type' => 'object',
-                                        'additionalProperties' => false,
-                                        'required' => array( 'type', 'language', 'content' ),
-                                        'properties' => array(
-                                            'type' => array( 'type' => 'string', 'enum' => array( 'code' ) ),
-                                            'language' => array( 'type' => 'string' ),
-                                            'content' => array( 'type' => 'string' ),
-                                        ),
-                                    ),
-                                    array(
-                                        'type' => 'object',
-                                        'additionalProperties' => false,
-                                        'required' => array( 'type', 'items' ),
-                                        'properties' => array(
-                                            'type' => array( 'type' => 'string', 'enum' => array( 'list' ) ),
-                                            'items' => array(
-                                                'type' => 'array',
-                                                'items' => array( 'type' => 'string' ),
-                                            ),
-                                        ),
+                                    'content' => array( 'type' => 'string' ),
+                                    'language' => array( 'type' => 'string' ),
+                                    'items' => array(
+                                        'type' => 'array',
+                                        'items' => array( 'type' => 'string' ),
                                     ),
                                 ),
                             ),
