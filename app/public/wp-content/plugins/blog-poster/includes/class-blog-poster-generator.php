@@ -1182,11 +1182,29 @@ PROMPT;
 【サブセクション構成】
 {$subsections_list}
 
+【重要: 詳細度の要件】
+- 各サブセクション（h3）ごとに、最低3〜5個のtextブロックを含めること
+- 説明は具体的かつ実践的に。抽象的な説明（「重要です」「便利です」）は避ける
+- codeブロックは、完全に動作する実装例を含める（10行以上推奨）
+- 手順がある場合は、ステップごとに分割して説明する
+- 比較や対比がある場合は、listブロックで明確に整理する
+
+【コンテンツの質的要件】
+- 実装例: コピペで動くコードを必ず含める（省略禁止）
+- 具体例: 抽象的な説明ではなく、実際の値や出力を示す
+- 読者の行動: 「〜を理解する」ではなく「〜を実装する」「〜を確認する」
+- 結果の明示: 各手順の実行結果や出力を必ず説明する
+
+【最低出力量の目安】
+- 1サブセクション（h3）あたり: h3 1個 + text 3〜5個 + code 1〜2個
+- セクション全体: 最低15〜25個のブロック
+- codeブロック: 1つあたり最低10行、理想は20〜30行
+
 【出力ルール - 絶対遵守】
 - Markdown記号（#, -, ```, ** など）を使わない
 - JSON以外のテキストは出力しない
 - codeブロックのcontentはコードのみ（説明文を含めない）
-- textはプレーンテキストのみ
+- textブロックは段落ごとに分割（1ブロック＝1〜3文を目安）
 - 先頭ブロックは必ずh2（見出し: {$section['h2']}）
 - サブセクションごとにh3を入れて構成する
 - 文字列内の改行・タブは必ず \\n / \\t にエスケープする
@@ -1199,11 +1217,20 @@ PROMPT;
 ブロック種別とフィールド名（必ず"content"フィールドを使用）:
 - h2: { "type": "h2", "content": "見出しテキスト" }
 - h3: { "type": "h3", "content": "見出しテキスト" }
-- text: { "type": "text", "content": "段落テキスト" }
-- code: { "type": "code", "language": "javascript", "content": "コード内容" }
-- list: { "type": "list", "items": ["項目1", "項目2"] }
+- text: { "type": "text", "content": "段落テキスト（1〜3文）" }
+- code: { "type": "code", "language": "javascript", "content": "完全なコード例（10行以上）" }
+- list: { "type": "list", "items": ["具体的な項目1", "具体的な項目2"] }
 
 【重要】"text"フィールドは使用禁止。必ず"content"フィールドを使用すること
+
+【悪い例（薄い内容）】
+{ "type": "text", "content": "エラーハンドリングは重要です。" }
+{ "type": "code", "language": "javascript", "content": "try { } catch(e) { }" }
+
+【良い例（詳細な内容）】
+{ "type": "text", "content": "fetch APIでエラーが発生した場合、ネットワークエラーとHTTPステータスエラーの2種類を区別して処理する必要があります。" }
+{ "type": "text", "content": "まずネットワークエラー（接続失敗、タイムアウト）をcatch句でキャッチします。次にHTTPステータスコードが200番台以外の場合、レスポンスは成功しているがAPIとしてはエラーとして扱います。" }
+{ "type": "code", "language": "javascript", "content": "async function fetchWithErrorHandling(url) {\\n  try {\\n    const response = await fetch(url);\\n    \\n    if (!response.ok) {\\n      throw new Error(\`HTTP error! status: \${response.status}\`);\\n    }\\n    \\n    const data = await response.json();\\n    return { success: true, data };\\n  } catch (error) {\\n    if (error.name === 'TypeError') {\\n      return { success: false, error: 'ネットワークエラー' };\\n    }\\n    return { success: false, error: error.message };\\n  }\\n}" }
 
 {$additional_instructions}
 PROMPT;
