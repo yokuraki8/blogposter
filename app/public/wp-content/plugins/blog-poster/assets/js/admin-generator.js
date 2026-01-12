@@ -143,9 +143,17 @@ jQuery(document).ready(function($) {
                 console.log('Step ' + step + ' response:', response);
                 if (response.success) {
                     if (step === 'content') {
-                        const total = response.data.total_sections || 0;
-                        const current = response.data.current_section || 0;
-                        const sectionMessage = total > 0 ? ('本文を生成中... (' + current + '/' + total + ')') : stepLabels[step];
+                        const totalSections = response.data.total_sections || 0;
+                        const currentSection = response.data.current_section || 0;
+                        const totalSubsections = response.data.total_subsections || 0;
+                        const currentSubsection = response.data.current_subsection || 0;
+                        let sectionMessage = stepLabels[step];
+                        if (totalSections > 0) {
+                            sectionMessage = '本文を生成中... (' + currentSection + '/' + totalSections + ')';
+                            if (totalSubsections > 0) {
+                                sectionMessage += ' / H3 ' + currentSubsection + '/' + totalSubsections;
+                            }
+                        }
                         if (!response.data.done) {
                             updateProgress(progress, sectionMessage);
                             setTimeout(function() {

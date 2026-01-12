@@ -74,6 +74,8 @@ class Blog_Poster_Job_Manager {
 			total_steps int(11) DEFAULT 3,
 			section_index int(11) DEFAULT 0,
 			sections_total int(11) DEFAULT 0,
+			subsection_index int(11) DEFAULT 0,
+			subsections_total int(11) DEFAULT 0,
 			previous_summary longtext,
 			outline longtext,
 			sections_content longtext,
@@ -215,6 +217,8 @@ class Blog_Poster_Job_Manager {
 					'current_step' => 1,
 					'section_index' => 0,
 					'sections_total' => isset( $outline['sections'] ) && is_array( $outline['sections'] ) ? count( $outline['sections'] ) : 0,
+					'subsection_index' => 0,
+					'subsections_total' => 0,
 					'previous_summary' => '',
 				)
 			);
@@ -270,6 +274,8 @@ class Blog_Poster_Job_Manager {
 			$additional_instructions = $job['additional_instructions'] ?? '';
 			$section_index = isset( $job['section_index'] ) ? (int) $job['section_index'] : 0;
 			$sections_total = isset( $job['sections_total'] ) ? (int) $job['sections_total'] : 0;
+			$subsection_index = isset( $job['subsection_index'] ) ? (int) $job['subsection_index'] : 0;
+			$subsections_total = isset( $job['subsections_total'] ) ? (int) $job['subsections_total'] : 0;
 			$previous_summary = isset( $job['previous_summary'] ) ? (string) $job['previous_summary'] : '';
 
 			if ( $this->generator->is_json_output_enabled() ) {
@@ -299,20 +305,64 @@ class Blog_Poster_Job_Manager {
 
 				if ( $section_index < $sections_total ) {
 					$current_section = $outline['sections'][ $section_index ];
-					$section_result = $this->generator->generate_section_blocks(
-						$current_section,
-						$topic,
-						$previous_summary,
-						$additional_instructions
-					);
-
-					if ( is_wp_error( $section_result ) ) {
-						throw new Exception( $section_result->get_error_message() );
+					$subsections = isset( $current_section['subsections'] ) && is_array( $current_section['subsections'] ) ? $current_section['subsections'] : array();
+					if ( 0 === $subsections_total ) {
+						$subsections_total = count( $subsections );
 					}
 
-					$blocks = array_merge( $blocks, $section_result['blocks'] );
-					$previous_summary = isset( $section_result['summary'] ) ? $section_result['summary'] : $previous_summary;
-					$section_index++;
+					if ( 0 === $subsection_index && ! empty( $current_section['h2'] ) ) {
+						$last_block = ! empty( $blocks ) ? end( $blocks ) : null;
+						if ( ! is_array( $last_block ) || 'h2' !== ( $last_block['type'] ?? '' ) || $last_block['content'] !== $current_section['h2'] ) {
+							$blocks[] = array(
+								'type'    => 'h2',
+								'content' => $current_section['h2'],
+							);
+						}
+					}
+
+					if ( $subsection_index < $subsections_total ) {
+						$current_subsection = $subsections[ $subsection_index ];
+						$sub_blocks = $this->generator->generate_subsection_blocks(
+							$current_section,
+							$current_subsection,
+							$topic,
+							$previous_summary,
+							$additional_instructions
+						);
+
+						if ( is_wp_error( $sub_blocks ) ) {
+							throw new Exception( $sub_blocks->get_error_message() );
+						}
+
+						$blocks[] = array(
+							'type'    => 'h3',
+							'content' => $current_subsection['h3'],
+						);
+
+						foreach ( $sub_blocks as $block ) {
+							$blocks[] = $block;
+						}
+
+						$code_blocks = $this->generator->generate_subsection_code_blocks(
+							$current_section,
+							$current_subsection,
+							$topic,
+							$previous_summary,
+							$additional_instructions
+						);
+
+						if ( ! is_wp_error( $code_blocks ) ) {
+							$blocks = $this->generator->merge_section_blocks_with_code( $blocks, $code_blocks );
+						}
+
+						$subsection_index++;
+					}
+
+					if ( $subsection_index >= $subsections_total ) {
+						$section_index++;
+						$subsection_index = 0;
+						$subsections_total = 0;
+					}
 				}
 
 				$content_done = $section_index >= $sections_total;
@@ -346,11 +396,13 @@ class Blog_Poster_Job_Manager {
 						'sections_content' => wp_json_encode( $blocks, JSON_UNESCAPED_UNICODE ),
 						'final_content'    => $final_content,
 						'current_step'     => 2,
-						'section_index'    => $section_index,
-						'sections_total'   => $sections_total,
-						'previous_summary' => $previous_summary,
-					)
-				);
+					'section_index'     => $section_index,
+					'sections_total'    => $sections_total,
+					'subsection_index'  => $subsection_index,
+					'subsections_total' => $subsections_total,
+					'previous_summary'  => $previous_summary,
+				)
+			);
 
 				return array(
 					'success'         => true,
@@ -358,6 +410,8 @@ class Blog_Poster_Job_Manager {
 					'content_preview' => '' !== $final_content ? mb_substr( $final_content, 0, 500 ) . '...' : '',
 					'current_section' => $section_index,
 					'total_sections'  => $sections_total,
+					'current_subsection' => $subsection_index,
+					'total_subsections'  => $subsections_total,
 					'done'            => $content_done,
 				);
 			}

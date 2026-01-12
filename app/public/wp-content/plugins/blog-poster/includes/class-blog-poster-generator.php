@@ -1422,6 +1422,160 @@ PROMPT;
     }
 
     /**
+     * サブセクション（H3）の本文ブロックを生成（H3見出しは含めない）
+     *
+     * @param array  $section セクション情報
+     * @param array  $subsection サブセクション情報
+     * @param string $topic トピック
+     * @param string $previous_summary 前セクションの要約
+     * @param string $additional_instructions 追加指示
+     * @return array|WP_Error
+     */
+    public function generate_subsection_blocks( $section, $subsection, $topic, $previous_summary = '', $additional_instructions = '' ) {
+        $client = $this->get_ai_client();
+
+        if ( is_wp_error( $client ) ) {
+            return $client;
+        }
+
+        $context = '';
+        if ( ! empty( $previous_summary ) ) {
+            $context = "【前章までの要約】\n{$previous_summary}\n\n";
+        }
+
+        $prompt = <<<PROMPT
+あなたは「{$topic}」に関する専門家ライターです。
+現在、記事のセクション「{$section['h2']}」内の小見出し（H3）パートの執筆を行っています。
+
+【執筆対象の小見出し】
+H3: {$subsection['h3']}
+
+【このH3の要点・構成案】
+{$subsection['key_points']}
+Content Type: {$subsection['content_type']}
+
+【前後の文脈】
+{$context}親セクションの目的: {$section['purpose']}
+
+【重要: 執筆ルール】
+1. 出力は必ず指定されたJSONスキーマに従うこと。
+2. H3見出し自体は出力せず、本文（text, list）のみを出力すること。
+3. 要約は禁止。極めて詳細に、長文で執筆すること。
+4. このH3パートだけで、最低でも3〜5つのブロック（段落）を使って深掘りすること。
+5. 具体例や実務的な手順を含めること。
+6. {$additional_instructions}
+
+【出力ルール - 絶対遵守】
+- Markdown記号（#, -, ```, ** など）を使わない
+- JSON以外のテキストは出力しない
+- codeブロックはこのパスでは出力しない
+- textブロックは段落ごとに分割（1ブロック＝1〜3文を目安）
+- 文字列内の改行・タブは必ず \\n / \\t にエスケープする
+- 文字列内に生の改行やタブを入れない
+- ルートは必ず { "blocks": [...] } のオブジェクト
+
+【出力フォーマット - 厳密に従うこと】
+{ "blocks": [ ... ] }
+
+ブロック種別とフィールド名（必ず"content"フィールドを使用）:
+- text: { "type": "text", "content": "段落テキスト（1〜3文）" }
+- list: { "type": "list", "items": ["具体的な項目1", "具体的な項目2"] }
+
+【重要】"text"フィールドは使用禁止。必ず"content"フィールドを使用すること
+PROMPT;
+
+        $response_format = $this->should_use_openai_schema( $client ) ? $this->get_openai_blocks_schema() : null;
+        $response = $client->generate_text( $prompt, $response_format );
+
+        if ( ! $response['success'] ) {
+            return new WP_Error( 'api_error', $response['error'] ?? 'APIエラー' );
+        }
+
+        $data = $this->parse_json_blocks_response( $response['data'] );
+        if ( is_wp_error( $data ) ) {
+            return $data;
+        }
+
+        if ( empty( $data['blocks'] ) || ! is_array( $data['blocks'] ) ) {
+            return new WP_Error( 'invalid_blocks', 'blocks が取得できませんでした。' );
+        }
+
+        $blocks = array();
+        foreach ( $data['blocks'] as $block ) {
+            if ( isset( $block['type'] ) && in_array( $block['type'], array( 'h2', 'h3' ), true ) ) {
+                continue;
+            }
+            $blocks[] = $block;
+        }
+
+        return $blocks;
+    }
+
+    /**
+     * サブセクション（H3）のコードブロックのみ生成
+     *
+     * @param array  $section セクション情報
+     * @param array  $subsection サブセクション情報
+     * @param string $topic トピック
+     * @param string $previous_summary 前セクションの要約
+     * @param string $additional_instructions 追加指示
+     * @return array|WP_Error
+     */
+    private function generate_subsection_code_blocks( $section, $subsection, $topic, $previous_summary = '', $additional_instructions = '' ) {
+        $client = $this->get_ai_client();
+        if ( is_wp_error( $client ) ) {
+            return $client;
+        }
+
+        $context = '';
+        if ( ! empty( $previous_summary ) ) {
+            $context = "【前章までの要約】\n{$previous_summary}\n\n";
+        }
+
+        $prompt = <<<PROMPT
+あなたは{$topic}に関する実務経験を持つテクニカルライターです。
+
+{$context}以下のH3に対応する「コードブロックのみ」をJSONで出力してください。
+
+【親セクション】
+見出し: {$section['h2']}
+
+【執筆対象の小見出し】
+H3: {$subsection['h3']}
+含めるべき内容: {$subsection['key_points']}
+
+【出力ルール - 絶対遵守】
+- JSON以外のテキストは出力しない
+- 文字列内の改行・タブは必ず \\n / \\t にエスケープする
+- 文字列内に生の改行やタブを入れない
+- ルートは必ず { "code_blocks": [...] } のオブジェクト
+
+【出力フォーマット - 厳密に従うこと】
+{ "code_blocks": [ { "h3": "{$subsection['h3']}", "language": "php", "content": "..." } ] }
+
+{$additional_instructions}
+PROMPT;
+
+        $response_format = $this->should_use_openai_schema( $client ) ? $this->get_openai_code_blocks_schema() : null;
+        $response = $client->generate_text( $prompt, $response_format );
+
+        if ( ! $response['success'] ) {
+            return new WP_Error( 'api_error', $response['error'] ?? 'APIエラー' );
+        }
+
+        $data = $this->parse_json_blocks_response( $response['data'] );
+        if ( is_wp_error( $data ) ) {
+            return $data;
+        }
+
+        if ( ! isset( $data['code_blocks'] ) || ! is_array( $data['code_blocks'] ) ) {
+            return new WP_Error( 'invalid_blocks', 'code_blocks が取得できませんでした。' );
+        }
+
+        return $data['code_blocks'];
+    }
+
+    /**
      * セクションのコードブロックだけを生成
      *
      * @param array  $section セクション情報

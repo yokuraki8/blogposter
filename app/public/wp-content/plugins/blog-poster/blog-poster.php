@@ -180,6 +180,8 @@ class Blog_Poster {
             total_steps int(11) DEFAULT 3,
             section_index int(11) DEFAULT 0,
             sections_total int(11) DEFAULT 0,
+            subsection_index int(11) DEFAULT 0,
+            subsections_total int(11) DEFAULT 0,
             previous_summary longtext,
             outline longtext,
             sections_content longtext,
@@ -275,5 +277,17 @@ add_action( 'admin_init', function() {
     if ( empty( $col ) ) {
         $wpdb->query( "ALTER TABLE $table_name ADD COLUMN current_step varchar(50) DEFAULT 'init'" );
         error_log( 'Blog Poster: Added current_step column' );
+    }
+
+    $col = $wpdb->get_results( "SHOW COLUMNS FROM $table_name LIKE 'subsection_index'" );
+    if ( empty( $col ) ) {
+        $wpdb->query( "ALTER TABLE $table_name ADD COLUMN subsection_index int(9) DEFAULT 0" );
+        error_log( 'Blog Poster: Added subsection_index column' );
+    }
+
+    $col = $wpdb->get_results( "SHOW COLUMNS FROM $table_name LIKE 'subsections_total'" );
+    if ( empty( $col ) ) {
+        $wpdb->query( "ALTER TABLE $table_name ADD COLUMN subsections_total int(9) DEFAULT 0" );
+        error_log( 'Blog Poster: Added subsections_total column' );
     }
 } );
