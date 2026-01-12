@@ -82,8 +82,71 @@ class Blog_Poster_Generator {
      * @return string
      */
     private function sanitize_json_string( $json_str ) {
-        // JSONで不正になる制御文字を除去（タブ/改行は保持）
-        return preg_replace( '/[\x00-\x08\x0B\x0C\x0E-\x1F]/', '', $json_str );
+        // JSON文字列内の未エスケープ改行/タブをエスケープ、その他制御文字は無害化
+        $result = '';
+        $in_string = false;
+        $escape = false;
+        $length = strlen( $json_str );
+
+        for ( $i = 0; $i < $length; $i++ ) {
+            $char = $json_str[ $i ];
+            $ord  = ord( $char );
+
+            if ( $in_string ) {
+                if ( $escape ) {
+                    $escape = false;
+                    $result .= $char;
+                    continue;
+                }
+
+                if ( '\\' === $char ) {
+                    $escape = true;
+                    $result .= $char;
+                    continue;
+                }
+
+                if ( '"' === $char ) {
+                    $in_string = false;
+                    $result .= $char;
+                    continue;
+                }
+
+                if ( "\n" === $char ) {
+                    $result .= '\\n';
+                    continue;
+                }
+                if ( "\r" === $char ) {
+                    $result .= '\\r';
+                    continue;
+                }
+                if ( "\t" === $char ) {
+                    $result .= '\\t';
+                    continue;
+                }
+
+                if ( $ord < 0x20 ) {
+                    $result .= sprintf( '\\u%04x', $ord );
+                    continue;
+                }
+
+                $result .= $char;
+                continue;
+            }
+
+            if ( '"' === $char ) {
+                $in_string = true;
+                $result .= $char;
+                continue;
+            }
+
+            if ( $ord < 0x20 ) {
+                continue;
+            }
+
+            $result .= $char;
+        }
+
+        return $result;
     }
 
     /**
