@@ -102,7 +102,7 @@ class Blog_Poster_Generator {
             return new WP_Error( 'json_parse_error', 'JSONパースエラー: ' . $error_msg );
         }
 
-        return $data;
+        return $this->normalize_outline_single_sentence( $data );
     }
 
     /**
@@ -615,6 +615,51 @@ class Blog_Poster_Generator {
     }
 
     /**
+     * アウトラインのkey_points/key_contentを1文に正規化
+     *
+     * @param array $outline_data アウトライン
+     * @return array
+     */
+    private function normalize_outline_single_sentence( $outline_data ) {
+        if ( ! is_array( $outline_data ) ) {
+            return $outline_data;
+        }
+
+        if ( isset( $outline_data['sections'] ) && is_array( $outline_data['sections'] ) ) {
+            foreach ( $outline_data['sections'] as $index => $section ) {
+                if ( isset( $section['key_content'] ) && is_string( $section['key_content'] ) ) {
+                    $outline_data['sections'][ $index ]['key_content'] = $this->normalize_single_sentence( $section['key_content'] );
+                }
+                if ( isset( $section['subsections'] ) && is_array( $section['subsections'] ) ) {
+                    foreach ( $section['subsections'] as $sub_index => $subsection ) {
+                        if ( isset( $subsection['key_points'] ) && is_string( $subsection['key_points'] ) ) {
+                            $outline_data['sections'][ $index ]['subsections'][ $sub_index ]['key_points'] = $this->normalize_single_sentence( $subsection['key_points'] );
+                        }
+                    }
+                }
+            }
+        }
+
+        return $outline_data;
+    }
+
+    /**
+     * 文字列を1文に正規化（改行・句点以降を除去）
+     *
+     * @param string $text テキスト
+     * @return string
+     */
+    private function normalize_single_sentence( $text ) {
+        $text = str_replace( array( "\r\n", "\r", "\n" ), ' ', $text );
+        $text = trim( preg_replace( '/\\s+/', ' ', $text ) );
+        $pos = mb_strpos( $text, '。' );
+        if ( false !== $pos ) {
+            $text = mb_substr( $text, 0, $pos + 1 );
+        }
+        return $text;
+    }
+
+    /**
      * JSONブロックを検証
      *
      * @param array $article_json JSONデータ
@@ -942,10 +987,9 @@ class Blog_Poster_Generator {
 
 【Output Rules】
 1. Output strictly valid JSON.
-2. Escape all control characters inside strings (use \\n for newlines, \\t for tabs).
-3. Do NOT include raw newlines or tabs inside string values.
-4. If you need line breaks inside strings, you MUST use the two-character sequence \\n (not a raw newline).
-5. The root element must be a single JSON object (not an array).
+2. Do NOT include any newlines inside string values (\\n is also forbidden).
+3. key_points と key_content は必ず1文で完結させる（句点で終える）。
+4. The root element must be a single JSON object (not an array).
 
 上記のJSON形式で、実行可能な記事のアウトラインを生成してください。
 PROMPT;
