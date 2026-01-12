@@ -44,7 +44,9 @@ class Blog_Poster_OpenAI_Client extends Blog_Poster_AI_Client {
                 'max_output_tokens' => $this->max_tokens,
             );
             if ( ! empty( $response_format ) ) {
-                $body['response_format'] = $response_format;
+                $body['text'] = array(
+                    'format' => $response_format,
+                );
             }
         } else {
             $url = self::API_BASE_URL . 'chat/completions';
