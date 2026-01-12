@@ -467,6 +467,11 @@ PROMPT;
             return new WP_Error( 'json_parse_error', 'JSONパースエラー: ' . $error_msg );
         }
 
+        // 配列で返ってきた場合は先頭要素を採用
+        if ( is_array( $data ) && isset( $data[0] ) && is_array( $data[0] ) ) {
+            $data = $data[0];
+        }
+
         // 必須フィールドの検証
         $required_fields = array( 'title', 'slug', 'meta_description', 'excerpt', 'sections' );
         foreach ( $required_fields as $field ) {
