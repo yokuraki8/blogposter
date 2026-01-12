@@ -87,13 +87,6 @@ class Blog_Poster_Generator {
         }
 
         if ( json_last_error() !== JSON_ERROR_NONE ) {
-            $repaired = $this->repair_json_with_openai( $json_str );
-            if ( '' !== $repaired ) {
-                $data = $this->json_decode_safe( $repaired );
-            }
-        }
-
-        if ( json_last_error() !== JSON_ERROR_NONE ) {
             $error_msg = json_last_error_msg();
             error_log( 'Blog Poster: JSON parse error: ' . $error_msg );
             error_log( 'Blog Poster: Response length: ' . strlen( $json_str ) );

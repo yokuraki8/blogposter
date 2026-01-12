@@ -138,7 +138,7 @@ jQuery(document).ready(function($) {
                 job_id: currentJobId,
                 step: step
             },
-            timeout: 120000, // 2分のタイムアウト
+            timeout: 180000, // 3分のタイムアウト
             success: function(response) {
                 console.log('Step ' + step + ' response:', response);
                 if (response.success) {

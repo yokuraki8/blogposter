@@ -90,7 +90,7 @@ abstract class Blog_Poster_AI_Client {
             'method'  => 'POST',
             'headers' => $headers,
             'body'    => wp_json_encode( $body ),
-            'timeout' => 120,
+            'timeout' => 180,
         );
 
         $response = wp_remote_post( $url, $args );
