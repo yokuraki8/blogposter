@@ -1040,14 +1040,6 @@ PROMPT;
         // JSONをパース
         $outline_data = $this->parse_json_outline( $response['data'] );
 
-        if ( is_wp_error( $outline_data ) && $this->should_use_openai_schema( $client ) ) {
-            $fallback_outline = $this->generate_outline_with_openai_fallback( $prompt, $response_format );
-            if ( is_wp_error( $fallback_outline ) ) {
-                return $outline_data;
-            }
-            return $fallback_outline;
-        }
-
         if ( is_wp_error( $outline_data ) ) {
             return $outline_data;
         }
