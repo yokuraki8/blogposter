@@ -44,8 +44,15 @@ class Blog_Poster_OpenAI_Client extends Blog_Poster_AI_Client {
                 'max_output_tokens' => $this->max_tokens,
             );
             if ( ! empty( $response_format ) ) {
+                $format = $response_format;
+                if ( isset( $response_format['type'], $response_format['json_schema'] ) && 'json_schema' === $response_format['type'] ) {
+                    $format = array_merge(
+                        array( 'type' => 'json_schema' ),
+                        $response_format['json_schema']
+                    );
+                }
                 $body['text'] = array(
-                    'format' => $response_format,
+                    'format' => $format,
                 );
             }
         } else {
