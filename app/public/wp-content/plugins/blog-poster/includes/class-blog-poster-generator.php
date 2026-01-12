@@ -90,7 +90,7 @@ class Blog_Poster_Generator {
                 'schema' => array(
                     'type' => 'object',
                     'additionalProperties' => false,
-                    'required' => array( 'title', 'slug', 'meta_description', 'excerpt', 'sections' ),
+                    'required' => array( 'title', 'slug', 'meta_description', 'excerpt', 'target_reader', 'reader_goal', 'keywords', 'sections' ),
                     'properties' => array(
                         'title' => array( 'type' => 'string' ),
                         'slug' => array( 'type' => 'string' ),
