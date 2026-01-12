@@ -51,6 +51,7 @@ class Blog_Poster_Generator {
         // 2. 前後の不要な空白を削除
         $json_str = trim( $json_str );
         $json_str = str_replace( array( "\r\n", "\r", "\n", "\t" ), array( '\\n', '\\n', '\\n', '\\t' ), $json_str );
+        $json_str = preg_replace( '/[\x00-\x1F]/u', ' ', $json_str );
         $json_str = $this->sanitize_json_string( $json_str );
         $json_str = $this->remove_all_control_chars_outside_strings( $json_str );
         $json_str = $this->sanitize_json_string( $json_str );
