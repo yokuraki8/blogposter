@@ -69,6 +69,12 @@ class Blog_Poster_Generator {
                 if ( $strict_json !== $json_str ) {
                     $data = $this->json_decode_safe( $strict_json );
                 }
+                if ( json_last_error() !== JSON_ERROR_NONE ) {
+                    $forced_json = $this->sanitize_json_string_force_control_chars( $json_str );
+                    if ( $forced_json !== $json_str ) {
+                        $data = $this->json_decode_safe( $forced_json );
+                    }
+                }
             }
         }
 
@@ -518,6 +524,32 @@ class Blog_Poster_Generator {
     }
 
     /**
+     * 文字列内外の制御文字を強制的にエスケープ（最終フォールバック）
+     *
+     * @param string $json_str JSON文字列
+     * @return string
+     */
+    private function sanitize_json_string_force_control_chars( $json_str ) {
+        return preg_replace_callback(
+            '/[\\x00-\\x1F]/',
+            function ( $control ) {
+                $char = $control[0];
+                switch ( $char ) {
+                    case "\n":
+                        return '\\n';
+                    case "\r":
+                        return '\\r';
+                    case "\t":
+                        return '\\t';
+                    default:
+                        return sprintf( '\\u%04x', ord( $char ) );
+                }
+            },
+            $json_str
+        );
+    }
+
+    /**
      * JSONブロックを検証
      *
      * @param array $article_json JSONデータ
@@ -933,6 +965,12 @@ PROMPT;
                 $strict_json = $this->sanitize_json_string_strict( $json_str );
                 if ( $strict_json !== $json_str ) {
                     $data = $this->json_decode_safe( $strict_json );
+                }
+                if ( json_last_error() !== JSON_ERROR_NONE ) {
+                    $forced_json = $this->sanitize_json_string_force_control_chars( $json_str );
+                    if ( $forced_json !== $json_str ) {
+                        $data = $this->json_decode_safe( $forced_json );
+                    }
                 }
             }
         }
