@@ -48,12 +48,20 @@ class Blog_Poster_Generator {
         // 2. 前後の不要な空白を削除
         $json_str = trim( $json_str );
         $json_str = $this->sanitize_json_string( $json_str );
+        $json_str = $this->sanitize_json_string( $json_str );
 
         // 3. デバッグログ（最初の200文字）
         error_log( 'Blog Poster: Parsing JSON response (first 200 chars): ' . substr( $json_str, 0, 200 ) );
         $this->log_json_debug_samples( 'response', $json_str );
 
         $data = json_decode( $json_str, true );
+
+        if ( json_last_error() !== JSON_ERROR_NONE ) {
+            $fragment = $this->extract_json_fragment( $json_str );
+            if ( '' !== $fragment && $fragment !== $json_str ) {
+                $data = json_decode( $fragment, true );
+            }
+        }
 
         if ( json_last_error() !== JSON_ERROR_NONE ) {
             $error_msg = json_last_error_msg();
@@ -90,6 +98,70 @@ class Blog_Poster_Generator {
         $tail = substr( $json_str, -200 );
         error_log( 'Blog Poster: JSON ' . $label . ' head hex: ' . bin2hex( $head ) );
         error_log( 'Blog Poster: JSON ' . $label . ' tail hex: ' . bin2hex( $tail ) );
+    }
+
+    /**
+     * JSON断片を抽出
+     *
+     * @param string $text 入力テキスト
+     * @return string
+     */
+    private function extract_json_fragment( $text ) {
+        $start = null;
+        $length = strlen( $text );
+        for ( $i = 0; $i < $length; $i++ ) {
+            $char = $text[ $i ];
+            if ( '{' === $char || '[' === $char ) {
+                $start = $i;
+                break;
+            }
+        }
+
+        if ( null === $start ) {
+            return '';
+        }
+
+        $stack = array();
+        $in_string = false;
+        $escape = false;
+
+        for ( $i = $start; $i < $length; $i++ ) {
+            $char = $text[ $i ];
+
+            if ( $in_string ) {
+                if ( $escape ) {
+                    $escape = false;
+                    continue;
+                }
+                if ( '\\\\' === $char ) {
+                    $escape = true;
+                    continue;
+                }
+                if ( '"' === $char ) {
+                    $in_string = false;
+                }
+                continue;
+            }
+
+            if ( '"' === $char ) {
+                $in_string = true;
+                continue;
+            }
+
+            if ( '{' === $char || '[' === $char ) {
+                $stack[] = $char;
+                continue;
+            }
+
+            if ( '}' === $char || ']' === $char ) {
+                array_pop( $stack );
+                if ( empty( $stack ) ) {
+                    return substr( $text, $start, $i - $start + 1 );
+                }
+            }
+        }
+
+        return '';
     }
 
     /**
@@ -457,6 +529,13 @@ PROMPT;
         $this->log_json_debug_samples( 'outline', $json_str );
 
         $data = json_decode( $json_str, true );
+
+        if ( json_last_error() !== JSON_ERROR_NONE ) {
+            $fragment = $this->extract_json_fragment( $json_str );
+            if ( '' !== $fragment && $fragment !== $json_str ) {
+                $data = json_decode( $fragment, true );
+            }
+        }
 
         if ( json_last_error() !== JSON_ERROR_NONE ) {
             $error_msg = json_last_error_msg();
