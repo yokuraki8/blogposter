@@ -171,14 +171,12 @@ class Blog_Poster_Generator {
                 'strict' => true,
                 'schema' => array(
                     'type' => 'object',
-                    'additionalProperties' => false,
                     'required' => array( 'blocks' ),
                     'properties' => array(
                         'blocks' => array(
                             'type' => 'array',
                             'items' => array(
                                 'type' => 'object',
-                                'additionalProperties' => false,
                                 'required' => array( 'type' ),
                                 'properties' => array(
                                     'type' => array(
