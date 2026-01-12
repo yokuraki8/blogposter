@@ -176,7 +176,7 @@ class Blog_Poster_Generator {
             'type' => 'json_schema',
             'json_schema' => array(
                 'name' => 'blog_poster_blocks',
-                'description' => 'Blog Poster content blocks JSON schema',
+                'description' => 'Blog Poster content blocks JSON schema. The output must be an array of semantic blocks forming a full-length, detailed SEO blog post.',
                 'strict' => true,
                 'schema' => array(
                     'type' => 'object',
@@ -185,29 +185,33 @@ class Blog_Poster_Generator {
                     'properties' => array(
                         'blocks' => array(
                             'type' => 'array',
+                            'description' => 'A sequence of blocks representing the article body. Must include multiple H2/H3 sections, detailed paragraphs, and lists.',
                             'items' => array(
                                 'oneOf' => array(
                                     array(
                                         'type' => 'object',
                                         'additionalProperties' => false,
+                                        'description' => 'Headings for sectioning the article.',
                                         'required' => array( 'type', 'content' ),
                                         'properties' => array(
                                             'type' => array( 'type' => 'string', 'enum' => array( 'h2', 'h3' ) ),
-                                            'content' => array( 'type' => 'string' ),
+                                            'content' => array( 'type' => 'string', 'description' => 'The heading text. Do not include markdown symbols like ##.' ),
                                         ),
                                     ),
                                     array(
                                         'type' => 'object',
                                         'additionalProperties' => false,
+                                        'description' => 'Standard body text paragraphs.',
                                         'required' => array( 'type', 'content' ),
                                         'properties' => array(
                                             'type' => array( 'type' => 'string', 'const' => 'text' ),
-                                            'content' => array( 'type' => 'string' ),
+                                            'content' => array( 'type' => 'string', 'description' => 'Detailed paragraph text. Should be comprehensive and high quality. Use markdown for bolding if necessary.' ),
                                         ),
                                     ),
                                     array(
                                         'type' => 'object',
                                         'additionalProperties' => false,
+                                        'description' => 'Code snippets for technical explanation.',
                                         'required' => array( 'type', 'content', 'language' ),
                                         'properties' => array(
                                             'type' => array( 'type' => 'string', 'const' => 'code' ),
@@ -218,6 +222,7 @@ class Blog_Poster_Generator {
                                     array(
                                         'type' => 'object',
                                         'additionalProperties' => false,
+                                        'description' => 'Bulleted or numbered lists.',
                                         'required' => array( 'type', 'items' ),
                                         'properties' => array(
                                             'type' => array( 'type' => 'string', 'const' => 'list' ),
@@ -1390,6 +1395,8 @@ PROMPT;
 - textブロックは段落ごとに分割（1ブロック＝1〜3文を目安）
 - 先頭ブロックは必ずh2（見出し: {$section['h2']}）
 - サブセクションごとにh3を入れて構成する
+- 要約は禁止。長文で詳細に書くこと
+- 見出しの間は複数のtextブロックで詳述すること
 - 文字列内の改行・タブは必ず \\n / \\t にエスケープする
 - 文字列内に生の改行やタブを入れない
 - ルートは必ず { "blocks": [...] } のオブジェクト
@@ -1404,9 +1411,6 @@ PROMPT;
 - list: { "type": "list", "items": ["具体的な項目1", "具体的な項目2"] }
 
 【重要】"text"フィールドは使用禁止。必ず"content"フィールドを使用すること
-【重要】各ブロックには必ず "language" と "items" を含めること（未使用の場合は空文字/空配列）
-- h2/h3/text: "language": "", "items": []
-- list: "content": "", "language": "", "items": [ ... ]
 
 【悪い例（薄い内容）】
 { "type": "text", "content": "エラーハンドリングは重要です。" }
