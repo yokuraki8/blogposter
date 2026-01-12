@@ -18,7 +18,7 @@ $selected_categories = isset( $settings['category_ids'] ) && is_array( $settings
     : array();
 $default_category_id = isset( $settings['default_category_id'] ) ? intval( $settings['default_category_id'] ) : 0;
 $default_models = isset( $settings['default_model'] ) && is_array( $settings['default_model'] ) ? $settings['default_model'] : array();
-$openai_models = array( 'gpt-5.2', 'gpt-5-mini', 'gpt-4.1', 'gpt-5-nano' );
+$openai_models = array( 'gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo', 'gpt-4', 'gpt-3.5-turbo' );
 $gemini_models = array(
     'gemini-2.5-flash',
     'gemini-2.5-pro',
@@ -213,7 +213,7 @@ $claude_models = array( 'claude-sonnet-4-5', 'claude-opus-4-5', 'claude-3-5-sonn
                         <td>
                             <select name="blog_poster_settings[default_model][openai]" id="openai_model">
                                 <?php foreach ( $openai_models as $model ) : ?>
-                                    <option value="<?php echo esc_attr( $model ); ?>" <?php selected( isset( $default_models['openai'] ) ? $default_models['openai'] : 'gpt-5.2', $model ); ?>>
+                                    <option value="<?php echo esc_attr( $model ); ?>" <?php selected( isset( $default_models['openai'] ) ? $default_models['openai'] : 'gpt-4o-mini', $model ); ?>>
                                         <?php echo esc_html( $model ); ?>
                                     </option>
                                 <?php endforeach; ?>

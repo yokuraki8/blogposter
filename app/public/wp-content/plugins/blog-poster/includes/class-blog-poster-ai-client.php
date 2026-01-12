@@ -82,6 +82,10 @@ abstract class Blog_Poster_AI_Client {
      * @return array|WP_Error レスポンスまたはエラー
      */
     protected function make_request( $url, $body, $headers = array() ) {
+        // デバッグログ: リクエスト内容
+        error_log( 'Blog Poster API Request - Model: ' . ( isset( $body['model'] ) ? $body['model'] : 'N/A' ) );
+        error_log( 'Blog Poster API Request - URL: ' . $url );
+
         $args = array(
             'method'  => 'POST',
             'headers' => $headers,
@@ -92,6 +96,7 @@ abstract class Blog_Poster_AI_Client {
         $response = wp_remote_post( $url, $args );
 
         if ( is_wp_error( $response ) ) {
+            error_log( 'Blog Poster API Error: ' . $response->get_error_message() );
             return $response;
         }
 
@@ -100,12 +105,24 @@ abstract class Blog_Poster_AI_Client {
         $data = json_decode( $response_body, true );
 
         if ( $status_code !== 200 ) {
+            // デバッグログ: エラー詳細
+            error_log( 'Blog Poster API Error - Status: ' . $status_code );
+            error_log( 'Blog Poster API Error - Response: ' . $response_body );
+
+            // エラーメッセージを詳細化
+            $error_message = sprintf(
+                __( 'APIエラー: ステータスコード %d', 'blog-poster' ),
+                $status_code
+            );
+
+            // 詳細なエラー情報を追加
+            if ( isset( $data['error']['message'] ) ) {
+                $error_message .= ' - ' . $data['error']['message'];
+            }
+
             return new WP_Error(
                 'api_error',
-                sprintf(
-                    __( 'APIエラー: ステータスコード %d', 'blog-poster' ),
-                    $status_code
-                ),
+                $error_message,
                 $data
             );
         }
