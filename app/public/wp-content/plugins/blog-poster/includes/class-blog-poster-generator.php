@@ -176,7 +176,7 @@ class Blog_Poster_Generator {
             'type' => 'json_schema',
             'json_schema' => array(
                 'name' => 'blog_poster_blocks',
-                'description' => 'Blog Poster content blocks JSON schema. The output must be a sequence of blocks forming a FULL-LENGTH, DETAILED, and COMPREHENSIVE SEO blog post. Do not summarize.',
+                'description' => 'Blog Poster content blocks. Output a detailed article body.',
                 'strict' => true,
                 'schema' => array(
                     'type' => 'object',
@@ -185,59 +185,29 @@ class Blog_Poster_Generator {
                     'properties' => array(
                         'blocks' => array(
                             'type' => 'array',
-                            'description' => 'An ordered list of content blocks that make up the article body. Must be extensive and detailed.',
+                            'description' => 'List of content blocks.',
                             'items' => array(
-                                'oneOf' => array(
-                                    array(
-                                        'type' => 'object',
-                                        'additionalProperties' => false,
-                                        'description' => 'Section headings. Use H2 for main sections and H3 for subsections.',
-                                        'required' => array( 'type', 'content' ),
-                                        'properties' => array(
-                                            'type' => array( 'type' => 'string', 'enum' => array( 'h2', 'h3' ) ),
-                                            'content' => array(
-                                                'type' => 'string',
-                                                'description' => 'The heading text. Engaging and SEO-optimized.',
-                                            ),
-                                        ),
+                                'type' => 'object',
+                                'additionalProperties' => false,
+                                'required' => array( 'type', 'content', 'language', 'items' ),
+                                'properties' => array(
+                                    'type' => array(
+                                        'type' => 'string',
+                                        'enum' => array( 'text', 'code', 'list' ),
+                                        'description' => 'The type of the block.',
                                     ),
-                                    array(
-                                        'type' => 'object',
-                                        'additionalProperties' => false,
-                                        'description' => 'Main content paragraphs. MUST be detailed and long-form.',
-                                        'required' => array( 'type', 'content' ),
-                                        'properties' => array(
-                                            'type' => array( 'type' => 'string', 'const' => 'text' ),
-                                            'content' => array(
-                                                'type' => 'string',
-                                                'description' => 'A comprehensive, detailed paragraph explaining the topic in depth. Avoid short summaries. Write multiple sentences to fully cover the context.',
-                                            ),
-                                        ),
+                                    'content' => array(
+                                        'type' => array( 'string', 'null' ),
+                                        'description' => 'The text content. Required for "text" and "code". Set to null for "list".',
                                     ),
-                                    array(
-                                        'type' => 'object',
-                                        'additionalProperties' => false,
-                                        'description' => 'Code snippets for technical explanation.',
-                                        'required' => array( 'type', 'content', 'language' ),
-                                        'properties' => array(
-                                            'type' => array( 'type' => 'string', 'const' => 'code' ),
-                                            'content' => array( 'type' => 'string', 'description' => 'The code snippet.' ),
-                                            'language' => array( 'type' => 'string', 'description' => 'Programming language (e.g., php, javascript, python).' ),
-                                        ),
+                                    'language' => array(
+                                        'type' => array( 'string', 'null' ),
+                                        'description' => 'Programming language. Required for "code". Set to null for others.',
                                     ),
-                                    array(
-                                        'type' => 'object',
-                                        'additionalProperties' => false,
-                                        'description' => 'Bulleted or numbered lists.',
-                                        'required' => array( 'type', 'items' ),
-                                        'properties' => array(
-                                            'type' => array( 'type' => 'string', 'const' => 'list' ),
-                                            'items' => array(
-                                                'type' => 'array',
-                                                'description' => 'List items. Each item should be descriptive.',
-                                                'items' => array( 'type' => 'string' ),
-                                            ),
-                                        ),
+                                    'items' => array(
+                                        'type' => array( 'array', 'null' ),
+                                        'description' => 'List items. Required for "list". Set to null for others.',
+                                        'items' => array( 'type' => 'string' ),
                                     ),
                                 ),
                             ),
