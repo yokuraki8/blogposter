@@ -568,8 +568,8 @@ class Blog_Poster_Generator {
                 function ( $matches ) {
                     $prefix = $matches[1];
                     $body = $matches[2];
-                    $body = str_replace( array( \"\\r\\n\", \"\\r\", \"\\n\" ), '\\\\n', $body );
-                    return $prefix . $body . '\"';
+                    $body = str_replace( array( "\r\n", "\r", "\n" ), '\\n', $body );
+                    return $prefix . $body . '"';
                 },
                 $json_str
             );
