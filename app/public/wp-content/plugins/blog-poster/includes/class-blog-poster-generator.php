@@ -48,10 +48,10 @@ class Blog_Poster_Generator {
         // 2. 前後の不要な空白を削除
         $json_str = trim( $json_str );
         $json_str = $this->sanitize_json_string( $json_str );
-        $json_str = $this->sanitize_json_string( $json_str );
 
         // 3. デバッグログ（最初の200文字）
         error_log( 'Blog Poster: Parsing JSON response (first 200 chars): ' . substr( $json_str, 0, 200 ) );
+        $this->log_json_debug_samples( 'response', $json_str );
 
         $data = json_decode( $json_str, true );
 
@@ -76,6 +76,20 @@ class Blog_Poster_Generator {
     private function sanitize_json_string( $json_str ) {
         // JSONで不正になる制御文字を除去（タブ/改行は保持）
         return preg_replace( '/[\x00-\x08\x0B\x0C\x0E-\x1F]/', '', $json_str );
+    }
+
+    /**
+     * JSON文字列の先頭/末尾を16進ダンプで記録
+     *
+     * @param string $label ラベル
+     * @param string $json_str JSON文字列
+     * @return void
+     */
+    private function log_json_debug_samples( $label, $json_str ) {
+        $head = substr( $json_str, 0, 200 );
+        $tail = substr( $json_str, -200 );
+        error_log( 'Blog Poster: JSON ' . $label . ' head hex: ' . bin2hex( $head ) );
+        error_log( 'Blog Poster: JSON ' . $label . ' tail hex: ' . bin2hex( $tail ) );
     }
 
     /**
@@ -440,6 +454,7 @@ PROMPT;
 
         // 3. デバッグログ（最初の200文字）
         error_log( 'Blog Poster: Parsing JSON outline (first 200 chars): ' . substr( $json_str, 0, 200 ) );
+        $this->log_json_debug_samples( 'outline', $json_str );
 
         $data = json_decode( $json_str, true );
 
