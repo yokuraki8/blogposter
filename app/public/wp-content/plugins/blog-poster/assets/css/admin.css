@@ -56,3 +56,25 @@
 .api-section.active {
     display: block;
 }
+
+/* コードブロック */
+pre,
+pre code {
+    background-color: #F5FAFE;
+    border-radius: 4px;
+    border: 1px solid #dcdcde;
+}
+
+pre {
+    padding: 12px 16px;
+    overflow-x: auto;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+code {
+    padding: 2px 6px;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Courier New', monospace;
+    font-size: 13px;
+    color: #2c3e50;
+}
