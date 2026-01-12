@@ -76,6 +76,118 @@ class Blog_Poster_Generator {
     }
 
     /**
+     * OpenAI Structured Outputs用のJSONスキーマ（アウトライン）
+     *
+     * @return array
+     */
+    private function get_openai_outline_schema() {
+        return array(
+            'type' => 'json_schema',
+            'json_schema' => array(
+                'name' => 'blog_poster_outline',
+                'description' => 'Blog Poster outline JSON schema',
+                'strict' => true,
+                'schema' => array(
+                    'type' => 'object',
+                    'additionalProperties' => false,
+                    'required' => array( 'title', 'slug', 'meta_description', 'excerpt', 'sections' ),
+                    'properties' => array(
+                        'title' => array( 'type' => 'string' ),
+                        'slug' => array( 'type' => 'string' ),
+                        'meta_description' => array( 'type' => 'string' ),
+                        'excerpt' => array( 'type' => 'string' ),
+                        'target_reader' => array( 'type' => 'string' ),
+                        'reader_goal' => array( 'type' => 'string' ),
+                        'keywords' => array(
+                            'type' => 'array',
+                            'items' => array( 'type' => 'string' ),
+                        ),
+                        'sections' => array(
+                            'type' => 'array',
+                            'items' => array(
+                                'type' => 'object',
+                                'additionalProperties' => false,
+                                'required' => array( 'h2', 'purpose', 'reader_state_before', 'reader_state_after', 'key_content', 'subsections' ),
+                                'properties' => array(
+                                    'h2' => array( 'type' => 'string' ),
+                                    'purpose' => array( 'type' => 'string' ),
+                                    'reader_state_before' => array( 'type' => 'string' ),
+                                    'reader_state_after' => array( 'type' => 'string' ),
+                                    'key_content' => array( 'type' => 'string' ),
+                                    'subsections' => array(
+                                        'type' => 'array',
+                                        'items' => array(
+                                            'type' => 'object',
+                                            'additionalProperties' => false,
+                                            'required' => array( 'h3', 'content_type', 'key_points' ),
+                                            'properties' => array(
+                                                'h3' => array( 'type' => 'string' ),
+                                                'content_type' => array( 'type' => 'string' ),
+                                                'key_points' => array( 'type' => 'string' ),
+                                            ),
+                                        ),
+                                    ),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        );
+    }
+
+    /**
+     * OpenAI Structured Outputs用のJSONスキーマ（ブロック）
+     *
+     * @return array
+     */
+    private function get_openai_blocks_schema() {
+        return array(
+            'type' => 'json_schema',
+            'json_schema' => array(
+                'name' => 'blog_poster_blocks',
+                'description' => 'Blog Poster content blocks JSON schema',
+                'strict' => true,
+                'schema' => array(
+                    'type' => 'object',
+                    'additionalProperties' => false,
+                    'required' => array( 'blocks' ),
+                    'properties' => array(
+                        'blocks' => array(
+                            'type' => 'array',
+                            'items' => array(
+                                'type' => 'object',
+                                'additionalProperties' => false,
+                                'required' => array( 'type' ),
+                                'properties' => array(
+                                    'type' => array( 'type' => 'string' ),
+                                    'content' => array( 'type' => 'string' ),
+                                    'language' => array( 'type' => 'string' ),
+                                    'items' => array(
+                                        'type' => 'array',
+                                        'items' => array( 'type' => 'string' ),
+                                    ),
+                                ),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        );
+    }
+
+    /**
+     * OpenAI Structured Outputsを使うか
+     *
+     * @param Blog_Poster_AI_Client $client AIクライアント
+     * @return bool
+     */
+    private function should_use_openai_schema( $client ) {
+        return ( $client instanceof Blog_Poster_OpenAI_Client )
+            && 0 === strpos( $client->get_model(), 'gpt-5' );
+    }
+
+    /**
      * JSON文字列の制御文字を除去
      *
      * @param string $json_str JSON文字列
@@ -556,7 +668,8 @@ class Blog_Poster_Generator {
 上記のJSON形式で、実行可能な記事のアウトラインを生成してください。
 PROMPT;
 
-        $response = $client->generate_text( $prompt );
+        $response_format = $this->should_use_openai_schema( $client ) ? $this->get_openai_outline_schema() : null;
+        $response = $client->generate_text( $prompt, $response_format );
 
         if ( ! $response['success'] ) {
             return new WP_Error( 'outline_generation_failed', $response['error'] );
@@ -755,7 +868,8 @@ console.log("World");
 上記のコードブロック記述ルールを絶対に守ってください。
 PROMPT;
 
-        $response = $client->generate_text( $prompt );
+        $response_format = $this->should_use_openai_schema( $client ) ? $this->get_openai_blocks_schema() : null;
+        $response = $client->generate_text( $prompt, $response_format );
 
         if ( ! $response['success'] ) {
             return new WP_Error( 'section_generation_failed', $response['error'] );
@@ -837,7 +951,8 @@ PROMPT;
 {$additional_instructions}
 PROMPT;
 
-        $response = $client->generate_text( $prompt );
+        $response_format = $this->should_use_openai_schema( $client ) ? $this->get_openai_blocks_schema() : null;
+        $response = $client->generate_text( $prompt, $response_format );
 
         if ( ! $response['success'] ) {
             return new WP_Error( 'api_error', $response['error'] ?? 'APIエラー' );
@@ -902,7 +1017,8 @@ PROMPT;
 - 抽象的な説明を避ける
 PROMPT;
 
-        $intro_response = $client->generate_text( $intro_prompt );
+        $response_format = $this->should_use_openai_schema( $client ) ? $this->get_openai_blocks_schema() : null;
+        $intro_response = $client->generate_text( $intro_prompt, $response_format );
         $intro = $intro_response['success'] ? $intro_response['data'] : '';
 
         // まとめを生成
@@ -917,7 +1033,8 @@ PROMPT;
 - 読者が実行すべき具体的なステップを提示
 PROMPT;
 
-        $summary_response = $client->generate_text( $summary_prompt );
+        $response_format = $this->should_use_openai_schema( $client ) ? $this->get_openai_blocks_schema() : null;
+        $summary_response = $client->generate_text( $summary_prompt, $response_format );
         $summary = $summary_response['success'] ? $summary_response['data'] : '';
 
         // 本文を組み立て

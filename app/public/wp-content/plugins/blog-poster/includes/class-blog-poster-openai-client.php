@@ -26,7 +26,7 @@ class Blog_Poster_OpenAI_Client extends Blog_Poster_AI_Client {
      * @param string $prompt プロンプト
      * @return array レスポンス
      */
-    public function generate_text( $prompt ) {
+    public function generate_text( $prompt, $response_format = null ) {
         if ( empty( $this->api_key ) ) {
             return $this->error_response( __( 'OpenAI APIキーが設定されていません。', 'blog-poster' ) );
         }
@@ -43,6 +43,9 @@ class Blog_Poster_OpenAI_Client extends Blog_Poster_AI_Client {
                 'temperature' => $this->temperature,
                 'max_output_tokens' => $this->max_tokens,
             );
+            if ( ! empty( $response_format ) ) {
+                $body['response_format'] = $response_format;
+            }
         } else {
             $url = self::API_BASE_URL . 'chat/completions';
             $body = array(

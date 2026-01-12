@@ -26,7 +26,7 @@ class Blog_Poster_Gemini_Client extends Blog_Poster_AI_Client {
      * @param string $prompt プロンプト
      * @return array レスポンス
      */
-    public function generate_text( $prompt ) {
+    public function generate_text( $prompt, $response_format = null ) {
         if ( empty( $this->api_key ) ) {
             return $this->error_response( __( 'Gemini APIキーが設定されていません。', 'blog-poster' ) );
         }

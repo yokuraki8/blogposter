@@ -63,7 +63,7 @@ abstract class Blog_Poster_AI_Client {
      * @param string $prompt プロンプト
      * @return array レスポンス
      */
-    abstract public function generate_text( $prompt );
+    abstract public function generate_text( $prompt, $response_format = null );
 
     /**
      * 画像生成（抽象メソッド）
@@ -202,5 +202,14 @@ abstract class Blog_Poster_AI_Client {
             'tokens'  => $tokens,
             'model'   => $this->model,
         );
+    }
+
+    /**
+     * 使用中のモデル名を取得
+     *
+     * @return string
+     */
+    public function get_model() {
+        return $this->model;
     }
 }
