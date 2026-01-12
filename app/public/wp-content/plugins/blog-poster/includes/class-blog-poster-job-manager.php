@@ -72,6 +72,9 @@ class Blog_Poster_Job_Manager {
 			status varchar(20) DEFAULT 'pending',
 			current_step int(11) DEFAULT 0,
 			total_steps int(11) DEFAULT 3,
+			section_index int(11) DEFAULT 0,
+			sections_total int(11) DEFAULT 0,
+			previous_summary longtext,
 			outline longtext,
 			sections_content longtext,
 			final_content longtext,
@@ -210,6 +213,9 @@ class Blog_Poster_Job_Manager {
 				array(
 					'outline'      => wp_json_encode( $outline, JSON_UNESCAPED_UNICODE ),
 					'current_step' => 1,
+					'section_index' => 0,
+					'sections_total' => isset( $outline['sections'] ) && is_array( $outline['sections'] ) ? count( $outline['sections'] ) : 0,
+					'previous_summary' => '',
 				)
 			);
 
@@ -243,7 +249,7 @@ class Blog_Poster_Job_Manager {
 	public function process_step_content( $job_id ) {
 		$job = $this->get_job( $job_id );
 
-		if ( ! $job || 'outline' !== $job['status'] ) {
+		if ( ! $job || ! in_array( $job['status'], array( 'outline', 'content' ), true ) ) {
 			return array(
 				'success' => false,
 				'message' => 'Invalid job state',
@@ -262,52 +268,77 @@ class Blog_Poster_Job_Manager {
 			$outline = json_decode( $job['outline'], true );
 			$topic   = $job['topic'];
 			$additional_instructions = $job['additional_instructions'] ?? '';
+			$section_index = isset( $job['section_index'] ) ? (int) $job['section_index'] : 0;
+			$sections_total = isset( $job['sections_total'] ) ? (int) $job['sections_total'] : 0;
+			$previous_summary = isset( $job['previous_summary'] ) ? (string) $job['previous_summary'] : '';
 
 			if ( $this->generator->is_json_output_enabled() ) {
-				$intro_blocks = $this->generator->generate_intro_blocks( $outline );
-				if ( is_wp_error( $intro_blocks ) ) {
-					throw new Exception( $intro_blocks->get_error_message() );
+				if ( ! isset( $outline['sections'] ) || ! is_array( $outline['sections'] ) ) {
+					throw new Exception( 'Invalid outline data' );
 				}
 
-				$blocks           = $intro_blocks;
-				$previous_summary = '';
+				if ( 0 === $sections_total ) {
+					$sections_total = count( $outline['sections'] );
+				}
 
-				foreach ( $outline['sections'] as $section ) {
+				$blocks = array();
+				if ( ! empty( $job['sections_content'] ) ) {
+					$decoded_blocks = json_decode( $job['sections_content'], true );
+					if ( is_array( $decoded_blocks ) ) {
+						$blocks = $decoded_blocks;
+					}
+				}
+
+				if ( 0 === $section_index && empty( $blocks ) ) {
+					$intro_blocks = $this->generator->generate_intro_blocks( $outline );
+					if ( is_wp_error( $intro_blocks ) ) {
+						throw new Exception( $intro_blocks->get_error_message() );
+					}
+					$blocks = array_merge( $blocks, $intro_blocks );
+				}
+
+				if ( $section_index < $sections_total ) {
+					$current_section = $outline['sections'][ $section_index ];
 					$section_result = $this->generator->generate_section_blocks(
-						$section,
+						$current_section,
 						$topic,
 						$previous_summary,
 						$additional_instructions
 					);
 
 					if ( is_wp_error( $section_result ) ) {
-						error_log( 'Blog Poster: Section generation failed for ' . $section['h2'] . ': ' . $section_result->get_error_message() );
-						continue;
+						throw new Exception( $section_result->get_error_message() );
 					}
 
-					$blocks           = array_merge( $blocks, $section_result['blocks'] );
-					$previous_summary = isset( $section_result['summary'] ) ? $section_result['summary'] : '';
+					$blocks = array_merge( $blocks, $section_result['blocks'] );
+					$previous_summary = isset( $section_result['summary'] ) ? $section_result['summary'] : $previous_summary;
+					$section_index++;
 				}
 
-				$summary_blocks = $this->generator->generate_summary_blocks( $outline, '' );
-				if ( is_wp_error( $summary_blocks ) ) {
-					throw new Exception( $summary_blocks->get_error_message() );
+				$content_done = $section_index >= $sections_total;
+				$final_content = '';
+
+				if ( $content_done ) {
+					$summary_blocks = $this->generator->generate_summary_blocks( $outline, '' );
+					if ( is_wp_error( $summary_blocks ) ) {
+						throw new Exception( $summary_blocks->get_error_message() );
+					}
+
+					$blocks = array_merge( $blocks, $summary_blocks );
+
+					$article_json = array(
+						'meta'   => array(
+							'title'            => $outline['title'],
+							'slug'             => $outline['slug'],
+							'meta_description' => $outline['meta_description'],
+							'excerpt'          => $outline['excerpt'],
+							'keywords'         => isset( $outline['keywords'] ) ? $outline['keywords'] : array(),
+						),
+						'blocks' => $blocks,
+					);
+
+					$final_content = wp_json_encode( $article_json, JSON_UNESCAPED_UNICODE );
 				}
-
-				$blocks = array_merge( $blocks, $summary_blocks );
-
-				$article_json = array(
-					'meta'   => array(
-						'title'            => $outline['title'],
-						'slug'             => $outline['slug'],
-						'meta_description' => $outline['meta_description'],
-						'excerpt'          => $outline['excerpt'],
-						'keywords'         => isset( $outline['keywords'] ) ? $outline['keywords'] : array(),
-					),
-					'blocks' => $blocks,
-				);
-
-				$final_content = wp_json_encode( $article_json, JSON_UNESCAPED_UNICODE );
 
 				$this->update_job(
 					$job_id,
@@ -315,13 +346,19 @@ class Blog_Poster_Job_Manager {
 						'sections_content' => wp_json_encode( $blocks, JSON_UNESCAPED_UNICODE ),
 						'final_content'    => $final_content,
 						'current_step'     => 2,
+						'section_index'    => $section_index,
+						'sections_total'   => $sections_total,
+						'previous_summary' => $previous_summary,
 					)
 				);
 
 				return array(
 					'success'         => true,
-					'message'         => '本文生成完了',
-					'content_preview' => mb_substr( $final_content, 0, 500 ) . '...',
+					'message'         => $content_done ? '本文生成完了' : '本文生成中',
+					'content_preview' => '' !== $final_content ? mb_substr( $final_content, 0, 500 ) . '...' : '',
+					'current_section' => $section_index,
+					'total_sections'  => $sections_total,
+					'done'            => $content_done,
 				);
 			}
 
@@ -412,6 +449,12 @@ class Blog_Poster_Job_Manager {
 			$content = $job['final_content'];
 			$topic   = $job['topic'];
 			$additional_instructions = $job['additional_instructions'] ?? '';
+			$section_index = isset( $job['section_index'] ) ? (int) $job['section_index'] : 0;
+			$sections_total = isset( $job['sections_total'] ) ? (int) $job['sections_total'] : 0;
+
+			if ( $sections_total > 0 && $section_index < $sections_total ) {
+				throw new Exception( '本文生成が完了していません。' );
+			}
 
 			if ( $this->generator->is_json_output_enabled() ) {
 				$article_json    = json_decode( $content, true );

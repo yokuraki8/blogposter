@@ -142,6 +142,18 @@ jQuery(document).ready(function($) {
             success: function(response) {
                 console.log('Step ' + step + ' response:', response);
                 if (response.success) {
+                    if (step === 'content') {
+                        const total = response.data.total_sections || 0;
+                        const current = response.data.current_section || 0;
+                        const sectionMessage = total > 0 ? ('本文を生成中... (' + current + '/' + total + ')') : stepLabels[step];
+                        if (!response.data.done) {
+                            updateProgress(progress, sectionMessage);
+                            setTimeout(function() {
+                                processNextStep(stepIndex);
+                            }, 300);
+                            return;
+                        }
+                    }
                     const nextProgress = Math.floor(((stepIndex + 1) / steps.length) * 100);
                     updateProgress(nextProgress, stepLabels[step] + ' 完了');
 
