@@ -47,6 +47,11 @@ class Blog_Poster_OpenAI_Client extends Blog_Poster_AI_Client {
             'max_tokens' => $this->max_tokens,
         );
 
+        if ( 0 === strpos( $this->model, 'gpt-5' ) ) {
+            $body['max_completion_tokens'] = $this->max_tokens;
+            unset( $body['max_tokens'] );
+        }
+
         $headers = array(
             'Content-Type' => 'application/json',
             'Authorization' => 'Bearer ' . $this->api_key,
