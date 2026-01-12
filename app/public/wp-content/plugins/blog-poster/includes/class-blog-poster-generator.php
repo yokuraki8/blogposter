@@ -54,19 +54,19 @@ class Blog_Poster_Generator {
         error_log( 'Blog Poster: Parsing JSON response (first 200 chars): ' . substr( $json_str, 0, 200 ) );
         $this->log_json_debug_samples( 'response', $json_str );
 
-        $data = json_decode( $json_str, true );
+        $data = $this->json_decode_safe( $json_str );
 
         if ( json_last_error() !== JSON_ERROR_NONE ) {
             $fragment = $this->extract_json_fragment( $json_str );
             if ( '' !== $fragment && $fragment !== $json_str ) {
-                $data = json_decode( $fragment, true );
+                $data = $this->json_decode_safe( $fragment );
             }
         }
 
         if ( json_last_error() !== JSON_ERROR_NONE ) {
             $repaired = $this->repair_json_with_openai( $json_str );
             if ( '' !== $repaired ) {
-                $data = json_decode( $repaired, true );
+                $data = $this->json_decode_safe( $repaired );
             }
         }
 
@@ -293,6 +293,20 @@ class Blog_Poster_Generator {
         $fixed = $this->sanitize_json_string( trim( $response['data'] ) );
         $fragment = $this->extract_json_fragment( $fixed );
         return '' !== $fragment ? $fragment : $fixed;
+    }
+
+    /**
+     * UTF-8不正を許容したJSONデコード
+     *
+     * @param string $json_str JSON文字列
+     * @return array|null
+     */
+    private function json_decode_safe( $json_str ) {
+        $flags = 0;
+        if ( defined( 'JSON_INVALID_UTF8_SUBSTITUTE' ) ) {
+            $flags |= JSON_INVALID_UTF8_SUBSTITUTE;
+        }
+        return json_decode( $json_str, true, 512, $flags );
     }
 
     /**
@@ -744,19 +758,19 @@ PROMPT;
         error_log( 'Blog Poster: Parsing JSON outline (first 200 chars): ' . substr( $json_str, 0, 200 ) );
         $this->log_json_debug_samples( 'outline', $json_str );
 
-        $data = json_decode( $json_str, true );
+        $data = $this->json_decode_safe( $json_str );
 
         if ( json_last_error() !== JSON_ERROR_NONE ) {
             $fragment = $this->extract_json_fragment( $json_str );
             if ( '' !== $fragment && $fragment !== $json_str ) {
-                $data = json_decode( $fragment, true );
+                $data = $this->json_decode_safe( $fragment );
             }
         }
 
         if ( json_last_error() !== JSON_ERROR_NONE ) {
             $repaired = $this->repair_json_with_openai( $json_str );
             if ( '' !== $repaired ) {
-                $data = json_decode( $repaired, true );
+                $data = $this->json_decode_safe( $repaired );
             }
         }
 
