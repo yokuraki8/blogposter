@@ -55,6 +55,7 @@ class Blog_Poster_Generator {
         $json_str = $this->sanitize_json_string( $json_str );
         $json_str = $this->remove_all_control_chars_outside_strings( $json_str );
         $json_str = $this->sanitize_json_string_strict( $json_str );
+        $json_str = $this->normalize_json_string_newlines( $json_str );
         $json_str = $this->sanitize_json_string_strict( $json_str );
 
         // 3. デバッグログ（最初の200文字）
@@ -550,6 +551,34 @@ class Blog_Poster_Generator {
     }
 
     /**
+     * content/key_points内の生改行を強制的に\\nへ置換
+     *
+     * @param string $json_str JSON文字列
+     * @return string
+     */
+    private function normalize_json_string_newlines( $json_str ) {
+        $patterns = array(
+            '/("content"\\s*:\\s*")([^"\\\\]*(?:\\\\.[^"\\\\]*)*)"/s',
+            '/("key_points"\\s*:\\s*")([^"\\\\]*(?:\\\\.[^"\\\\]*)*)"/s',
+        );
+
+        foreach ( $patterns as $pattern ) {
+            $json_str = preg_replace_callback(
+                $pattern,
+                function ( $matches ) {
+                    $prefix = $matches[1];
+                    $body = $matches[2];
+                    $body = str_replace( array( \"\\r\\n\", \"\\r\", \"\\n\" ), '\\\\n', $body );
+                    return $prefix . $body . '\"';
+                },
+                $json_str
+            );
+        }
+
+        return $json_str;
+    }
+
+    /**
      * JSONブロックを検証
      *
      * @param array $article_json JSONデータ
@@ -879,7 +908,8 @@ class Blog_Poster_Generator {
 1. Output strictly valid JSON.
 2. Escape all control characters inside strings (use \\n for newlines, \\t for tabs).
 3. Do NOT include raw newlines or tabs inside string values.
-4. The root element must be a single JSON object (not an array).
+4. If you need line breaks inside strings, you MUST use the two-character sequence \\n (not a raw newline).
+5. The root element must be a single JSON object (not an array).
 
 上記のJSON形式で、実行可能な記事のアウトラインを生成してください。
 PROMPT;
@@ -953,6 +983,8 @@ PROMPT;
         $json_str = $this->remove_all_control_chars_outside_strings( $json_str );
         $json_str = $this->sanitize_json_string( $json_str );
         $json_str = $this->remove_all_control_chars_outside_strings( $json_str );
+        $json_str = $this->sanitize_json_string_strict( $json_str );
+        $json_str = $this->normalize_json_string_newlines( $json_str );
 
         // 3. デバッグログ（最初の200文字）
         error_log( 'Blog Poster: Parsing JSON outline (first 200 chars): ' . substr( $json_str, 0, 200 ) );
