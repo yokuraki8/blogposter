@@ -247,3 +247,29 @@ function blog_poster_init() {
 
 // プラグインを起動
 blog_poster_init();
+
+// ★ TEMPORARY: Force DB Schema Update
+add_action( 'admin_init', function() {
+    global $wpdb;
+    $table_name = $wpdb->prefix . 'blog_poster_jobs';
+
+    $col = $wpdb->get_results( "SHOW COLUMNS FROM $table_name LIKE 'section_index'" );
+    if ( empty( $col ) ) {
+        $wpdb->query( "ALTER TABLE $table_name ADD COLUMN section_index int(9) DEFAULT 0" );
+    }
+
+    $col = $wpdb->get_results( "SHOW COLUMNS FROM $table_name LIKE 'sections_total'" );
+    if ( empty( $col ) ) {
+        $wpdb->query( "ALTER TABLE $table_name ADD COLUMN sections_total int(9) DEFAULT 0" );
+    }
+
+    $col = $wpdb->get_results( "SHOW COLUMNS FROM $table_name LIKE 'previous_summary'" );
+    if ( empty( $col ) ) {
+        $wpdb->query( "ALTER TABLE $table_name ADD COLUMN previous_summary longtext DEFAULT NULL" );
+    }
+
+    $col = $wpdb->get_results( "SHOW COLUMNS FROM $table_name LIKE 'current_step'" );
+    if ( empty( $col ) ) {
+        $wpdb->query( "ALTER TABLE $table_name ADD COLUMN current_step varchar(50) DEFAULT 'init'" );
+    }
+} );
