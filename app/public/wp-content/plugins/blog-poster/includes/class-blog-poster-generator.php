@@ -646,13 +646,17 @@ PROMPT;
 - 先頭ブロックは必ずh2（見出し: {$section['h2']}）
 - サブセクションごとにh3を入れて構成する
 
-【出力フォーマット】
+【出力フォーマット - 厳密に従うこと】
 { "blocks": [ ... ] }
 
-ブロック種別:
-- h2, h3, text, code, list
-codeは language と content を必須
-listは items 配列を使用
+ブロック種別とフィールド名（必ず"content"フィールドを使用）:
+- h2: { "type": "h2", "content": "見出しテキスト" }
+- h3: { "type": "h3", "content": "見出しテキスト" }
+- text: { "type": "text", "content": "段落テキスト" }
+- code: { "type": "code", "language": "javascript", "content": "コード内容" }
+- list: { "type": "list", "items": ["項目1", "項目2"] }
+
+【重要】"text"フィールドは使用禁止。必ず"content"フィールドを使用すること
 
 {$additional_instructions}
 PROMPT;
@@ -1183,8 +1187,10 @@ PROMPT;
 - Markdown記号は使わない
 - JSON以外のテキストを出力しない
 
-【出力フォーマット】
+【出力フォーマット - 厳密に従うこと】
 { "blocks": [ { "type": "text", "content": "..." } ] }
+
+【重要】"text"フィールドは使用禁止。必ず"content"フィールドを使用すること
 PROMPT;
 
         $response = $client->generate_text( $prompt );
@@ -1225,12 +1231,14 @@ PROMPT;
 - Markdown記号は使わない
 - JSON以外のテキストを出力しない
 
-【出力フォーマット】
+【出力フォーマット - 厳密に従うこと】
 { "blocks": [
   { "type": "h2", "content": "まとめ" },
   { "type": "list", "items": ["...","..."] },
   { "type": "text", "content": "..." }
 ] }
+
+【重要】"text"フィールドは使用禁止。必ず"content"フィールドを使用すること
 PROMPT;
 
         $response = $client->generate_text( $prompt );
