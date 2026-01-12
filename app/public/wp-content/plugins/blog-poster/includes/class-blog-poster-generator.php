@@ -102,7 +102,7 @@ class Blog_Poster_Generator {
             return new WP_Error( 'json_parse_error', 'JSONパースエラー: ' . $error_msg );
         }
 
-        return $this->normalize_outline_single_sentence( $data );
+        return $this->normalize_blocks_single_sentence( $data );
     }
 
     /**
@@ -641,6 +641,30 @@ class Blog_Poster_Generator {
         }
 
         return $outline_data;
+    }
+
+    /**
+     * ブロック配列のcontentを1文に正規化
+     *
+     * @param array $blocks_data ブロックJSON
+     * @return array
+     */
+    private function normalize_blocks_single_sentence( $blocks_data ) {
+        if ( ! is_array( $blocks_data ) || ! isset( $blocks_data['blocks'] ) || ! is_array( $blocks_data['blocks'] ) ) {
+            return $blocks_data;
+        }
+
+        foreach ( $blocks_data['blocks'] as $index => $block ) {
+            if ( ! isset( $block['content'] ) || ! is_string( $block['content'] ) ) {
+                continue;
+            }
+
+            if ( in_array( $block['type'] ?? '', array( 'text', 'h2', 'h3' ), true ) ) {
+                $blocks_data['blocks'][ $index ]['content'] = $this->normalize_single_sentence( $block['content'] );
+            }
+        }
+
+        return $blocks_data;
     }
 
     /**
