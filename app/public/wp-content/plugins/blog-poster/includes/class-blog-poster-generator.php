@@ -171,23 +171,52 @@ class Blog_Poster_Generator {
                 'strict' => true,
                 'schema' => array(
                     'type' => 'object',
+                    'additionalProperties' => false,
                     'required' => array( 'blocks' ),
                     'properties' => array(
                         'blocks' => array(
                             'type' => 'array',
                             'items' => array(
-                                'type' => 'object',
-                                'required' => array( 'type' ),
-                                'properties' => array(
-                                    'type' => array(
-                                        'type' => 'string',
-                                        'enum' => array( 'h2', 'h3', 'text', 'code', 'list' ),
+                                'oneOf' => array(
+                                    array(
+                                        'type' => 'object',
+                                        'additionalProperties' => false,
+                                        'required' => array( 'type', 'content' ),
+                                        'properties' => array(
+                                            'type' => array(
+                                                'type' => 'string',
+                                                'enum' => array( 'h2', 'h3', 'text' ),
+                                            ),
+                                            'content' => array( 'type' => 'string' ),
+                                        ),
                                     ),
-                                    'content' => array( 'type' => 'string' ),
-                                    'language' => array( 'type' => 'string' ),
-                                    'items' => array(
-                                        'type' => 'array',
-                                        'items' => array( 'type' => 'string' ),
+                                    array(
+                                        'type' => 'object',
+                                        'additionalProperties' => false,
+                                        'required' => array( 'type', 'content', 'language' ),
+                                        'properties' => array(
+                                            'type' => array(
+                                                'type' => 'string',
+                                                'enum' => array( 'code' ),
+                                            ),
+                                            'content' => array( 'type' => 'string' ),
+                                            'language' => array( 'type' => 'string' ),
+                                        ),
+                                    ),
+                                    array(
+                                        'type' => 'object',
+                                        'additionalProperties' => false,
+                                        'required' => array( 'type', 'items' ),
+                                        'properties' => array(
+                                            'type' => array(
+                                                'type' => 'string',
+                                                'enum' => array( 'list' ),
+                                            ),
+                                            'items' => array(
+                                                'type' => 'array',
+                                                'items' => array( 'type' => 'string' ),
+                                            ),
+                                        ),
                                     ),
                                 ),
                             ),
