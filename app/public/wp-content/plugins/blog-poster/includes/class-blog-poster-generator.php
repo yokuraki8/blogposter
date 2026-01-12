@@ -50,6 +50,7 @@ class Blog_Poster_Generator {
 
         // 2. 前後の不要な空白を削除
         $json_str = trim( $json_str );
+        $json_str = str_replace( array( "\r\n", "\r", "\n", "\t" ), array( '\\n', '\\n', '\\n', '\\t' ), $json_str );
         $json_str = $this->sanitize_json_string( $json_str );
         $json_str = $this->remove_all_control_chars_outside_strings( $json_str );
         $json_str = $this->sanitize_json_string( $json_str );
@@ -1118,13 +1119,6 @@ PROMPT;
             $fragment = $this->extract_json_fragment( $json_str );
             if ( '' !== $fragment && $fragment !== $json_str ) {
                 $data = $this->json_decode_safe( $fragment );
-            }
-        }
-
-        if ( json_last_error() !== JSON_ERROR_NONE ) {
-            $repaired = $this->repair_json_with_openai( $json_str );
-            if ( '' !== $repaired ) {
-                $data = $this->json_decode_safe( $repaired );
             }
         }
 
