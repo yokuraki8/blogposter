@@ -11,7 +11,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 $settings = get_option( 'blog_poster_settings', array() );
-$ai_provider = isset( $settings['ai_provider'] ) ? $settings['ai_provider'] : 'openai';
+$ai_provider = isset( $settings['ai_provider'] ) ? $settings['ai_provider'] : 'claude';
 $categories = get_categories( array( 'hide_empty' => false ) );
 $selected_categories = isset( $settings['category_ids'] ) && is_array( $settings['category_ids'] )
     ? array_map( 'intval', $settings['category_ids'] )
@@ -39,7 +39,15 @@ $gemini_models = array(
     'gemini-3-flash-preview',
     'gemini-3-pro-preview',
 );
-$claude_models = array( 'claude-sonnet-4-5', 'claude-opus-4-5', 'claude-3-5-sonnet' );
+$claude_models = array(
+    'claude-3.5-sonnet-20240620', // 2024-06 Anthropic推奨
+    'claude-3.5-sonnet',
+    'claude-3.5-opus',
+    'claude-3-opus',
+    'claude-3-haiku',
+    // 利用可能と確認できたモデルを追記
+    'claude-opus-4-5-20251101',
+);
 ?>
 
 <div class="wrap blog-poster-settings">
@@ -178,13 +186,19 @@ $claude_models = array( 'claude-sonnet-4-5', 'claude-opus-4-5', 'claude-3-5-sonn
                         <td>
                             <select name="blog_poster_settings[default_model][claude]" id="claude_model">
                                 <?php foreach ( $claude_models as $model ) : ?>
-                                    <option value="<?php echo esc_attr( $model ); ?>" <?php selected( isset( $default_models['claude'] ) ? $default_models['claude'] : 'claude-sonnet-4-5', $model ); ?>>
+                                    <option value="<?php echo esc_attr( $model ); ?>" <?php selected( isset( $default_models['claude'] ) ? $default_models['claude'] : 'claude-3.5-sonnet-20240620', $model ); ?>>
                                         <?php echo esc_html( $model ); ?>
                                     </option>
                                 <?php endforeach; ?>
                             </select>
                             <p class="description">
                                 <?php _e( 'Claudeの使用モデルを選択します。', 'blog-poster' ); ?>
+                            </p>
+                            <p>
+                                <button type="button" class="button" id="claude-key-check">
+                                    <?php _e( 'APIキーを確認', 'blog-poster' ); ?>
+                                </button>
+                                <span id="claude-key-check-status" style="margin-left:8px;"></span>
                             </p>
                         </td>
                     </tr>

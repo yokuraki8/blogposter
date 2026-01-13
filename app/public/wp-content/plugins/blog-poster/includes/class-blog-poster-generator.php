@@ -155,10 +155,25 @@ class Blog_Poster_Generator {
                 return $response;
             }
 
-            $outline_md = $response['content'];
+            $outline_md = '';
+            if ( isset( $response['data'] ) && is_string( $response['data'] ) ) {
+                $outline_md = $response['data'];
+            } elseif ( isset( $response['content'] ) && is_string( $response['content'] ) ) {
+                $outline_md = $response['content'];
+            }
+
+            if ( empty( $outline_md ) ) {
+                error_log( 'Blog Poster: Outline response empty. Raw response: ' . print_r( $response, true ) );
+                return new WP_Error( 'outline_empty', 'アウトラインが空です。' );
+            }
 
             // YAML frontmatterとセクション構造を解析
             $parsed = $this->parse_markdown_frontmatter( $outline_md );
+
+            if ( empty( $parsed['sections'] ) ) {
+                error_log( 'Blog Poster: No sections parsed from outline. Outline MD head: ' . substr( $outline_md, 0, 200 ) );
+                return new WP_Error( 'outline_no_sections', 'アウトラインからセクションを抽出できませんでした。' );
+            }
 
             return array(
                 'success' => true,
@@ -198,7 +213,21 @@ class Blog_Poster_Generator {
                 return $response;
             }
 
-            $section_md = $response['content'];
+            // Claude系は data キーに本文が入るケースがあるため両方を確認
+            $section_md = '';
+            if ( isset( $response['data'] ) && is_string( $response['data'] ) ) {
+                $section_md = $response['data'];
+            } elseif ( isset( $response['content'] ) && is_string( $response['content'] ) ) {
+                $section_md = $response['content'];
+            }
+
+            if ( empty( $section_md ) ) {
+                error_log( 'Blog Poster: Section response empty. Raw response: ' . print_r( $response, true ) );
+                return new WP_Error( 'section_empty', '本文が空です。' );
+            }
+
+            // セクション内でコードブロックが閉じていることを保証
+            $section_md = $this->postprocess_markdown( $section_md );
 
             // 次のセクションのためのコンテキスト要約を生成
             $context = $this->extract_section_context( $section_md );
@@ -309,7 +338,15 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
      * @param string $markdown Markdownテキスト
      * @return array ['meta' => array, 'body' => string, 'sections' => array]
      */
-    private function parse_markdown_frontmatter( $markdown ) {
+    public function parse_markdown_frontmatter( $markdown ) {
+        if ( empty( $markdown ) || ! is_string( $markdown ) ) {
+            return array(
+                'meta' => array(),
+                'body' => '',
+                'sections' => array(),
+            );
+        }
+
         $meta = array();
         $body = $markdown;
         $sections = array();
@@ -435,7 +472,7 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
      * @param string $section_md セクションのMarkdown
      * @return string コンテキスト要約（300文字程度）
      */
-    private function extract_section_context( $section_md ) {
+    public function extract_section_context( $section_md ) {
         // 最初の300文字を抽出（見出しやコードブロックを除外）
         $lines = explode( "\n", $section_md );
         $text_lines = array();
@@ -479,7 +516,7 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
      * @param string $markdown Markdownテキスト
      * @return string 修正後のMarkdown
      */
-    private function postprocess_markdown( $markdown ) {
+    public function postprocess_markdown( $markdown ) {
         // 1. コードブロック開始/終了の一致確認
         $open_count = preg_match_all( '/^```\w*/m', $markdown, $open_matches );
         $close_count = preg_match_all( '/^```\s*$/m', $markdown, $close_matches );
@@ -512,7 +549,7 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
      */
     public function markdown_to_html( $markdown ) {
         if ( ! class_exists( 'Parsedown' ) ) {
-            require_once plugin_dir_path( dirname( __FILE__ ) ) . 'vendor/parsedown/Parsedown.php';
+            require_once plugin_dir_path( __FILE__ ) . 'Parsedown.php';
         }
 
         $parsedown = new Parsedown();

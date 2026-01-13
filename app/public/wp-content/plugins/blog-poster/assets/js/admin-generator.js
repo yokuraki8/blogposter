@@ -235,7 +235,7 @@ jQuery(document).ready(function($) {
                 title: data.title,
                 slug: data.slug,
                 excerpt: data.excerpt,
-                content: data.content,
+                content: data.markdown,
                 meta_description: data.meta_description
             },
             success: function(response) {

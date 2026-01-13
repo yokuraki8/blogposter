@@ -11,7 +11,7 @@
  * Plugin Name:       Blog Poster
  * Plugin URI:        https://bridgesystem.me/blog-poster
  * Description:       AI駆動型ブログ記事自動生成プラグイン。Google Gemini、Anthropic Claude、OpenAIの3つのAIモデルに対応し、高品質な日本語記事を自動生成します。
- * Version:           0.3.0-alpha
+ * Version:           0.2.7-alpha
  * Requires at least: 6.0
  * Requires PHP:      8.0
  * Author:            Bridge System
@@ -28,7 +28,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // プラグインのバージョン定義
-define( 'BLOG_POSTER_VERSION', '0.3.0-alpha' );
+define( 'BLOG_POSTER_VERSION', '0.2.7-alpha' );
 define( 'BLOG_POSTER_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'BLOG_POSTER_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'BLOG_POSTER_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -98,21 +98,6 @@ class Blog_Poster {
 
         // 国際化対応
         add_action( 'plugins_loaded', array( $this, 'load_textdomain' ) );
-
-        // フロントエンドのスタイル
-        add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_public_styles' ) );
-    }
-
-    /**
-     * フロントエンドのスタイルを読み込み
-     */
-    public function enqueue_public_styles() {
-        wp_enqueue_style(
-            'blog-poster-public',
-            BLOG_POSTER_PLUGIN_URL . 'assets/css/public.css',
-            array(),
-            BLOG_POSTER_VERSION
-        );
     }
 
     /**
@@ -169,7 +154,7 @@ class Blog_Poster {
 
         dbDelta( $sql );
 
-        // ジョブ管理テーブル（v0.3.0-alpha: Markdown-Firstアーキテクチャに簡略化）
+        // ジョブ管理テーブル
         $jobs_table = $wpdb->prefix . 'blog_poster_jobs';
         $sql_jobs = "CREATE TABLE IF NOT EXISTS $jobs_table (
             id bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
@@ -178,10 +163,9 @@ class Blog_Poster {
             status varchar(20) DEFAULT 'pending',
             current_step int(11) DEFAULT 0,
             total_steps int(11) DEFAULT 3,
-            outline_md longtext,
-            content_md longtext,
-            final_markdown longtext,
-            final_html longtext,
+            outline longtext,
+            sections_content longtext,
+            final_content longtext,
             error_message text,
             created_at datetime DEFAULT CURRENT_TIMESTAMP,
             updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -204,8 +188,8 @@ class Blog_Poster {
             'openai_api_key' => '',
             'default_model' => array(
                 'gemini' => 'gemini-1.5-pro',
-                'claude' => 'claude-3-5-sonnet-20241022', // v0.3.0-alpha: デフォルト推奨
-                'openai' => 'gpt-4o' // v0.3.0-alpha: gpt-5.2の不安定性を回避
+                'claude' => 'claude-3-5-sonnet-20241022',
+                'openai' => 'gpt-4o'
             ),
             'temperature' => 0.7,
             'max_tokens' => 2000,
@@ -245,45 +229,3 @@ function blog_poster_init() {
 
 // プラグインを起動
 blog_poster_init();
-
-// ★ TEMPORARY: Force DB Schema Update
-add_action( 'admin_init', function() {
-    global $wpdb;
-    $table_name = $wpdb->prefix . 'blog_poster_jobs';
-
-    $col = $wpdb->get_results( "SHOW COLUMNS FROM $table_name LIKE 'section_index'" );
-    if ( empty( $col ) ) {
-        $wpdb->query( "ALTER TABLE $table_name ADD COLUMN section_index int(9) DEFAULT 0" );
-        error_log( 'Blog Poster: Added section_index column' );
-    }
-
-    $col = $wpdb->get_results( "SHOW COLUMNS FROM $table_name LIKE 'sections_total'" );
-    if ( empty( $col ) ) {
-        $wpdb->query( "ALTER TABLE $table_name ADD COLUMN sections_total int(9) DEFAULT 0" );
-        error_log( 'Blog Poster: Added sections_total column' );
-    }
-
-    $col = $wpdb->get_results( "SHOW COLUMNS FROM $table_name LIKE 'previous_summary'" );
-    if ( empty( $col ) ) {
-        $wpdb->query( "ALTER TABLE $table_name ADD COLUMN previous_summary longtext DEFAULT NULL" );
-        error_log( 'Blog Poster: Added previous_summary column' );
-    }
-
-    $col = $wpdb->get_results( "SHOW COLUMNS FROM $table_name LIKE 'current_step'" );
-    if ( empty( $col ) ) {
-        $wpdb->query( "ALTER TABLE $table_name ADD COLUMN current_step varchar(50) DEFAULT 'init'" );
-        error_log( 'Blog Poster: Added current_step column' );
-    }
-
-    $col = $wpdb->get_results( "SHOW COLUMNS FROM $table_name LIKE 'subsection_index'" );
-    if ( empty( $col ) ) {
-        $wpdb->query( "ALTER TABLE $table_name ADD COLUMN subsection_index int(9) DEFAULT 0" );
-        error_log( 'Blog Poster: Added subsection_index column' );
-    }
-
-    $col = $wpdb->get_results( "SHOW COLUMNS FROM $table_name LIKE 'subsections_total'" );
-    if ( empty( $col ) ) {
-        $wpdb->query( "ALTER TABLE $table_name ADD COLUMN subsections_total int(9) DEFAULT 0" );
-        error_log( 'Blog Poster: Added subsections_total column' );
-    }
-} );

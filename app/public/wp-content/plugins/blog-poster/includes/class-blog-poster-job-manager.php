@@ -43,7 +43,7 @@ class Blog_Poster_Job_Manager {
 	}
 
 	/**
-	 * テーブルの存在を確認し、なければ作成
+	 * テーブルの存在を確認し、なければ作成、あれば更新
 	 */
 	private function ensure_table_exists() {
 		global $wpdb;
@@ -53,11 +53,14 @@ class Blog_Poster_Job_Manager {
 		if ( $table_exists !== $this->table_name ) {
 			error_log( 'Blog Poster: Jobs table does not exist. Creating...' );
 			$this->create_table();
+		} else {
+			// 既存テーブルがある場合はスキーマ更新を確認
+			$this->upgrade_table();
 		}
 	}
 
 	/**
-	 * ジョブテーブルを作成
+	 * ジョブテーブルを作成/更新
 	 */
 	private function create_table() {
 		global $wpdb;
@@ -72,6 +75,9 @@ class Blog_Poster_Job_Manager {
 			status varchar(20) DEFAULT 'pending',
 			current_step int(11) DEFAULT 0,
 			total_steps int(11) DEFAULT 3,
+			current_section_index int(11) DEFAULT 0,
+			total_sections int(11) DEFAULT 0,
+			previous_context text,
 			outline_md longtext,
 			content_md longtext,
 			final_markdown longtext,
@@ -86,7 +92,15 @@ class Blog_Poster_Job_Manager {
 
 		dbDelta( $sql );
 
-		error_log( 'Blog Poster: Jobs table created.' );
+		error_log( 'Blog Poster: Jobs table schema updated.' );
+	}
+
+	/**
+	 * テーブルスキーマを更新
+	 */
+	private function upgrade_table() {
+		// create_tableと同じ処理だが、カラム追加のために呼び出す
+		$this->create_table();
 	}
 
 	/**
@@ -105,6 +119,9 @@ class Blog_Poster_Job_Manager {
 				'topic'                    => $topic,
 				'additional_instructions'  => $additional_instructions,
 				'status'                   => 'pending',
+				'current_section_index'    => 0,
+				'total_sections'           => 0,
+				'previous_context'         => '',
 			)
 		);
 
@@ -198,32 +215,50 @@ class Blog_Poster_Job_Manager {
 		);
 
 		try {
+			error_log( 'Blog Poster: Starting Markdown outline flow (claude default).' );
 			$additional_instructions = $job['additional_instructions'] ?? '';
 
-			$outline_md  = null;
-			$last_error  = '';
-			$max_attempt = 2;
+			$outline_result = null;
+			$last_error     = '';
+			$max_attempt    = 2;
 
 			for ( $attempt = 0; $attempt < $max_attempt; $attempt++ ) {
-				$outline_md = $this->generator->generate_outline_markdown( $job['topic'], $additional_instructions );
+				$outline_result = $this->generator->generate_outline_markdown( $job['topic'], $additional_instructions );
 
-				if ( ! is_wp_error( $outline_md ) ) {
+				if ( ! is_wp_error( $outline_result ) ) {
 					break;
 				}
 
-				$last_error = $outline_md->get_error_message();
+				$last_error = $outline_result->get_error_message();
 				error_log( 'Blog Poster: Outline generation retry ' . ( $attempt + 1 ) . ' failed: ' . $last_error );
 			}
 
-			if ( is_wp_error( $outline_md ) || null === $outline_md ) {
+			if ( is_wp_error( $outline_result ) || null === $outline_result ) {
 				throw new Exception( $last_error ?: 'アウトライン生成に失敗しました。' );
 			}
+
+			if ( empty( $outline_result['success'] ) ) {
+				throw new Exception( 'アウトライン生成結果が不正です。' );
+			}
+
+			$outline_md = isset( $outline_result['outline_md'] ) ? $outline_result['outline_md'] : '';
+
+			if ( empty( $outline_md ) ) {
+				throw new Exception( 'アウトラインが空です。' );
+			}
+
+			// セクション数をカウントして初期化
+			$sections = isset( $outline_result['sections'] ) ? $outline_result['sections'] : array();
+			$total_sections = count( $sections );
 
 			$this->update_job(
 				$job_id,
 				array(
-					'outline_md'   => $outline_md,
-					'current_step' => 1,
+					'outline_md'      => $outline_md,
+					'current_step'    => 1,
+					'total_sections'  => $total_sections,
+					'current_section_index' => 0,
+					'previous_context' => '',
 				)
 			);
 
@@ -249,7 +284,7 @@ class Blog_Poster_Job_Manager {
 	}
 
 	/**
-	 * Step 2: 本文生成 (Markdown形式)
+	 * Step 2: 本文生成 (ステップ実行による分割処理)
 	 *
 	 * @param int $job_id ジョブID
 	 * @return array 実行結果
@@ -264,6 +299,7 @@ class Blog_Poster_Job_Manager {
 			);
 		}
 
+		// 初回または継続のステータス更新
 		$this->update_job(
 			$job_id,
 			array(
@@ -274,51 +310,99 @@ class Blog_Poster_Job_Manager {
 
 		try {
 			$outline_md = $job['outline_md'] ?? '';
-			$topic   = $job['topic'];
 			$additional_instructions = $job['additional_instructions'] ?? '';
+			$current_section_index = intval( $job['current_section_index'] ?? 0 );
+			$previous_context = $job['previous_context'] ?? '';
+			$current_content_md = $job['content_md'] ?? '';
 
 			if ( empty( $outline_md ) ) {
 				throw new Exception( 'アウトラインが見つかりません。' );
 			}
 
-			// Markdownアウトラインから本文を生成
-			$content_md = '';
+			// Markdownアウトラインからセクション情報を取得
+			$parsed_outline = $this->generator->parse_markdown_frontmatter( $outline_md );
+			$sections       = isset( $parsed_outline['sections'] ) ? $parsed_outline['sections'] : array();
 
-			// セクション単位で本文を生成
-			// TODO: outline_mdをパースしてセクション情報を抽出
-			$sections_md = $this->extract_sections_from_outline_markdown( $outline_md );
+			if ( empty( $sections ) ) {
+				throw new Exception( 'アウトラインからセクションを抽出できませんでした。' );
+			}
 
-			$previous_summary = '';
+			// 全セクション数を更新（念のため）
+			$total_sections = count( $sections );
+			if ( $job['total_sections'] != $total_sections ) {
+				$this->update_job( $job_id, array( 'total_sections' => $total_sections ) );
+			}
 
-			foreach ( $sections_md as $section ) {
+			// すべて完了しているかチェック
+			if ( $current_section_index >= $total_sections ) {
+				return array(
+					'success'         => true,
+					'done'            => true,
+					'message'         => 'すべてのセクションの生成が完了しました',
+					'content_preview' => mb_substr( $current_content_md, 0, 500 ) . '...',
+					'total_sections'  => $total_sections,
+					'current_section' => $current_section_index,
+				);
+			}
+
+			// 今回生成するセクション
+			$section = $sections[ $current_section_index ];
+			error_log( "Blog Poster: Processing section {$current_section_index} / {$total_sections}: " . $section['title'] );
+
+			// セクション生成実行（リトライ処理付き）
+			$max_retries = 3;
+			$section_result = null;
+			$last_error_msg = '';
+
+			for ( $attempt = 1; $attempt <= $max_retries; $attempt++ ) {
 				$section_result = $this->generator->generate_section_markdown(
-					$section,
-					$topic,
-					$previous_summary,
+					$sections,
+					$current_section_index,
+					$previous_context,
 					$additional_instructions
 				);
 
-				if ( is_wp_error( $section_result ) ) {
-					error_log( 'Blog Poster: Section generation failed for ' . $section['title'] . ': ' . $section_result->get_error_message() );
-					continue;
+				if ( ! is_wp_error( $section_result ) ) {
+					break; // 成功したらループを抜ける
 				}
 
-				$content_md .= $section_result . "\n\n";
-				$previous_summary = $section_result;
+				$last_error_msg = $section_result->get_error_message();
+				error_log( "Blog Poster: Section generation retry {$attempt} failed: {$last_error_msg}" );
+
+				if ( $attempt < $max_retries ) {
+					sleep( 2 ); // 少し待ってからリトライ
+				}
 			}
 
+			if ( is_wp_error( $section_result ) ) {
+				throw new Exception( 'Section generation failed after ' . $max_retries . ' attempts: ' . $last_error_msg );
+			}
+
+			// 結果を結合
+			$new_content_md = $current_content_md . $section_result['section_md'] . "\n\n";
+			$new_context    = $section_result['context'];
+			$next_index     = $current_section_index + 1;
+
+			// DB更新
 			$this->update_job(
 				$job_id,
 				array(
-					'content_md'   => $content_md,
-					'current_step' => 2,
+					'content_md'            => $new_content_md,
+					'previous_context'      => $new_context,
+					'current_section_index' => $next_index,
 				)
 			);
 
+			// 完了判定
+			$is_done = ( $next_index >= $total_sections );
+
 			return array(
-				'success'         => true,
-				'message'         => '本文生成完了',
-				'content_preview' => mb_substr( $content_md, 0, 500 ) . '...',
+				'success'          => true,
+				'done'             => $is_done,
+				'message'          => $is_done ? '本文生成完了' : 'セクション生成完了',
+				'total_sections'   => $total_sections,
+				'current_section'  => $next_index,
+				'content_preview'  => mb_substr( $new_content_md, 0, 100 ) . '...',
 			);
 
 		} catch ( Exception $e ) {
@@ -383,6 +467,13 @@ class Blog_Poster_Job_Manager {
 				throw new Exception( $final_html->get_error_message() );
 			}
 
+			// アウトラインからメタデータを抽出
+			$outline_meta = array();
+			if ( ! empty( $outline_md ) ) {
+				$parsed_outline = $this->generator->parse_markdown_frontmatter( $outline_md );
+				$outline_meta   = isset( $parsed_outline['meta'] ) ? $parsed_outline['meta'] : array();
+			}
+
 			$this->update_job(
 				$job_id,
 				array(
@@ -393,19 +484,16 @@ class Blog_Poster_Job_Manager {
 				)
 			);
 
-			// アウトラインからメタデータを抽出
-			$outline_metadata = $this->extract_metadata_from_outline_markdown( $outline_md );
-
 			return array(
 				'success'          => true,
 				'message'          => '記事生成完了',
-				'title'            => $outline_metadata['title'] ?? 'Untitled',
-				'slug'             => $outline_metadata['slug'] ?? '',
-				'meta_description' => $outline_metadata['meta_description'] ?? '',
-				'excerpt'          => $outline_metadata['excerpt'] ?? '',
+				'title'            => $outline_meta['title'] ?? 'Untitled',
+				'slug'             => $outline_meta['slug'] ?? '',
+				'meta_description' => $outline_meta['meta_description'] ?? '',
+				'excerpt'          => $outline_meta['excerpt'] ?? '',
 				'markdown'         => $final_markdown,
 				'html'             => $final_html,
-				'keywords'         => $outline_metadata['keywords'] ?? array(),
+				'keywords'         => $outline_meta['keywords'] ?? array(),
 			);
 
 		} catch ( Exception $e ) {
