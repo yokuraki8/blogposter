@@ -377,22 +377,32 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
 
 出力はMarkdown形式のみ。説明文は不要です。";
 
+        // デバッグ: プロンプト先頭500文字をログ出力
+        error_log( 'Blog Poster: Step2 prompt (first 500 chars): ' . substr( $prompt, 0, 500 ) );
+        error_log( 'Blog Poster: Step2 section titles: ' . print_r( $section_titles, true ) );
+
         try {
             $response = $client->generate_text( $prompt, array( 'max_tokens' => 8000 ) );
 
             if ( is_wp_error( $response ) ) {
+                error_log( 'Blog Poster: Step2 WP_Error: ' . $response->get_error_message() );
                 return $response;
             }
+
+            // デバッグ: レスポンス全体をログ出力
+            error_log( 'Blog Poster: Step2 raw response: ' . print_r( $response, true ) );
 
             $outline_md = '';
             if ( isset( $response['data'] ) && is_string( $response['data'] ) ) {
                 $outline_md = $response['data'];
+                error_log( 'Blog Poster: Step2 got data field, length: ' . strlen( $outline_md ) );
             } elseif ( isset( $response['content'] ) && is_string( $response['content'] ) ) {
                 $outline_md = $response['content'];
+                error_log( 'Blog Poster: Step2 got content field, length: ' . strlen( $outline_md ) );
             }
 
             if ( empty( $outline_md ) ) {
-                error_log( 'Blog Poster: Step2 response empty' );
+                error_log( 'Blog Poster: Step2 response empty. Response keys: ' . implode( ', ', array_keys( $response ) ) );
                 return new WP_Error( 'step2_empty', 'アウトラインの生成に失敗しました。' );
             }
 
