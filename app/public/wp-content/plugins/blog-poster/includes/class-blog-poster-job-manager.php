@@ -272,6 +272,7 @@ class Blog_Poster_Job_Manager {
 				'success' => true,
 				'message' => 'アウトライン生成完了',
 				'outline' => $outline_md,
+				'total_sections' => $total_sections,
 			);
 
 		} catch ( Exception $e ) {

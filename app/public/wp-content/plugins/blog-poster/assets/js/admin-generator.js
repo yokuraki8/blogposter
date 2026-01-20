@@ -18,6 +18,7 @@ jQuery(document).ready(function($) {
     let currentJobId = null;
     let currentRequest = null;
     let isCancelled = false;
+    let totalSectionsForProgress = 0;
 
     // 記事生成フォーム送信
     $('#blog-poster-generate-form').on('submit', function(e) {
@@ -124,7 +125,11 @@ jQuery(document).ready(function($) {
         }
 
         const step = steps[stepIndex];
-        const progress = Math.floor(((stepIndex) / steps.length) * 100);
+        let progress = Math.floor(((stepIndex) / steps.length) * 100);
+        if (step === 'review' && totalSectionsForProgress > 0) {
+            const baseUnits = totalSectionsForProgress + 2;
+            progress = Math.floor(((totalSectionsForProgress + 1) / baseUnits) * 100);
+        }
         updateProgress(progress, stepLabels[step]);
 
         console.log('Processing step:', step, 'Job ID:', currentJobId);
@@ -142,6 +147,9 @@ jQuery(document).ready(function($) {
             success: function(response) {
                 console.log('Step ' + step + ' response:', response);
                 if (response.success) {
+                    if (step === 'outline' && response.data.total_sections) {
+                        totalSectionsForProgress = response.data.total_sections;
+                    }
                     if (step === 'content') {
                         const totalSections = response.data.total_sections || 0;
                         const currentSection = response.data.current_section || 0;
@@ -149,10 +157,14 @@ jQuery(document).ready(function($) {
                         const currentSubsection = response.data.current_subsection || 0;
                         let sectionMessage = stepLabels[step];
                         if (totalSections > 0) {
+                            totalSectionsForProgress = totalSections;
                             sectionMessage = '本文を生成中... (' + currentSection + '/' + totalSections + ')';
                             if (totalSubsections > 0) {
                                 sectionMessage += ' / H3 ' + currentSubsection + '/' + totalSubsections;
                             }
+                            const baseUnits = totalSections + 2;
+                            const completedUnits = Math.min(totalSections + 1, 1 + currentSection);
+                            progress = Math.floor((completedUnits / baseUnits) * 100);
                         }
                         if (!response.data.done) {
                             updateProgress(progress, sectionMessage);
@@ -162,7 +174,11 @@ jQuery(document).ready(function($) {
                             return;
                         }
                     }
-                    const nextProgress = Math.floor(((stepIndex + 1) / steps.length) * 100);
+                    let nextProgress = Math.floor(((stepIndex + 1) / steps.length) * 100);
+                    if (step === 'content' && totalSectionsForProgress > 0) {
+                        const baseUnits = totalSectionsForProgress + 2;
+                        nextProgress = Math.floor(((totalSectionsForProgress + 1) / baseUnits) * 100);
+                    }
                     updateProgress(nextProgress, stepLabels[step] + ' 完了');
 
                     // 最終ステップなら結果を表示
