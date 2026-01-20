@@ -118,7 +118,7 @@ class Blog_Poster_Generator {
         $final_md = $this->postprocess_markdown( $final_md );
 
         // 5. HTML変換
-        $html = $this->markdown_to_html( $final_md );
+        $html = Blog_Poster_Admin::markdown_to_html( $final_md );
 
         error_log( 'Blog Poster: Article generation completed successfully' );
 
@@ -227,6 +227,7 @@ class Blog_Poster_Generator {
             }
 
             // セクション内でコードブロックが閉じていることを保証
+            $section_md = $this->validate_section_code_blocks( $section_md );
             $section_md = $this->postprocess_markdown( $section_md );
 
             // 次のセクションのためのコンテキスト要約を生成
@@ -551,15 +552,40 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
     }
 
     /**
+     * セクションのコードブロック整合性を検証・修正
+     *
+     * @param string $markdown セクションのMarkdown
+     * @return string 修正後のMarkdown
+     */
+    private function validate_section_code_blocks( $markdown ) {
+        // コードブロックの開始・終了をカウント
+        $open_count = preg_match_all( '/```/m', $markdown, $matches );
+
+        // 奇数個の場合、最後に閉じタグを追加
+        if ( $open_count % 2 !== 0 ) {
+            error_log( 'Blog Poster: Unclosed code block detected in section, auto-fixing' );
+            $markdown .= "\n```\n";
+        }
+
+        // セクション末尾のコードブロックチェック
+        // 末尾が```で終わる場合、次のセクションとの干渉を防ぐため改行を追加
+        if ( preg_match( '/```\s*$/m', $markdown ) ) {
+            $markdown .= "\n";
+        }
+
+        return $markdown;
+    }
+
+    /**
      * Markdownの最小限の修正
      *
      * @param string $markdown Markdownテキスト
      * @return string 修正後のMarkdown
      */
     public function postprocess_markdown( $markdown ) {
-        // 1. コードブロック開始/終了の一致確認
-        $open_count = preg_match_all( '/^```\w*/m', $markdown, $open_matches );
-        $close_count = preg_match_all( '/^```\s*$/m', $markdown, $close_matches );
+        // 1. コードブロック開始/終了の一致確認（柔軟な正規表現）
+        $open_count = preg_match_all( '/```[\w]*/m', $markdown, $open_matches );
+        $close_count = preg_match_all( '/```\s*$|```\s*\n/m', $markdown, $close_matches );
 
         error_log( "Blog Poster: Code block check - Open: {$open_count}, Close: {$close_count}" );
 
@@ -567,7 +593,7 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
         if ( $open_count > $close_count ) {
             $diff = $open_count - $close_count;
             for ( $i = 0; $i < $diff; $i++ ) {
-                $markdown .= "\n```";
+                $markdown .= "\n```\n";
             }
             error_log( "Blog Poster: Added {$diff} closing code block(s)" );
         }
@@ -581,46 +607,6 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
         return $markdown;
     }
 
-    /**
-     * MarkdownをHTMLに変換
-     *
-     * @param string $markdown Markdownテキスト
-     * @return string HTML
-     */
-    public function markdown_to_html( $markdown ) {
-        if ( ! class_exists( 'Parsedown' ) ) {
-            require_once plugin_dir_path( __FILE__ ) . 'Parsedown.php';
-        }
-
-        $parsedown = new Parsedown();
-        $parsedown->setSafeMode( false );
-        $html = $parsedown->text( $markdown );
-
-        // コードブロックのシンタックスハイライトクラス追加
-        $html = $this->add_code_block_classes( $html );
-
-        return $html;
-    }
-
-    /**
-     * コードブロックにクラスを追加
-     *
-     * @param string $html HTML
-     * @return string 修正後のHTML
-     */
-    private function add_code_block_classes( $html ) {
-        // <pre><code class="language-php"> 形式に変換
-        $html = preg_replace_callback(
-            '/<pre><code class="([^"]+)">/',
-            function( $matches ) {
-                $lang = $matches[1];
-                return '<pre><code class="language-' . esc_attr( $lang ) . ' hljs">';
-            },
-            $html
-        );
-
-        return $html;
-    }
 
     /**
      * 記事の検証

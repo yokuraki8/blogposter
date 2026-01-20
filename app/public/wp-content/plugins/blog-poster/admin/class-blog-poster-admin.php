@@ -518,7 +518,7 @@ class Blog_Poster_Admin {
         }
 
         // マークダウンをHTMLに変換
-        $html_content = $this->markdown_to_html( $content );
+        $html_content = self::markdown_to_html( $content );
 
         // 投稿を作成
         $post_data = array(
@@ -579,7 +579,7 @@ class Blog_Poster_Admin {
      * @param string $markdown マークダウンテキスト
      * @return string HTML
      */
-    private function markdown_to_html( $markdown ) {
+    public static function markdown_to_html( $markdown ) {
         // Parsedownライブラリを読み込み
         if ( ! class_exists( 'Parsedown' ) ) {
             require_once BLOG_POSTER_PLUGIN_DIR . 'includes/Parsedown.php';

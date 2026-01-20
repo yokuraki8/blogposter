@@ -461,7 +461,7 @@ class Blog_Poster_Job_Manager {
 			}
 
 			// MarkdownからHTMLへ変換
-			$final_html = $this->generator->markdown_to_html( $final_markdown );
+			$final_html = Blog_Poster_Admin::markdown_to_html( $final_markdown );
 
 			if ( is_wp_error( $final_html ) ) {
 				throw new Exception( $final_html->get_error_message() );
