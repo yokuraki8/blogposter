@@ -978,6 +978,14 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
             return false;
         }
 
+        if ( preg_match( '/^#{1,6}\s+/', $last_line ) ) {
+            return false;
+        }
+
+        if ( preg_match( '/^(\d+[\.)]\s+|[-*+]\s+)/', $last_line ) ) {
+            return false;
+        }
+
         if ( preg_match( '/[`>]$/', $last_line ) ) {
             return false;
         }
@@ -990,6 +998,7 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
             return false;
         }
 
+        error_log( 'Blog Poster: Truncation suspected. Last line: ' . $last_line );
         return true;
     }
 

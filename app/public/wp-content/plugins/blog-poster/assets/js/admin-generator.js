@@ -19,6 +19,8 @@ jQuery(document).ready(function($) {
     let currentRequest = null;
     let isCancelled = false;
     let totalSectionsForProgress = 0;
+    let lastProgressPercent = 0;
+    let lastContentSection = 0;
 
     function computeProgressForStep(step, currentSection, totalSections) {
         if (!totalSections || totalSections <= 0) {
@@ -62,6 +64,8 @@ jQuery(document).ready(function($) {
         $('#error-message').hide();
         $('#cancel-button').show().prop('disabled', false);
         isCancelled = false;
+        lastProgressPercent = 0;
+        lastContentSection = 0;
         updateProgress(0, '準備中...');
 
         // ジョブ作成
@@ -146,6 +150,12 @@ jQuery(document).ready(function($) {
         if (progress === null) {
             progress = Math.floor(((stepIndex) / steps.length) * 100);
         }
+        if (step === 'content' && totalSectionsForProgress > 0) {
+            const computed = computeProgressForStep('content', lastContentSection, totalSectionsForProgress);
+            if (computed !== null) {
+                progress = computed;
+            }
+        }
         updateProgress(progress, stepLabels[step]);
 
         console.log('Processing step:', step, 'Job ID:', currentJobId);
@@ -174,6 +184,7 @@ jQuery(document).ready(function($) {
                         let sectionMessage = stepLabels[step];
                         if (totalSections > 0) {
                             totalSectionsForProgress = totalSections;
+                            lastContentSection = currentSection;
                             sectionMessage = '本文を生成中... (' + currentSection + '/' + totalSections + ')';
                             if (totalSubsections > 0) {
                                 sectionMessage += ' / H3 ' + currentSubsection + '/' + totalSubsections;
@@ -235,8 +246,11 @@ jQuery(document).ready(function($) {
      * プログレスバー更新
      */
     function updateProgress(percent, message) {
-        $('#progress-bar').css('width', percent + '%').attr('aria-valuenow', percent);
-        $('#progress-bar').text(Math.floor(percent) + '%');
+        const clamped = Math.min(100, Math.max(0, percent));
+        const safePercent = Math.max(lastProgressPercent, clamped);
+        lastProgressPercent = safePercent;
+        $('#progress-bar').css('width', safePercent + '%').attr('aria-valuenow', safePercent);
+        $('#progress-bar').text(Math.floor(safePercent) + '%');
         $('#progress-message').text(message);
     }
 
