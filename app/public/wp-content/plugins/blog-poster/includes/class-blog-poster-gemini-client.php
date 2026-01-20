@@ -31,7 +31,12 @@ class Blog_Poster_Gemini_Client extends Blog_Poster_AI_Client {
             return $this->error_response( __( 'Gemini APIキーが設定されていません。', 'blog-poster' ) );
         }
 
-        $url = self::API_BASE_URL . $this->model . ':generateContent?key=' . $this->api_key;
+        $model = $this->model;
+        if ( is_array( $response_format ) && ! empty( $response_format['model'] ) ) {
+            $model = $response_format['model'];
+        }
+
+        $url = self::API_BASE_URL . $model . ':generateContent?key=' . $this->api_key;
 
         $adjusted_prompt = $this->apply_tone_settings( $prompt );
 

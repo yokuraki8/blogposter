@@ -220,10 +220,16 @@ class Blog_Poster_Job_Manager {
 
 			$outline_result = null;
 			$last_error     = '';
-			$max_attempt    = 2;
+			$max_attempt    = 5;
+			$used_fallback  = false;
 
 			for ( $attempt = 0; $attempt < $max_attempt; $attempt++ ) {
-				$outline_result = $this->generator->generate_outline_markdown( $job['topic'], $additional_instructions );
+				if ( $attempt >= 2 ) {
+					$outline_result = $this->generator->generate_outline_markdown( $job['topic'], $additional_instructions, 'gemini-2.5-flash' );
+					$used_fallback = true;
+				} else {
+					$outline_result = $this->generator->generate_outline_markdown( $job['topic'], $additional_instructions );
+				}
 
 				if ( ! is_wp_error( $outline_result ) ) {
 					break;
@@ -448,6 +454,7 @@ class Blog_Poster_Job_Manager {
 			$content_md = $job['content_md'] ?? '';
 			$topic      = $job['topic'];
 			$outline_md = $job['outline_md'] ?? '';
+			$additional_instructions = $job['additional_instructions'] ?? '';
 
 			if ( empty( $content_md ) ) {
 				throw new Exception( '本文が見つかりません。' );
@@ -455,6 +462,23 @@ class Blog_Poster_Job_Manager {
 
 			// Markdown後処理
 			$final_markdown = $this->generator->postprocess_markdown( $content_md );
+			$final_markdown = $this->generator->normalize_code_blocks_after_generation( $final_markdown );
+
+			// 末尾切れの保険処理（最終セクションを再生成）
+			if ( $this->generator->is_truncated_markdown( $final_markdown ) ) {
+				error_log( 'Blog Poster: Detected truncated markdown. Regenerating last section.' );
+				$repaired_content = $this->regenerate_last_section_markdown( $content_md, $outline_md, $additional_instructions );
+				if ( is_wp_error( $repaired_content ) ) {
+					throw new Exception( $repaired_content->get_error_message() );
+				}
+				$content_md = $repaired_content;
+				$final_markdown = $this->generator->postprocess_markdown( $content_md );
+				$final_markdown = $this->generator->normalize_code_blocks_after_generation( $final_markdown );
+
+				if ( $this->generator->is_truncated_markdown( $final_markdown ) ) {
+					throw new Exception( '生成結果が途中で終了しました。再試行してください。' );
+				}
+			}
 
 			if ( is_wp_error( $final_markdown ) ) {
 				throw new Exception( $final_markdown->get_error_message() );
@@ -570,5 +594,83 @@ class Blog_Poster_Job_Manager {
 		}
 
 		return $metadata;
+	}
+
+	/**
+	 * 内容MarkdownをH2見出しで分割
+	 *
+	 * @param string $content_md Markdown本文
+	 * @return array セクション配列
+	 */
+	private function split_content_markdown_sections( $content_md ) {
+		$parts = preg_split( '/^(## .+)$/m', $content_md, -1, PREG_SPLIT_DELIM_CAPTURE | PREG_SPLIT_NO_EMPTY );
+		$sections = array();
+		$current = '';
+
+		foreach ( $parts as $part ) {
+			if ( preg_match( '/^## /', $part ) ) {
+				if ( '' !== trim( $current ) ) {
+					$sections[] = trim( $current );
+				}
+				$current = $part;
+				continue;
+			}
+
+			$current .= "\n" . $part;
+		}
+
+		if ( '' !== trim( $current ) ) {
+			$sections[] = trim( $current );
+		}
+
+		if ( empty( $sections ) ) {
+			return array( trim( $content_md ) );
+		}
+
+		return $sections;
+	}
+
+	/**
+	 * 末尾切れ検出時に最終セクションを再生成
+	 *
+	 * @param string $content_md Markdown本文
+	 * @param string $outline_md Markdownアウトライン
+	 * @param string $additional_instructions 追加指示
+	 * @return string|WP_Error 修正後Markdown本文
+	 */
+	private function regenerate_last_section_markdown( $content_md, $outline_md, $additional_instructions ) {
+		$parsed_outline = $this->generator->parse_markdown_frontmatter( $outline_md );
+		$sections = isset( $parsed_outline['sections'] ) ? $parsed_outline['sections'] : array();
+
+		if ( empty( $sections ) ) {
+			return new WP_Error( 'outline_missing', 'アウトラインからセクションを抽出できませんでした。' );
+		}
+
+		$content_sections = $this->split_content_markdown_sections( $content_md );
+		if ( empty( $content_sections ) ) {
+			return new WP_Error( 'content_missing', '本文を分割できませんでした。' );
+		}
+
+		$last_index = count( $sections ) - 1;
+		$previous_context = '';
+
+		if ( count( $content_sections ) >= 2 ) {
+			$previous_context = $this->generator->extract_section_context( $content_sections[ count( $content_sections ) - 2 ] );
+		}
+
+		$section_result = $this->generator->generate_section_markdown(
+			$sections,
+			$last_index,
+			$previous_context,
+			$additional_instructions
+		);
+
+		if ( is_wp_error( $section_result ) ) {
+			return $section_result;
+		}
+
+		$content_sections[ count( $content_sections ) - 1 ] = $section_result['section_md'];
+
+		return rtrim( implode( "\n\n", $content_sections ) ) . "\n";
 	}
 }

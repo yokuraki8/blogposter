@@ -29,15 +29,13 @@ $openai_models = array(
     'gpt-4',
 );
 $gemini_models = array(
-    'gemini-2.5-flash',
     'gemini-2.5-pro',
+    'gemini-2.5-flash',
+    'gemini-2.5-flash-lite',
     'gemini-2.0-flash',
     'gemini-2.0-flash-lite',
-    'gemini-flash-latest',
-    'gemini-flash-lite-latest',
-    'gemini-pro-latest',
-    'gemini-3-flash-preview',
-    'gemini-3-pro-preview',
+    'gemini-3-pro',
+    'gemini-3-flash',
 );
 $claude_models = array(
     'claude-sonnet-4-5-20250929',  // Claude Sonnet 4.5
@@ -126,7 +124,7 @@ $claude_models = array(
                         <td>
                             <select name="blog_poster_settings[default_model][gemini]" id="gemini_model">
                                 <?php foreach ( $gemini_models as $model ) : ?>
-                                    <option value="<?php echo esc_attr( $model ); ?>" <?php selected( isset( $default_models['gemini'] ) ? $default_models['gemini'] : 'gemini-2.5-flash', $model ); ?>>
+                                    <option value="<?php echo esc_attr( $model ); ?>" <?php selected( isset( $default_models['gemini'] ) ? $default_models['gemini'] : 'gemini-2.5-pro', $model ); ?>>
                                         <?php echo esc_html( $model ); ?>
                                     </option>
                                 <?php endforeach; ?>
@@ -138,14 +136,13 @@ $claude_models = array(
                     </tr>
                     <tr>
                         <th scope="row">
-                            <label><?php _e( 'モデル一覧取得', 'blog-poster' ); ?></label>
+                            <label><?php _e( 'APIキー確認', 'blog-poster' ); ?></label>
                         </th>
                         <td>
-                            <button type="button" class="button" id="gemini-models-fetch">
-                                <?php _e( 'Geminiモデル一覧を取得', 'blog-poster' ); ?>
+                            <button type="button" class="button" id="gemini-key-check">
+                                <?php _e( 'APIキーを確認', 'blog-poster' ); ?>
                             </button>
-                            <p class="description" id="gemini-models-status"></p>
-                            <textarea id="gemini-models-output" class="large-text" rows="6" readonly></textarea>
+                            <span id="gemini-key-check-status" style="margin-left:8px;"></span>
                         </td>
                     </tr>
                 </table>
@@ -438,37 +435,6 @@ $claude_models = array(
         <?php submit_button( __( '設定を保存', 'blog-poster' ) ); ?>
     </form>
 </div>
-
-<script>
-    jQuery(function($) {
-        $('#gemini-models-fetch').on('click', function() {
-            const $btn = $(this);
-            const $status = $('#gemini-models-status');
-            const $output = $('#gemini-models-output');
-
-            $btn.prop('disabled', true);
-            $status.text('<?php echo esc_js( __( '取得中...', 'blog-poster' ) ); ?>');
-            $output.val('');
-
-            $.post(blogPosterAdmin.ajaxUrl, {
-                action: 'blog_poster_list_gemini_models',
-                nonce: blogPosterAdmin.nonce
-            }).done(function(response) {
-                if (response.success) {
-                    const models = response.data.models || [];
-                    $output.val(models.join("\n"));
-                    $status.text('<?php echo esc_js( __( '取得完了', 'blog-poster' ) ); ?>');
-                } else {
-                    $status.text(response.data && response.data.message ? response.data.message : '取得に失敗しました');
-                }
-            }).fail(function() {
-                $status.text('<?php echo esc_js( __( '通信エラーが発生しました', 'blog-poster' ) ); ?>');
-            }).always(function() {
-                $btn.prop('disabled', false);
-            });
-        });
-    });
-</script>
 
 <script>
 jQuery(document).ready(function($) {

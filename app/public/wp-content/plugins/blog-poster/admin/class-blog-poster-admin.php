@@ -619,6 +619,15 @@ class Blog_Poster_Admin {
             $line = $lines[ $i ];
             $trimmed = trim( $line );
 
+            // コードブロック終了を優先して検出
+            if ( $trimmed === '```' ) {
+                if ( $in_code_block ) {
+                    $in_code_block = false;
+                }
+                $fixed_lines[] = $line;
+                continue;
+            }
+
             // コードブロック開始を検出
             if ( preg_match( '/^```(\w*)/', $trimmed ) ) {
                 // すでにコードブロック内なら前のブロックを閉じる
@@ -627,18 +636,11 @@ class Blog_Poster_Admin {
                 }
                 $in_code_block = true;
                 $fixed_lines[] = $line;
+                continue;
             }
-            // コードブロック終了を検出
-            elseif ( trim( $line ) === '```' ) {
-                if ( $in_code_block ) {
-                    $in_code_block = false;
-                }
-                $fixed_lines[] = $line;
-            }
+
             // その他の行
-            else {
-                $fixed_lines[] = $line;
-            }
+            $fixed_lines[] = $line;
         }
 
         // 最後に開いたままのコードブロックがあれば閉じる
@@ -922,7 +924,7 @@ class Blog_Poster_Admin {
             case 'openai':
                 return 'gpt-4o-mini';
             case 'gemini':
-                return 'gemini-1.5-flash';
+                return 'gemini-2.5-pro';
             default:
                 return '';
         }

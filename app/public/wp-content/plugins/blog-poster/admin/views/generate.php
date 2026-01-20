@@ -225,7 +225,7 @@ $settings = get_option( 'blog_poster_settings', array() );
 }
 
 .result-content pre {
-    background: #282c34;
+    background: #CBCBCB;
     color: #abb2bf;
     padding: 15px;
     border-radius: 4px;

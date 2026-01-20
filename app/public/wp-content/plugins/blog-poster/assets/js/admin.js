@@ -57,6 +57,36 @@
                 $btn.prop('disabled', false).text('APIキーを確認');
             });
         });
+
+        // Gemini APIキー検証ボタン
+        $('#gemini-key-check').on('click', function() {
+            const $btn = $(this);
+            const $status = $('#gemini-key-check-status');
+            $btn.prop('disabled', true).text('確認中...');
+            $status.removeClass('success error').text('');
+
+            $.ajax({
+                url: blogPosterAdmin.ajaxUrl,
+                type: 'POST',
+                dataType: 'json',
+                data: {
+                    action: 'blog_poster_check_api_key',
+                    nonce: blogPosterAdmin.nonce,
+                    provider: 'gemini'
+                }
+            }).done(function(res) {
+                if (res.success) {
+                    $status.addClass('success').text(res.data.message);
+                } else {
+                    const msg = res.data && res.data.message ? res.data.message : '確認に失敗しました';
+                    $status.addClass('error').text(msg);
+                }
+            }).fail(function(xhr, status) {
+                $status.addClass('error').text('通信エラー: ' + status);
+            }).always(function() {
+                $btn.prop('disabled', false).text('APIキーを確認');
+            });
+        });
     });
 
 })(jQuery);

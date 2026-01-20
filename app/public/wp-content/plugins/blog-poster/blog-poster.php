@@ -98,6 +98,21 @@ class Blog_Poster {
 
         // 国際化対応
         add_action( 'plugins_loaded', array( $this, 'load_textdomain' ) );
+
+        // フロントエンドのスタイル
+        add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_public_styles' ) );
+    }
+
+    /**
+     * フロントエンドのスタイルを読み込み
+     */
+    public function enqueue_public_styles() {
+        wp_enqueue_style(
+            'blog-poster-public',
+            BLOG_POSTER_PLUGIN_URL . 'assets/css/public.css',
+            array(),
+            BLOG_POSTER_VERSION
+        );
     }
 
     /**
@@ -187,7 +202,7 @@ class Blog_Poster {
             'claude_api_key' => '',
             'openai_api_key' => '',
             'default_model' => array(
-                'gemini' => 'gemini-1.5-pro',
+                'gemini' => 'gemini-2.5-pro',
                 'claude' => 'claude-sonnet-4-5-20250929',
                 'openai' => 'gpt-4o'
             ),

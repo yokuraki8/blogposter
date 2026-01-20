@@ -35,7 +35,7 @@ class Blog_Poster_Generator {
         switch ( $provider ) {
             case 'gemini':
                 $api_key = isset( $settings['gemini_api_key'] ) ? $settings['gemini_api_key'] : '';
-                $model = isset( $settings['default_model']['gemini'] ) ? $settings['default_model']['gemini'] : 'gemini-3-flash';
+                $model = isset( $settings['default_model']['gemini'] ) ? $settings['default_model']['gemini'] : 'gemini-2.5-pro';
                 $client = new Blog_Poster_Gemini_Client( $api_key, $model, $settings );
                 break;
 
@@ -116,6 +116,7 @@ class Blog_Poster_Generator {
 
         // 4. 後処理
         $final_md = $this->postprocess_markdown( $final_md );
+        $final_md = $this->normalize_code_blocks_after_generation( $final_md );
 
         // 5. HTML変換
         $html = Blog_Poster_Admin::markdown_to_html( $final_md );
@@ -140,16 +141,21 @@ class Blog_Poster_Generator {
      * @param string $additional_instructions 追加指示
      * @return array|WP_Error ['success' => bool, 'outline_md' => string, 'meta' => array, 'sections' => array]
      */
-    public function generate_outline_markdown( $topic, $additional_instructions = '' ) {
+    public function generate_outline_markdown( $topic, $additional_instructions = '', $forced_model = '' ) {
         $client = $this->get_ai_client();
         if ( is_wp_error( $client ) ) {
             return $client;
         }
 
         $prompt = $this->build_outline_prompt( $topic, $additional_instructions );
+        $model_override = '';
+        $settings = get_option( 'blog_poster_settings', array() );
+        if ( isset( $settings['ai_provider'] ) && 'gemini' === $settings['ai_provider'] && ! empty( $forced_model ) ) {
+            $model_override = $forced_model;
+        }
 
         try {
-            $response = $client->generate_text( $prompt, array( 'max_tokens' => 4000 ) );
+            $response = $client->generate_text( $prompt, array( 'max_tokens' => 4000, 'model' => $model_override ) );
 
             if ( is_wp_error( $response ) ) {
                 return $response;
@@ -169,17 +175,24 @@ class Blog_Poster_Generator {
 
             // YAML frontmatterとセクション構造を解析
             $parsed = $this->parse_markdown_frontmatter( $outline_md );
+            $sections = isset( $parsed['sections'] ) ? $parsed['sections'] : array();
+            $section_count = count( $sections );
 
-            if ( empty( $parsed['sections'] ) ) {
+            if ( empty( $sections ) ) {
                 error_log( 'Blog Poster: No sections parsed from outline. Outline MD head: ' . substr( $outline_md, 0, 200 ) );
                 return new WP_Error( 'outline_no_sections', 'アウトラインからセクションを抽出できませんでした。' );
+            }
+
+            if ( $section_count < 5 || $section_count > 7 ) {
+                error_log( 'Blog Poster: Outline section count out of range: ' . $section_count );
+                return new WP_Error( 'outline_section_count', 'アウトラインのH2セクション数が不足しています。' );
             }
 
             return array(
                 'success' => true,
                 'outline_md' => $outline_md,
                 'meta' => $parsed['meta'],
-                'sections' => $parsed['sections'],
+                'sections' => $sections,
             );
 
         } catch ( Exception $e ) {
@@ -225,6 +238,9 @@ class Blog_Poster_Generator {
                 error_log( 'Blog Poster: Section response empty. Raw response: ' . print_r( $response, true ) );
                 return new WP_Error( 'section_empty', '本文が空です。' );
             }
+
+            // セクション見出しを強制
+            $section_md = $this->normalize_section_heading( $section_md, $section['title'] );
 
             // セクション内でコードブロックが閉じていることを保証
             $section_md = $this->validate_section_code_blocks( $section_md );
@@ -331,6 +347,30 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
 - 技術的に正確な情報のみ
 
 出力はMarkdown形式のみ。余計な説明不要。セクションタイトル(##)から開始してください。";
+    }
+
+    /**
+     * セクションのH2見出しをアウトラインに合わせて正規化
+     *
+     * @param string $section_md セクション本文
+     * @param string $section_title H2タイトル
+     * @return string
+     */
+    private function normalize_section_heading( $section_md, $section_title ) {
+        $section_md = ltrim( $section_md );
+        $expected_heading = "## {$section_title}";
+
+        if ( preg_match( '/^##\s+.+$/m', $section_md, $matches, PREG_OFFSET_CAPTURE ) ) {
+            $first_heading = trim( $matches[0][0] );
+            if ( $first_heading === $expected_heading ) {
+                return $section_md;
+            }
+            // 最初のH2を置換
+            $section_md = preg_replace( '/^##\s+.+$/m', $expected_heading, $section_md, 1 );
+            return $section_md;
+        }
+
+        return $expected_heading . "\n\n" . $section_md;
     }
 
     /**
@@ -605,6 +645,113 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
         $markdown = rtrim( $markdown ) . "\n";
 
         return $markdown;
+    }
+
+    /**
+     * 生成後の全文パースでコードブロックの混入を修正
+     *
+     * @param string $markdown Markdownテキスト
+     * @return string 修正後のMarkdown
+     */
+    public function normalize_code_blocks_after_generation( $markdown ) {
+        $converted = 0;
+
+        $markdown = preg_replace_callback(
+            '/```([^\n]*)\R(.*?)\R```/s',
+            function( $matches ) use ( &$converted ) {
+                $language = trim( $matches[1] );
+                $content  = $matches[2];
+
+                if ( '' !== $language ) {
+                    return $matches[0];
+                }
+
+                if ( '' === trim( $content ) ) {
+                    $converted++;
+                    return '';
+                }
+
+                if ( $this->is_prose_like_code_block( $content ) ) {
+                    $converted++;
+                    return rtrim( $content ) . "\n";
+                }
+
+                return $matches[0];
+            },
+            $markdown
+        );
+
+        if ( $converted > 0 ) {
+            error_log( "Blog Poster: Converted {$converted} prose-like code block(s) to text" );
+        }
+
+        return $markdown;
+    }
+
+    /**
+     * 生成結果が途中で切れている可能性を判定
+     *
+     * @param string $markdown Markdownテキスト
+     * @return bool 途中切れの疑いがある場合true
+     */
+    public function is_truncated_markdown( $markdown ) {
+        $markdown = trim( $markdown );
+        if ( '' === $markdown ) {
+            return false;
+        }
+
+        $lines = preg_split( '/\R/', $markdown );
+        $last_line = '';
+        for ( $i = count( $lines ) - 1; $i >= 0; $i-- ) {
+            $candidate = trim( $lines[ $i ] );
+            if ( '' !== $candidate ) {
+                $last_line = $candidate;
+                break;
+            }
+        }
+
+        if ( '' === $last_line ) {
+            return false;
+        }
+
+        if ( preg_match( '/[`>]$/', $last_line ) ) {
+            return false;
+        }
+
+        if ( preg_match( '/[。．.!?！？…"]$/u', $last_line ) ) {
+            return false;
+        }
+
+        if ( mb_strlen( $last_line ) < 20 ) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * 本文として扱うべきコードブロックか判定
+     *
+     * @param string $content コードブロック内容
+     * @return bool
+     */
+    private function is_prose_like_code_block( $content ) {
+        $has_japanese = preg_match( '/[\x{3040}-\x{30FF}\x{4E00}-\x{9FFF}]/u', $content );
+        $has_sentence = preg_match( '/[。！？]/u', $content ) || preg_match( '/(です|ます|こと|ため|例えば|なお)/u', $content );
+        $has_heading  = preg_match( '/^\s*#{1,6}\s+/m', $content );
+        $has_list     = preg_match( '/^\s*[-*+]\s+/m', $content );
+
+        $content_for_code = preg_replace( '/\{\{[^}]+\}\}/', '', $content );
+        $has_code_tokens = preg_match(
+            '/[{};]|=>|\b(function|const|let|var|class|import|export|return|public|private|protected|if|else|for|while|switch|case|def|echo|print|console|new)\b/',
+            $content_for_code
+        );
+        $has_code_indent = preg_match( '/^\s{4,}\S/m', $content );
+
+        $has_prose_signal = $has_japanese || $has_sentence || $has_heading || $has_list;
+        $has_code_signal  = $has_code_tokens || $has_code_indent;
+
+        return $has_prose_signal && ! $has_code_signal;
     }
 
 
