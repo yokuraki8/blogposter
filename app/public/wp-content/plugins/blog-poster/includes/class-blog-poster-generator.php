@@ -173,6 +173,9 @@ class Blog_Poster_Generator {
                 return new WP_Error( 'outline_empty', 'アウトラインが空です。' );
             }
 
+            // 生成されたアウトラインをログに出力（デバッグ用）
+            error_log( 'Blog Poster: Generated outline (first 500 chars): ' . substr( $outline_md, 0, 500 ) );
+
             // YAML frontmatterとセクション構造を解析
             $parsed = $this->parse_markdown_frontmatter( $outline_md );
             $sections = isset( $parsed['sections'] ) ? $parsed['sections'] : array();
@@ -185,7 +188,8 @@ class Blog_Poster_Generator {
 
             if ( $section_count < 5 || $section_count > 7 ) {
                 error_log( 'Blog Poster: Outline section count out of range: ' . $section_count );
-                return new WP_Error( 'outline_section_count', 'アウトラインのH2セクション数が不足しています。' );
+                error_log( 'Blog Poster: Full outline MD: ' . $outline_md );
+                return new WP_Error( 'outline_section_count', 'アウトラインのH2セクション数が不足しています。実際: ' . $section_count . '個（必要: 5-7個）' );
             }
 
             return array(
@@ -297,13 +301,44 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
 ### サブセクション2-1
 - キーポイント
 
-要件:
-- H2セクションを5-7個作成
-- 各H2の下にH3を2-4個配置
-- 読者の課題解決を意識した構成
-- 具体例やコード例を含むセクション構成
+## セクション3のタイトル
 
-出力はMarkdown形式のみ。説明文は不要です。";
+### サブセクション3-1
+- キーポイント
+
+## セクション4のタイトル
+
+### サブセクション4-1
+- キーポイント
+
+## セクション5のタイトル
+
+### サブセクション5-1
+- キーポイント
+
+## セクション6のタイトル（必要に応じて）
+
+### サブセクション6-1
+- キーポイント
+
+## セクション7のタイトル（必要に応じて）
+
+### サブセクション7-1
+- キーポイント
+
+【重要な制約】
+1. H2見出し（##）は「必ず5個以上7個以下」作成すること
+2. 5個未満は絶対に禁止
+3. 8個以上も禁止
+4. 各H2の下にH3見出し（###）を2-4個配置
+5. 読者の課題解決を意識した構成
+6. 具体例やコード例を含むセクション構成を計画
+
+数値確認:
+- H2（##）の数: 5個、6個、または7個のいずれか
+- H3（###）の数: 各H2につき2-4個
+
+出力はMarkdown形式のみ。説明文は不要です。H2見出しの数を必ず守ってください。";
     }
 
     /**
