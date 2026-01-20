@@ -36,6 +36,11 @@ class Blog_Poster_Gemini_Client extends Blog_Poster_AI_Client {
             $model = $response_format['model'];
         }
 
+        $max_tokens = $this->max_tokens;
+        if ( is_array( $response_format ) && isset( $response_format['max_tokens'] ) ) {
+            $max_tokens = (int) $response_format['max_tokens'];
+        }
+
         $url = self::API_BASE_URL . $model . ':generateContent?key=' . $this->api_key;
 
         $adjusted_prompt = $this->apply_tone_settings( $prompt );
@@ -52,7 +57,7 @@ class Blog_Poster_Gemini_Client extends Blog_Poster_AI_Client {
             ),
             'generationConfig' => array(
                 'temperature' => $this->temperature,
-                'maxOutputTokens' => $this->max_tokens,
+                'maxOutputTokens' => $max_tokens,
             )
         );
 

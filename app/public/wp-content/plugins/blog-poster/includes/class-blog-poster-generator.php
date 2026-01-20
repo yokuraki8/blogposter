@@ -151,7 +151,7 @@ class Blog_Poster_Generator {
             error_log( 'Blog Poster: Using 2-step outline generation for Gemini' );
 
             // Step1: セクションタイトルのみ生成
-            $step1_result = $this->generate_outline_step1_gemini( $topic, $additional_instructions );
+            $step1_result = $this->generate_outline_step1_gemini( $topic, $additional_instructions, $forced_model );
             if ( is_wp_error( $step1_result ) ) {
                 return $step1_result;
             }
@@ -159,7 +159,7 @@ class Blog_Poster_Generator {
             $section_titles = $step1_result['titles'];
 
             // Step2: 詳細構造を生成
-            $step2_result = $this->generate_outline_step2_gemini( $topic, $section_titles, $additional_instructions );
+            $step2_result = $this->generate_outline_step2_gemini( $topic, $section_titles, $additional_instructions, $forced_model );
             if ( is_wp_error( $step2_result ) ) {
                 return $step2_result;
             }
@@ -240,7 +240,7 @@ class Blog_Poster_Generator {
      * @param string $additional_instructions 追加指示
      * @return array|WP_Error ['success' => true, 'titles' => array]
      */
-    private function generate_outline_step1_gemini( $topic, $additional_instructions = '' ) {
+    private function generate_outline_step1_gemini( $topic, $additional_instructions = '', $forced_model = '' ) {
         $client = $this->get_ai_client();
         if ( is_wp_error( $client ) ) {
             return $client;
@@ -269,7 +269,11 @@ class Blog_Poster_Generator {
 番号付きリストのみを出力してください。説明文は不要です。";
 
         try {
-            $response = $client->generate_text( $prompt, array( 'max_tokens' => 2000 ) );
+            $options = array( 'max_tokens' => 2000 );
+            if ( ! empty( $forced_model ) ) {
+                $options['model'] = $forced_model;
+            }
+            $response = $client->generate_text( $prompt, $options );
 
             if ( is_wp_error( $response ) ) {
                 return $response;
@@ -325,7 +329,7 @@ class Blog_Poster_Generator {
      * @param string $additional_instructions 追加指示
      * @return array|WP_Error ['success' => true, 'outline_md' => string, ...]
      */
-    private function generate_outline_step2_gemini( $topic, $section_titles, $additional_instructions = '' ) {
+    private function generate_outline_step2_gemini( $topic, $section_titles, $additional_instructions = '', $forced_model = '' ) {
         $client = $this->get_ai_client();
         if ( is_wp_error( $client ) ) {
             return $client;
@@ -339,6 +343,9 @@ class Blog_Poster_Generator {
             $num = $idx + 1;
             $titles_list .= "{$num}. {$title}\n";
         }
+
+        $title_example_1 = $section_titles[0] ?? 'セクション1のタイトル';
+        $title_example_2 = $section_titles[1] ?? 'セクション2のタイトル';
 
         $prompt = "以下のトピックとセクション構成に基づいて、詳細なアウトラインを作成してください。
 
@@ -356,7 +363,7 @@ excerpt: \"記事の抜粋（120-160文字）\"
 keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
 ---
 
-## {section_titles[0]}
+## {$title_example_1}
 
 ### サブセクション1-1
 - キーポイント
@@ -364,7 +371,7 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
 ### サブセクション1-2
 - キーポイント
 
-## {section_titles[1]}
+## {$title_example_2}
 
 ### サブセクション2-1
 - キーポイント
@@ -372,6 +379,7 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
 （以下同様に全セクションを展開）
 
 要件:
+- 上記のセクション構成のタイトルをそのままH2に使用する
 - 各H2の下にH3を2-4個配置
 - 具体例やコード例を含むセクション構成を計画
 
@@ -382,7 +390,11 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
         error_log( 'Blog Poster: Step2 section titles: ' . print_r( $section_titles, true ) );
 
         try {
-            $response = $client->generate_text( $prompt, array( 'max_tokens' => 8000 ) );
+            $options = array( 'max_tokens' => 8000 );
+            if ( ! empty( $forced_model ) ) {
+                $options['model'] = $forced_model;
+            }
+            $response = $client->generate_text( $prompt, $options );
 
             if ( is_wp_error( $response ) ) {
                 error_log( 'Blog Poster: Step2 WP_Error: ' . $response->get_error_message() );
@@ -593,7 +605,7 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
 
 要件:
 - 各サブセクションは300-500文字で詳細に
-- 具体例、手順、コード例を必ず含める
+- 具体例や手順を含める（コード例は必要に応じて）
 - コードブロックは\`\`\`言語名\\nコード\\n\`\`\`形式で
 - 読者が実行できる内容を提供
 - 技術的に正確な情報のみ
