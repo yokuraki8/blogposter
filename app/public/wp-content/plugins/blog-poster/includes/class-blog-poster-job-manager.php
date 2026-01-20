@@ -484,10 +484,21 @@ class Blog_Poster_Job_Manager {
 				)
 			);
 
+			// Markdownからタイトルを抽出
+			$title = $outline_meta['title'] ?? '';
+			if ( empty( $title ) && ! empty( $final_markdown ) ) {
+				if ( preg_match( '/^#\s+(.+)$/m', $final_markdown, $matches ) ) {
+					$title = trim( $matches[1] );
+				}
+			}
+			if ( empty( $title ) ) {
+				$title = 'Untitled';
+			}
+
 			return array(
 				'success'          => true,
 				'message'          => '記事生成完了',
-				'title'            => $outline_meta['title'] ?? 'Untitled',
+				'title'            => $title,
 				'slug'             => $outline_meta['slug'] ?? '',
 				'meta_description' => $outline_meta['meta_description'] ?? '',
 				'excerpt'          => $outline_meta['excerpt'] ?? '',

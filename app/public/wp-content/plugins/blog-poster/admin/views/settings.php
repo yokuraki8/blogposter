@@ -40,13 +40,9 @@ $gemini_models = array(
     'gemini-3-pro-preview',
 );
 $claude_models = array(
-    'claude-3.5-sonnet-20240620', // 2024-06 Anthropic推奨
-    'claude-3.5-sonnet',
-    'claude-3.5-opus',
-    'claude-3-opus',
-    'claude-3-haiku',
-    // 利用可能と確認できたモデルを追記
-    'claude-opus-4-5-20251101',
+    'claude-sonnet-4-5-20250929',  // Claude Sonnet 4.5
+    'claude-haiku-4-5-20251001',   // Claude Haiku 4.5
+    'claude-opus-4-5-20251101',    // Claude Opus 4.5
 );
 ?>
 
@@ -186,7 +182,7 @@ $claude_models = array(
                         <td>
                             <select name="blog_poster_settings[default_model][claude]" id="claude_model">
                                 <?php foreach ( $claude_models as $model ) : ?>
-                                    <option value="<?php echo esc_attr( $model ); ?>" <?php selected( isset( $default_models['claude'] ) ? $default_models['claude'] : 'claude-3.5-sonnet-20240620', $model ); ?>>
+                                    <option value="<?php echo esc_attr( $model ); ?>" <?php selected( isset( $default_models['claude'] ) ? $default_models['claude'] : 'claude-sonnet-4-5-20250929', $model ); ?>>
                                         <?php echo esc_html( $model ); ?>
                                     </option>
                                 <?php endforeach; ?>

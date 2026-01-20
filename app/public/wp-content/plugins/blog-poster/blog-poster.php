@@ -11,7 +11,7 @@
  * Plugin Name:       Blog Poster
  * Plugin URI:        https://bridgesystem.me/blog-poster
  * Description:       AI駆動型ブログ記事自動生成プラグイン。Google Gemini、Anthropic Claude、OpenAIの3つのAIモデルに対応し、高品質な日本語記事を自動生成します。
- * Version:           0.2.7-alpha
+ * Version:           0.2.7.1-alpha
  * Requires at least: 6.0
  * Requires PHP:      8.0
  * Author:            Bridge System
@@ -28,7 +28,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // プラグインのバージョン定義
-define( 'BLOG_POSTER_VERSION', '0.2.7-alpha' );
+define( 'BLOG_POSTER_VERSION', '0.2.7.1-alpha' );
 define( 'BLOG_POSTER_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'BLOG_POSTER_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'BLOG_POSTER_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -188,7 +188,7 @@ class Blog_Poster {
             'openai_api_key' => '',
             'default_model' => array(
                 'gemini' => 'gemini-1.5-pro',
-                'claude' => 'claude-3-5-sonnet-20241022',
+                'claude' => 'claude-sonnet-4-5-20250929',
                 'openai' => 'gpt-4o'
             ),
             'temperature' => 0.7,

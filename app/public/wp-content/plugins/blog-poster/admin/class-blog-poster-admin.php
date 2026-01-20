@@ -32,6 +32,9 @@ class Blog_Poster_Admin {
         add_action( 'wp_ajax_blog_poster_process_step', array( $this, 'ajax_process_step' ) );
         add_action( 'wp_ajax_blog_poster_get_job_status', array( $this, 'ajax_get_job_status' ) );
         add_action( 'wp_ajax_blog_poster_create_post', array( $this, 'ajax_create_post' ) );
+
+        // APIキー確認ハンドラー
+        add_action( 'wp_ajax_blog_poster_check_api_key', array( $this, 'ajax_check_api_key' ) );
     }
 
     /**
@@ -188,6 +191,14 @@ class Blog_Poster_Admin {
         $sanitized['formality'] = isset( $input['formality'] ) ? intval( $input['formality'] ) : 50;
         $sanitized['expertise'] = isset( $input['expertise'] ) ? intval( $input['expertise'] ) : 50;
         $sanitized['friendliness'] = isset( $input['friendliness'] ) ? intval( $input['friendliness'] ) : 50;
+
+        // Default models
+        if ( isset( $input['default_model'] ) && is_array( $input['default_model'] ) ) {
+            $sanitized['default_model'] = array();
+            foreach ( $input['default_model'] as $provider => $model ) {
+                $sanitized['default_model'][ sanitize_key( $provider ) ] = sanitize_text_field( $model );
+            }
+        }
 
         // 既存の設定を維持
         $current_settings = get_option( 'blog_poster_settings', array() );
@@ -549,6 +560,10 @@ class Blog_Poster_Admin {
         // 1-1. HTMLエンティティをデコード
         $markdown = html_entity_decode( $markdown, ENT_QUOTES | ENT_HTML5, 'UTF-8' );
 
+        // 1-1.5. バッククォートのネスト正規化（5重 → 3重）
+        $markdown = preg_replace( '/`{5,}/', '```', $markdown );
+        $markdown = preg_replace( '/`{4}/', '```', $markdown );
+
         // 1-2. 記事全体を囲む```markdownブロックを削除
         $markdown = preg_replace( '/^```(?:markdown|md)\s*\n/', '', $markdown );
         $markdown = preg_replace( '/\n```\s*$/', '', $markdown );
@@ -623,5 +638,264 @@ class Blog_Poster_Admin {
         $html = wp_kses( $html, $allowed_html );
 
         return $html;
+    }
+
+    /**
+     * AJAX: APIキーの検証
+     *
+     * @since 0.3.0
+     */
+    public function ajax_check_api_key() {
+        // Nonceチェック
+        check_ajax_referer( 'blog_poster_nonce', 'nonce' );
+
+        // 権限チェック
+        if ( ! current_user_can( 'manage_options' ) ) {
+            wp_send_json_error( array(
+                'message' => __( '権限がありません。', 'blog-poster' )
+            ) );
+        }
+
+        // パラメータ取得
+        $provider = isset( $_POST['provider'] ) ? sanitize_text_field( $_POST['provider'] ) : '';
+
+        if ( empty( $provider ) ) {
+            wp_send_json_error( array(
+                'message' => __( 'プロバイダーが指定されていません。', 'blog-poster' )
+            ) );
+        }
+
+        // 現在の設定からAPIキーを取得
+        $settings = get_option( 'blog_poster_settings', array() );
+        $api_key_field = $provider . '_api_key';
+
+        if ( empty( $settings[ $api_key_field ] ) ) {
+            wp_send_json_error( array(
+                'message' => sprintf(
+                    __( '%s のAPIキーが設定されていません。', 'blog-poster' ),
+                    $this->get_provider_name( $provider )
+                )
+            ) );
+        }
+
+        $api_key = $settings[ $api_key_field ];
+        $model = isset( $settings['default_model'][ $provider ] ) ? $settings['default_model'][ $provider ] : $this->get_default_model( $provider );
+
+        // APIキーを検証
+        $is_valid = $this->verify_api_key( $provider, $api_key, $model );
+
+        if ( $is_valid ) {
+            wp_send_json_success( array(
+                'message' => sprintf(
+                    __( '%s のAPIキーは有効です。', 'blog-poster' ),
+                    $this->get_provider_name( $provider )
+                )
+            ) );
+        } else {
+            wp_send_json_error( array(
+                'message' => sprintf(
+                    __( '%s のAPIキーが無効です。設定を確認してください。', 'blog-poster' ),
+                    $this->get_provider_name( $provider )
+                )
+            ) );
+        }
+    }
+
+    /**
+     * APIキーをプロバイダーのAPIに対して検証
+     *
+     * @param string $provider プロバイダー（claude, openai, gemini）
+     * @param string $api_key APIキー
+     * @param string $model モデル名
+     * @return bool 有効な場合true、無効な場合false
+     *
+     * @since 0.3.0
+     */
+    private function verify_api_key( $provider, $api_key, $model ) {
+        switch ( $provider ) {
+            case 'claude':
+                return $this->verify_claude_api_key( $api_key, $model );
+            case 'openai':
+                return $this->verify_openai_api_key( $api_key, $model );
+            case 'gemini':
+                return $this->verify_gemini_api_key( $api_key, $model );
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * Claude APIキーを検証
+     *
+     * @param string $api_key Claude APIキー
+     * @param string $model モデル名
+     * @return bool 有効な場合true、無効な場合false
+     *
+     * @since 0.3.0
+     */
+    private function verify_claude_api_key( $api_key, $model ) {
+        $url = 'https://api.anthropic.com/v1/messages';
+
+        $args = array(
+            'method'  => 'POST',
+            'headers' => array(
+                'x-api-key'       => $api_key,
+                'anthropic-version' => '2023-06-01',
+                'content-type'    => 'application/json',
+            ),
+            'body'    => wp_json_encode( array(
+                'model'      => $model,
+                'max_tokens' => 10,
+                'messages'   => array(
+                    array(
+                        'role'    => 'user',
+                        'content' => 'test',
+                    ),
+                ),
+            ) ),
+            'timeout' => 10,
+        );
+
+        $response = wp_remote_post( $url, $args );
+
+        if ( is_wp_error( $response ) ) {
+            error_log( 'Claude API verification error: ' . $response->get_error_message() );
+            return false;
+        }
+
+        $status_code = wp_remote_retrieve_response_code( $response );
+
+        // 401: 認証失敗, 400: 不正なリクエスト（モデルが存在しない等）
+        if ( 401 === $status_code || 400 === $status_code ) {
+            return false;
+        }
+
+        // 200, 429（レート制限）などはAPIキーが有効
+        return $status_code >= 200 && $status_code < 500;
+    }
+
+    /**
+     * OpenAI APIキーを検証
+     *
+     * @param string $api_key OpenAI APIキー
+     * @param string $model モデル名
+     * @return bool 有効な場合true、無効な場合false
+     *
+     * @since 0.3.0
+     */
+    private function verify_openai_api_key( $api_key, $model ) {
+        $url = 'https://api.openai.com/v1/chat/completions';
+
+        $args = array(
+            'method'  => 'POST',
+            'headers' => array(
+                'Authorization' => 'Bearer ' . $api_key,
+                'Content-Type'  => 'application/json',
+            ),
+            'body'    => wp_json_encode( array(
+                'model'       => $model,
+                'messages'    => array(
+                    array(
+                        'role'    => 'user',
+                        'content' => 'test',
+                    ),
+                ),
+                'max_tokens'  => 10,
+            ) ),
+            'timeout' => 10,
+        );
+
+        $response = wp_remote_post( $url, $args );
+
+        if ( is_wp_error( $response ) ) {
+            error_log( 'OpenAI API verification error: ' . $response->get_error_message() );
+            return false;
+        }
+
+        $status_code = wp_remote_retrieve_response_code( $response );
+
+        // 401: 認証失敗
+        if ( 401 === $status_code ) {
+            return false;
+        }
+
+        // 200, 429（レート制限）などはAPIキーが有効
+        return $status_code >= 200 && $status_code < 500;
+    }
+
+    /**
+     * Google Gemini APIキーを検証
+     *
+     * @param string $api_key Gemini APIキー
+     * @param string $model モデル名
+     * @return bool 有効な場合true、無効な場合false
+     *
+     * @since 0.3.0
+     */
+    private function verify_gemini_api_key( $api_key, $model ) {
+        $url = 'https://generativelanguage.googleapis.com/v1beta/models/' . $model . ':generateContent';
+
+        $args = array(
+            'method'  => 'POST',
+            'headers' => array(
+                'Content-Type' => 'application/json',
+            ),
+            'body'    => wp_json_encode( array(
+                'contents' => array(
+                    array(
+                        'parts' => array(
+                            array(
+                                'text' => 'test',
+                            ),
+                        ),
+                    ),
+                ),
+                'generationConfig' => array(
+                    'maxOutputTokens' => 10,
+                ),
+            ) ),
+            'timeout' => 10,
+        );
+
+        // APIキーをクエリパラメータに追加
+        $url = add_query_arg( 'key', $api_key, $url );
+
+        $response = wp_remote_post( $url, $args );
+
+        if ( is_wp_error( $response ) ) {
+            error_log( 'Gemini API verification error: ' . $response->get_error_message() );
+            return false;
+        }
+
+        $status_code = wp_remote_retrieve_response_code( $response );
+
+        // 401, 403: 認証失敗
+        if ( 401 === $status_code || 403 === $status_code ) {
+            return false;
+        }
+
+        // 200, 429（レート制限）などはAPIキーが有効
+        return $status_code >= 200 && $status_code < 500;
+    }
+
+    /**
+     * プロバイダーのデフォルトモデルを取得
+     *
+     * @param string $provider プロバイダー（claude, openai, gemini）
+     * @return string デフォルトモデル名
+     *
+     * @since 0.3.0
+     */
+    private function get_default_model( $provider ) {
+        switch ( $provider ) {
+            case 'claude':
+                return 'claude-3-5-sonnet-20241022';
+            case 'openai':
+                return 'gpt-4o-mini';
+            case 'gemini':
+                return 'gemini-1.5-flash';
+            default:
+                return '';
+        }
     }
 }

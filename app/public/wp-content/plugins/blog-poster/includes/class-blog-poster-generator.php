@@ -41,7 +41,7 @@ class Blog_Poster_Generator {
 
             case 'claude':
                 $api_key = isset( $settings['claude_api_key'] ) ? $settings['claude_api_key'] : '';
-                $model = isset( $settings['default_model']['claude'] ) ? $settings['default_model']['claude'] : 'claude-3-5-sonnet-20241022';
+                $model = isset( $settings['default_model']['claude'] ) ? $settings['default_model']['claude'] : 'claude-sonnet-4-5-20250929';
                 $client = new Blog_Poster_Claude_Client( $api_key, $model, $settings );
                 break;
 
@@ -361,18 +361,23 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
             foreach ( $lines as $line ) {
                 $line = trim( $line );
 
-                // title, slug, excerpt
-                if ( preg_match( '/^(title|slug|excerpt):\s*"([^"]*)"/', $line, $m ) ) {
+                // title, slug, excerpt - シングルクォート、ダブルクォート両対応
+                if ( preg_match( '/^(title|slug|excerpt):\s*["\']([^"\']*)["\']/', $line, $m ) ) {
                     $meta[ $m[1] ] = $m[2];
                 } elseif ( preg_match( '/^(title|slug|excerpt):\s*(.+)$/', $line, $m ) ) {
-                    $meta[ $m[1] ] = trim( $m[2] );
+                    $value = trim( $m[2] );
+                    // 前後のクォートを削除（シングル/ダブル両対応）
+                    if ( preg_match( '/^["\'](.+)["\']$/', $value, $quote_match ) ) {
+                        $value = $quote_match[1];
+                    }
+                    $meta[ $m[1] ] = $value;
                 }
 
                 // keywords配列
                 if ( preg_match( '/^keywords:\s*\[(.*)\]/', $line, $m ) ) {
                     $keywords_str = $m[1];
                     $keywords = array();
-                    if ( preg_match_all( '/"([^"]*)"/', $keywords_str, $kw_matches ) ) {
+                    if ( preg_match_all( '/["\']([^"\']*)["\']/', $keywords_str, $kw_matches ) ) {
                         $keywords = $kw_matches[1];
                     }
                     $meta['keywords'] = $keywords;
@@ -380,16 +385,24 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
             }
         }
 
-        // セクション構造を解析（H2とH3）
+        // セクション構造を解析（H1, H2, H3）
         $lines = explode( "\n", $body );
         $current_section = null;
         $current_subsection = null;
+        $h1_title = null;
 
         foreach ( $lines as $line ) {
             $line = trim( $line );
 
+            // H1（タイトル候補）
+            if ( preg_match( '/^#\s+(.+)$/', $line, $m ) ) {
+                if ( $h1_title === null ) {
+                    $h1_title = trim( $m[1] );
+                }
+            }
+
             // H2セクション
-            if ( preg_match( '/^##\s+(.+)$/', $line, $m ) ) {
+            elseif ( preg_match( '/^##\s+(.+)$/', $line, $m ) ) {
                 if ( $current_section !== null ) {
                     $sections[] = $current_section;
                 }
@@ -425,6 +438,27 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
             $sections[] = $current_section;
         }
 
+        // タイトル抽出のフォールバック処理
+        if ( empty( $meta['title'] ) ) {
+            if ( ! empty( $h1_title ) ) {
+                // H1からのタイトル抽出を優先
+                $meta['title'] = $h1_title;
+            } elseif ( ! empty( $sections ) && ! empty( $sections[0]['title'] ) ) {
+                // 最初のH2セクションをタイトルとして使用（ただしトピックベースの自動生成を推奨）
+                $first_section_title = $sections[0]['title'];
+                // 一般的な構成セクション名を除外（目次、はじめに等）
+                if ( ! preg_match( '/^(目次|はじめに|概要|はじめにあたって|まとめ|結論|参考文献|付録)$/', $first_section_title ) ) {
+                    // トピックに基づいた自動生成フォールバック
+                    error_log( 'Blog Poster: No title found, first section: ' . $first_section_title );
+                }
+            }
+        }
+
+        // 最終的にタイトルが空の場合は「Untitled」ではなくトピック情報を保持
+        if ( empty( $meta['title'] ) ) {
+            $meta['title'] = 'Untitled Article';
+        }
+
         return array(
             'meta' => $meta,
             'body' => $body,
@@ -434,6 +468,7 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
 
     /**
      * YAML frontmatterを構築
+     * シングル/ダブルクォート両対応、日本語文字セーフ
      *
      * @param array $meta メタデータ
      * @return string frontmatter文字列
@@ -442,21 +477,26 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
         $lines = array( '---' );
 
         if ( isset( $meta['title'] ) ) {
-            $lines[] = 'title: "' . str_replace( '"', '\\"', $meta['title'] ) . '"';
+            // シングルクォートを使用（日本語文字との相性が良い）
+            $escaped_title = str_replace( "'", "\\'", $meta['title'] );
+            $lines[] = "title: '" . $escaped_title . "'";
         }
 
         if ( isset( $meta['slug'] ) ) {
-            $lines[] = 'slug: "' . str_replace( '"', '\\"', $meta['slug'] ) . '"';
+            $escaped_slug = str_replace( "'", "\\'", $meta['slug'] );
+            $lines[] = "slug: '" . $escaped_slug . "'";
         }
 
         if ( isset( $meta['excerpt'] ) ) {
-            $lines[] = 'excerpt: "' . str_replace( '"', '\\"', $meta['excerpt'] ) . '"';
+            $escaped_excerpt = str_replace( "'", "\\'", $meta['excerpt'] );
+            $lines[] = "excerpt: '" . $escaped_excerpt . "'";
         }
 
         if ( isset( $meta['keywords'] ) && is_array( $meta['keywords'] ) ) {
             $keywords_str = array();
             foreach ( $meta['keywords'] as $kw ) {
-                $keywords_str[] = '"' . str_replace( '"', '\\"', $kw ) . '"';
+                $escaped_kw = str_replace( "'", "\\'", $kw );
+                $keywords_str[] = "'" . $escaped_kw . "'";
             }
             $lines[] = 'keywords: [' . implode( ', ', $keywords_str ) . ']';
         }
