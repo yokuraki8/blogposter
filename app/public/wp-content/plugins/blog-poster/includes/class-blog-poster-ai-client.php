@@ -84,7 +84,7 @@ abstract class Blog_Poster_AI_Client {
     protected function make_request( $url, $body, $headers = array() ) {
         // デバッグログ: リクエスト内容
         error_log( 'Blog Poster API Request - Model: ' . ( isset( $body['model'] ) ? $body['model'] : 'N/A' ) );
-        error_log( 'Blog Poster API Request - URL: ' . $url );
+        error_log( 'Blog Poster API Request - URL: ' . $this->redact_api_key_from_url( $url ) );
 
         $args = array(
             'method'  => 'POST',
@@ -128,6 +128,16 @@ abstract class Blog_Poster_AI_Client {
         }
 
         return $data;
+    }
+
+    /**
+     * URLに含まれるAPIキーをマスク
+     *
+     * @param string $url 対象URL
+     * @return string マスク後URL
+     */
+    private function redact_api_key_from_url( $url ) {
+        return preg_replace( '/([?&](?:key|api_key|apikey)=)[^&]+/i', '$1REDACTED', $url );
     }
 
     /**
