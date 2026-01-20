@@ -20,6 +20,23 @@ jQuery(document).ready(function($) {
     let isCancelled = false;
     let totalSectionsForProgress = 0;
 
+    function computeProgressForStep(step, currentSection, totalSections) {
+        if (!totalSections || totalSections <= 0) {
+            return null;
+        }
+        const baseUnits = totalSections + 2;
+        if (step === 'outline') {
+            return Math.floor((1 / baseUnits) * 100);
+        }
+        if (step === 'content') {
+            return Math.floor(((1 + currentSection) / baseUnits) * 100);
+        }
+        if (step === 'review') {
+            return Math.floor(((totalSections + 1) / baseUnits) * 100);
+        }
+        return null;
+    }
+
     // 記事生成フォーム送信
     $('#blog-poster-generate-form').on('submit', function(e) {
         e.preventDefault();
@@ -125,10 +142,9 @@ jQuery(document).ready(function($) {
         }
 
         const step = steps[stepIndex];
-        let progress = Math.floor(((stepIndex) / steps.length) * 100);
-        if (step === 'review' && totalSectionsForProgress > 0) {
-            const baseUnits = totalSectionsForProgress + 2;
-            progress = Math.floor(((totalSectionsForProgress + 1) / baseUnits) * 100);
+        let progress = computeProgressForStep(step, 0, totalSectionsForProgress);
+        if (progress === null) {
+            progress = Math.floor(((stepIndex) / steps.length) * 100);
         }
         updateProgress(progress, stepLabels[step]);
 
@@ -162,9 +178,10 @@ jQuery(document).ready(function($) {
                             if (totalSubsections > 0) {
                                 sectionMessage += ' / H3 ' + currentSubsection + '/' + totalSubsections;
                             }
-                            const baseUnits = totalSections + 2;
-                            const completedUnits = Math.min(totalSections + 1, 1 + currentSection);
-                            progress = Math.floor((completedUnits / baseUnits) * 100);
+                            const computed = computeProgressForStep('content', currentSection, totalSections);
+                            if (computed !== null) {
+                                progress = computed;
+                            }
                         }
                         if (!response.data.done) {
                             updateProgress(progress, sectionMessage);
@@ -175,9 +192,12 @@ jQuery(document).ready(function($) {
                         }
                     }
                     let nextProgress = Math.floor(((stepIndex + 1) / steps.length) * 100);
-                    if (step === 'content' && totalSectionsForProgress > 0) {
-                        const baseUnits = totalSectionsForProgress + 2;
-                        nextProgress = Math.floor(((totalSectionsForProgress + 1) / baseUnits) * 100);
+                    if (totalSectionsForProgress > 0) {
+                        if (step === 'outline') {
+                            nextProgress = computeProgressForStep('outline', 0, totalSectionsForProgress);
+                        } else if (step === 'content') {
+                            nextProgress = computeProgressForStep('review', totalSectionsForProgress, totalSectionsForProgress);
+                        }
                     }
                     updateProgress(nextProgress, stepLabels[step] + ' 完了');
 
