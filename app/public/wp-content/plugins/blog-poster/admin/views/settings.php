@@ -237,6 +237,12 @@ $claude_models = array(
                             <p class="description">
                                 <?php _e( 'OpenAIの使用モデルを選択します。', 'blog-poster' ); ?>
                             </p>
+                            <p>
+                                <button type="button" class="button" id="openai-key-check">
+                                    <?php _e( 'APIキーを確認', 'blog-poster' ); ?>
+                                </button>
+                                <span id="openai-key-check-status" style="margin-left:8px;"></span>
+                            </p>
                         </td>
                     </tr>
                 </table>
