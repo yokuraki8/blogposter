@@ -155,7 +155,7 @@ class Blog_Poster_Generator {
         }
 
         try {
-            $response = $client->generate_text( $prompt, array( 'max_tokens' => 4000, 'model' => $model_override ) );
+            $response = $client->generate_text( $prompt, array( 'max_tokens' => 8000, 'model' => $model_override ) );
 
             if ( is_wp_error( $response ) ) {
                 return $response;
@@ -316,15 +316,7 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
 ### サブセクション5-1
 - キーポイント
 
-## セクション6のタイトル（必要に応じて）
-
-### サブセクション6-1
-- キーポイント
-
-## セクション7のタイトル（必要に応じて）
-
-### サブセクション7-1
-- キーポイント
+（必要に応じて6-7個目のセクションも追加）
 
 【重要な制約】
 1. H2見出し（##）は「必ず5個以上7個以下」作成すること
@@ -338,7 +330,7 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
 - H2（##）の数: 5個、6個、または7個のいずれか
 - H3（###）の数: 各H2につき2-4個
 
-出力はMarkdown形式のみ。説明文は不要です。H2見出しの数を必ず守ってください。";
+出力はMarkdown形式のみ。説明文は不要です。H2見出しを5-7個必ず作成してください。";
     }
 
     /**
