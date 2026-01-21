@@ -213,6 +213,7 @@ class Blog_Poster {
             'friendliness' => 50,   // 親しみやすさ (0-100)
             'enable_rag' => false,  // RAG機能（有料プラン）
             'enable_image_generation' => false, // 画像生成（有料プラン）
+            'enable_yoast_integration' => false, // Yoast SEO連携
             'subscription_plan' => 'free', // free, paid_with_api, paid_without_api
             'articles_generated' => 0,
             'articles_limit_free' => 5

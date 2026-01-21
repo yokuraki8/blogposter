@@ -18,6 +18,14 @@ $selected_categories = isset( $settings['category_ids'] ) && is_array( $settings
     : array();
 $default_category_id = isset( $settings['default_category_id'] ) ? intval( $settings['default_category_id'] ) : 0;
 $default_models = isset( $settings['default_model'] ) && is_array( $settings['default_model'] ) ? $settings['default_model'] : array();
+$yoast_enabled = ! empty( $settings['enable_yoast_integration'] );
+$yoast_active = false;
+if ( ! function_exists( 'is_plugin_active' ) ) {
+    require_once ABSPATH . 'wp-admin/includes/plugin.php';
+}
+if ( function_exists( 'is_plugin_active' ) ) {
+    $yoast_active = is_plugin_active( 'wordpress-seo/wp-seo.php' );
+}
 $openai_models = array(
     'gpt-5.2',
     'gpt-5.2-pro',
@@ -309,6 +317,34 @@ $claude_models = array(
                             />
                             <p class="description">
                                 <?php _e( '生成する最大トークン数を指定します。', 'blog-poster' ); ?>
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+
+            <!-- SEO連携設定 -->
+            <div class="settings-section">
+                <h2><?php _e( 'SEO連携設定', 'blog-poster' ); ?></h2>
+                <table class="form-table">
+                    <tr>
+                        <th scope="row">
+                            <label for="enable_yoast_integration"><?php _e( 'Yoast SEO連携', 'blog-poster' ); ?></label>
+                        </th>
+                        <td>
+                            <label>
+                                <input
+                                    type="checkbox"
+                                    name="blog_poster_settings[enable_yoast_integration]"
+                                    id="enable_yoast_integration"
+                                    value="1"
+                                    <?php checked( $yoast_enabled, true ); ?>
+                                    <?php disabled( $yoast_active, false ); ?>
+                                />
+                                <?php _e( 'Yoast SEOが有効な場合のみ、メタディスクリプションとタグを自動登録', 'blog-poster' ); ?>
+                            </label>
+                            <p class="description">
+                                <?php echo $yoast_active ? __( 'Yoast SEOは有効です。', 'blog-poster' ) : __( 'Yoast SEOが見つかりません。インストール済みの場合は有効化してください。', 'blog-poster' ); ?>
                             </p>
                         </td>
                     </tr>

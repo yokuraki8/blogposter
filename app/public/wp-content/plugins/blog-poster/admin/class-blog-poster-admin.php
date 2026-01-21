@@ -192,6 +192,9 @@ class Blog_Poster_Admin {
         $sanitized['expertise'] = isset( $input['expertise'] ) ? intval( $input['expertise'] ) : 50;
         $sanitized['friendliness'] = isset( $input['friendliness'] ) ? intval( $input['friendliness'] ) : 50;
 
+        // Yoast SEO integration
+        $sanitized['enable_yoast_integration'] = isset( $input['enable_yoast_integration'] ) ? (bool) $input['enable_yoast_integration'] : false;
+
         // Default models
         if ( isset( $input['default_model'] ) && is_array( $input['default_model'] ) ) {
             $sanitized['default_model'] = array();
@@ -508,6 +511,7 @@ class Blog_Poster_Admin {
         // マークダウンの内容はサニタイズせずそのまま取得（後でHTMLに変換してからサニタイズする）
         $content          = isset( $_POST['content'] ) ? wp_unslash( $_POST['content'] ) : '';
         $meta_description = isset( $_POST['meta_description'] ) ? sanitize_text_field( wp_unslash( $_POST['meta_description'] ) ) : '';
+        $job_id           = isset( $_POST['job_id'] ) ? intval( $_POST['job_id'] ) : 0;
 
         error_log( 'Blog Poster: Title: ' . $title );
         error_log( 'Blog Poster: Content length: ' . strlen( $content ) );
@@ -542,8 +546,11 @@ class Blog_Poster_Admin {
             wp_send_json_error( array( 'message' => $post_id->get_error_message() ) );
         }
 
-        // メタ情報を保存
-        if ( ! empty( $meta_description ) ) {
+        // Yoast SEO連携（設定ON + Yoast有効時のみ）
+        $settings = get_option( 'blog_poster_settings', array() );
+        $yoast_enabled = ! empty( $settings['enable_yoast_integration'] ) && $this->is_yoast_active();
+
+        if ( $yoast_enabled && ! empty( $meta_description ) ) {
             update_post_meta( $post_id, '_yoast_wpseo_metadesc', $meta_description );
         }
 
@@ -562,6 +569,13 @@ class Blog_Poster_Admin {
             wp_set_post_categories( $post_id, $category_ids, false );
         }
 
+        if ( $yoast_enabled && $job_id > 0 ) {
+            $tags = $this->extract_tags_from_job( $job_id );
+            if ( ! empty( $tags ) ) {
+                wp_set_post_terms( $post_id, $tags, 'post_tag', false );
+            }
+        }
+
         error_log( 'Blog Poster: Post created successfully with ID: ' . $post_id );
 
         wp_send_json_success(
@@ -571,6 +585,52 @@ class Blog_Poster_Admin {
                 'message'  => '投稿を作成しました',
             )
         );
+    }
+
+    /**
+     * Yoast SEOが有効か判定
+     *
+     * @return bool
+     */
+    private function is_yoast_active() {
+        if ( ! function_exists( 'is_plugin_active' ) ) {
+            require_once ABSPATH . 'wp-admin/includes/plugin.php';
+        }
+
+        return function_exists( 'is_plugin_active' ) && is_plugin_active( 'wordpress-seo/wp-seo.php' );
+    }
+
+    /**
+     * ジョブからキーワードを抽出してタグに変換
+     *
+     * @param int $job_id ジョブID
+     * @return array タグ名配列（最大3件）
+     */
+    private function extract_tags_from_job( $job_id ) {
+        $job_manager = new Blog_Poster_Job_Manager();
+        $job = $job_manager->get_job( $job_id );
+
+        if ( ! $job || empty( $job['outline_md'] ) ) {
+            return array();
+        }
+
+        $generator = new Blog_Poster_Generator();
+        $parsed = $generator->parse_markdown_frontmatter( $job['outline_md'] );
+        $keywords = isset( $parsed['meta']['keywords'] ) ? $parsed['meta']['keywords'] : array();
+
+        if ( ! is_array( $keywords ) ) {
+            return array();
+        }
+
+        $tags = array();
+        foreach ( $keywords as $keyword ) {
+            $keyword = sanitize_text_field( $keyword );
+            if ( '' !== $keyword ) {
+                $tags[] = $keyword;
+            }
+        }
+
+        return array_slice( array_unique( $tags ), 0, 3 );
     }
 
     /**
