@@ -42,7 +42,6 @@ $gemini_models = array(
     'gemini-2.5-flash-lite',
     'gemini-2.0-flash',
     'gemini-2.0-flash-lite',
-    'gemini-3-pro',
     'gemini-3-flash',
 );
 $claude_models = array(

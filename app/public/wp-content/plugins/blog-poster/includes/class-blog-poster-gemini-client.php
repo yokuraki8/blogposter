@@ -21,6 +21,30 @@ class Blog_Poster_Gemini_Client extends Blog_Poster_AI_Client {
     const API_BASE_URL = 'https://generativelanguage.googleapis.com/v1/models/';
 
     /**
+     * モデル名を正規化
+     *
+     * @param string $model モデル名
+     * @return string 正規化後のモデル名
+     */
+    public static function normalize_model( $model ) {
+        $model = trim( (string) $model );
+        if ( '' === $model ) {
+            return 'gemini-2.5-pro';
+        }
+
+        $unsupported_models = array(
+            'gemini-3-pro',
+        );
+
+        if ( in_array( $model, $unsupported_models, true ) ) {
+            error_log( 'Blog Poster: Unsupported Gemini model selected, falling back to gemini-2.5-pro' );
+            return 'gemini-2.5-pro';
+        }
+
+        return $model;
+    }
+
+    /**
      * テキスト生成
      *
      * @param string $prompt プロンプト
@@ -34,6 +58,11 @@ class Blog_Poster_Gemini_Client extends Blog_Poster_AI_Client {
         $model = $this->model;
         if ( is_array( $response_format ) && ! empty( $response_format['model'] ) ) {
             $model = $response_format['model'];
+        }
+        $normalized_model = self::normalize_model( $model );
+        if ( $normalized_model !== $model ) {
+            $model = $normalized_model;
+            $this->model = $normalized_model;
         }
 
         $max_tokens = $this->max_tokens;
