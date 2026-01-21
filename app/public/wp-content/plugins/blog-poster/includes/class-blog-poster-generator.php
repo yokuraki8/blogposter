@@ -924,9 +924,11 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
             '/```([^\n]*)\R(.*?)\R```/s',
             function( $matches ) use ( &$converted ) {
                 $language = trim( $matches[1] );
+                $language_normalized = strtolower( $language );
                 $content  = $matches[2];
 
-                if ( '' !== $language ) {
+                $convertible_language = '' === $language || in_array( $language_normalized, array( 'text', 'plain', 'plaintext' ), true );
+                if ( ! $convertible_language ) {
                     return $matches[0];
                 }
 
@@ -937,6 +939,19 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
 
                 if ( $this->is_prose_like_code_block( $content ) ) {
                     $converted++;
+                    $lines = preg_split( '/\R/', $content );
+                    $first_nonempty_index = null;
+                    foreach ( $lines as $index => $line ) {
+                        if ( '' !== trim( $line ) ) {
+                            $first_nonempty_index = $index;
+                            break;
+                        }
+                    }
+                    if ( null !== $first_nonempty_index && 0 === strcasecmp( trim( $lines[ $first_nonempty_index ] ), 'text' ) ) {
+                        unset( $lines[ $first_nonempty_index ] );
+                        $lines = array_values( $lines );
+                    }
+                    $content = implode( "\n", $lines );
                     return rtrim( $content ) . "\n";
                 }
 

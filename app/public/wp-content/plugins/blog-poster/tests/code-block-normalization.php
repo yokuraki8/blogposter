@@ -42,4 +42,13 @@ assert_true(
     'No extra code fences should remain around prose.'
 );
 
+$input_with_text_marker = "```\ntext\nチェック手順\n- 手順A\n```\n";
+$expected_with_text_marker = "チェック手順\n- 手順A\n";
+$actual_with_text_marker = $generator->normalize_code_blocks_after_generation( $input_with_text_marker );
+
+assert_true(
+    normalize_whitespace( $actual_with_text_marker ) === normalize_whitespace( $expected_with_text_marker ),
+    'Prose-like code block with leading text marker should drop the marker line.'
+);
+
 fwrite( STDOUT, "OK: code block normalization\n" );
