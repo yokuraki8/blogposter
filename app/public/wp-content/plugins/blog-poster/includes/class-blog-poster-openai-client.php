@@ -43,18 +43,20 @@ class Blog_Poster_OpenAI_Client extends Blog_Poster_AI_Client {
                 'temperature' => $this->temperature,
                 'max_output_tokens' => $this->max_tokens,
             );
+            $format = array( 'type' => 'text' );
             if ( ! empty( $response_format ) ) {
-                $format = $response_format;
                 if ( isset( $response_format['type'], $response_format['json_schema'] ) && 'json_schema' === $response_format['type'] ) {
                     $format = array_merge(
                         array( 'type' => 'json_schema' ),
                         $response_format['json_schema']
                     );
+                } elseif ( isset( $response_format['type'] ) ) {
+                    $format = $response_format;
                 }
-                $body['text'] = array(
-                    'format' => $format,
-                );
             }
+            $body['text'] = array(
+                'format' => $format,
+            );
         } else {
             $url = self::API_BASE_URL . 'chat/completions';
             $body = array(
