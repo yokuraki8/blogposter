@@ -550,8 +550,14 @@ class Blog_Poster_Admin {
         $settings = get_option( 'blog_poster_settings', array() );
         $yoast_enabled = ! empty( $settings['enable_yoast_integration'] ) && $this->is_yoast_active();
 
-        if ( $yoast_enabled && ! empty( $meta_description ) ) {
-            update_post_meta( $post_id, '_yoast_wpseo_metadesc', $meta_description );
+        if ( $yoast_enabled ) {
+            if ( empty( $meta_description ) ) {
+                $meta_description = $this->build_meta_description( $html_content );
+            }
+
+            if ( ! empty( $meta_description ) ) {
+                update_post_meta( $post_id, '_yoast_wpseo_metadesc', $meta_description );
+            }
         }
 
         // カテゴリ設定
@@ -631,6 +637,29 @@ class Blog_Poster_Admin {
         }
 
         return array_slice( array_unique( $tags ), 0, 3 );
+    }
+
+    /**
+     * 投稿本文からメタディスクリプションを生成
+     *
+     * @param string $html_content HTML本文
+     * @param int $max_length 文字数上限
+     * @return string
+     */
+    private function build_meta_description( $html_content, $max_length = 160 ) {
+        $text = wp_strip_all_tags( $html_content );
+        $text = preg_replace( '/\s+/', ' ', $text );
+        $text = trim( $text );
+
+        if ( '' === $text ) {
+            return '';
+        }
+
+        if ( mb_strlen( $text ) > $max_length ) {
+            $text = mb_substr( $text, 0, $max_length );
+        }
+
+        return $text;
     }
 
     /**
