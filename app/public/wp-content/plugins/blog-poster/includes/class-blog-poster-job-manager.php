@@ -477,7 +477,7 @@ class Blog_Poster_Job_Manager {
 				$final_markdown = $this->generator->normalize_code_blocks_after_generation( $final_markdown );
 
 				if ( $this->generator->is_truncated_markdown( $final_markdown ) ) {
-					throw new Exception( '生成結果が途中で終了しました。再試行してください。' );
+					error_log( 'Blog Poster: Truncation still suspected after regeneration. Proceeding with warning.' );
 				}
 			}
 

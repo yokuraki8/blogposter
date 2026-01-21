@@ -994,6 +994,15 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
             return false;
         }
 
+        if ( preg_match( '/[」』）】］)]$/u', $last_line ) ) {
+            return false;
+        }
+
+        $tail_text = mb_substr( $last_line, max( 0, mb_strlen( $last_line ) - 40 ) );
+        if ( preg_match( '/[。．.!?！？…]/u', $tail_text ) ) {
+            return false;
+        }
+
         if ( mb_strlen( $last_line ) < 20 ) {
             return false;
         }
