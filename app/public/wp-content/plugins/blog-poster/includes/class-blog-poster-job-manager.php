@@ -203,6 +203,26 @@ class Blog_Poster_Job_Manager {
 	}
 
 	/**
+	 * 次に実行可能なジョブを取得
+	 *
+	 * @return array|null ジョブデータまたはnull
+	 */
+	public function get_next_runnable_job() {
+		global $wpdb;
+
+		// pending, outline, content, review のいずれかのステータスのジョブを取得
+		$job = $wpdb->get_row(
+			"SELECT * FROM {$this->table_name}
+			 WHERE status IN ('pending', 'outline', 'content', 'review')
+			 ORDER BY created_at ASC
+			 LIMIT 1",
+			ARRAY_A
+		);
+
+		return $job;
+	}
+
+	/**
 	 * Step 1: アウトライン生成
 	 *
 	 * @param int $job_id ジョブID
@@ -210,8 +230,10 @@ class Blog_Poster_Job_Manager {
 	 */
 	public function process_step_outline( $job_id ) {
 		$job = $this->get_job( $job_id );
+		$original_settings = $this->apply_job_settings( $job );
 
 		if ( ! $job || 'pending' !== $job['status'] ) {
+			$this->restore_job_settings( $original_settings );
 			return array(
 				'success' => false,
 				'message' => 'Invalid job state',
@@ -299,6 +321,8 @@ class Blog_Poster_Job_Manager {
 				'success' => false,
 				'message' => $e->getMessage(),
 			);
+		} finally {
+			$this->restore_job_settings( $original_settings );
 		}
 	}
 
@@ -310,8 +334,10 @@ class Blog_Poster_Job_Manager {
 	 */
 	public function process_step_content( $job_id ) {
 		$job = $this->get_job( $job_id );
+		$original_settings = $this->apply_job_settings( $job );
 
 		if ( ! $job || ! in_array( $job['status'], array( 'outline', 'content' ), true ) ) {
+			$this->restore_job_settings( $original_settings );
 			return array(
 				'success' => false,
 				'message' => 'Invalid job state',
@@ -436,6 +462,8 @@ class Blog_Poster_Job_Manager {
 				'success' => false,
 				'message' => $e->getMessage(),
 			);
+		} finally {
+			$this->restore_job_settings( $original_settings );
 		}
 	}
 
@@ -447,8 +475,10 @@ class Blog_Poster_Job_Manager {
 	 */
 	public function process_step_review( $job_id ) {
 		$job = $this->get_job( $job_id );
+		$original_settings = $this->apply_job_settings( $job );
 
 		if ( ! $job || 'content' !== $job['status'] ) {
+			$this->restore_job_settings( $original_settings );
 			return array(
 				'success' => false,
 				'message' => 'Invalid job state',
@@ -558,6 +588,8 @@ class Blog_Poster_Job_Manager {
 				'success' => false,
 				'message' => $e->getMessage(),
 			);
+		} finally {
+			$this->restore_job_settings( $original_settings );
 		}
 	}
 
@@ -687,5 +719,51 @@ class Blog_Poster_Job_Manager {
 		$content_sections[ count( $content_sections ) - 1 ] = $section_result['section_md'];
 
 		return rtrim( implode( "\n\n", $content_sections ) ) . "\n";
+	}
+
+	/**
+	 * ジョブの設定を適用
+	 *
+	 * @param array $job ジョブデータ
+	 * @return array|null 以前の設定
+	 */
+	private function apply_job_settings( $job ) {
+		if ( empty( $job ) || ( empty( $job['ai_provider'] ) && empty( $job['ai_model'] ) ) ) {
+			return null;
+		}
+
+		$settings = get_option( 'blog_poster_settings', array() );
+		$original = $settings;
+
+		if ( ! empty( $job['ai_provider'] ) ) {
+			$settings['ai_provider'] = $job['ai_provider'];
+		}
+
+		if ( ! empty( $job['ai_model'] ) ) {
+			$provider = ! empty( $job['ai_provider'] ) ? $job['ai_provider'] : ( $settings['ai_provider'] ?? 'gemini' );
+			$settings[ $provider . '_model' ] = $job['ai_model'];
+		}
+
+		if ( isset( $job['temperature'] ) && '' !== $job['temperature'] ) {
+			$settings['temperature'] = floatval( $job['temperature'] );
+		}
+
+		update_option( 'blog_poster_settings', $settings );
+
+		return $original;
+	}
+
+	/**
+	 * 設定を元に戻す
+	 *
+	 * @param array|null $original_settings 以前の設定
+	 * @return void
+	 */
+	private function restore_job_settings( $original_settings ) {
+		if ( null === $original_settings ) {
+			return;
+		}
+
+		update_option( 'blog_poster_settings', $original_settings );
 	}
 }
