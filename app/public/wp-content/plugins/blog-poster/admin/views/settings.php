@@ -30,11 +30,6 @@ $openai_models = array(
     'gpt-5.2',
     'gpt-5.2-pro',
     'gpt-5-mini',
-    'gpt-4.1',
-    'gpt-4.1-mini',
-    'gpt-4o',
-    'gpt-4o-mini',
-    'gpt-4',
 );
 $gemini_models = array(
     'gemini-2.5-pro',

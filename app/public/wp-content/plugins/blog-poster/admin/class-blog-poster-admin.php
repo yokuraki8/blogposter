@@ -1011,7 +1011,7 @@ class Blog_Poster_Admin {
             case 'claude':
                 return 'claude-3-5-sonnet-20241022';
             case 'openai':
-                return 'gpt-4o-mini';
+                return 'gpt-5-mini';
             case 'gemini':
                 return 'gemini-2.5-pro';
             default:

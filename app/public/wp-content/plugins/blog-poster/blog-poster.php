@@ -81,6 +81,8 @@ class Blog_Poster {
         // コア機能
         require_once BLOG_POSTER_PLUGIN_DIR . 'includes/class-blog-poster-generator.php';
         require_once BLOG_POSTER_PLUGIN_DIR . 'includes/class-blog-poster-job-manager.php';
+        require_once BLOG_POSTER_PLUGIN_DIR . 'includes/class-blog-poster-batch-generator.php';
+        require_once BLOG_POSTER_PLUGIN_DIR . 'includes/class-blog-poster-queue-runner.php';
     }
 
     /**
@@ -101,6 +103,10 @@ class Blog_Poster {
 
         // フロントエンドのスタイル
         add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_public_styles' ) );
+
+        // ジョブキュー処理
+        add_action( 'blog_poster_process_queue', array( $this, 'process_queue_cron' ) );
+        add_filter( 'cron_schedules', array( $this, 'add_cron_schedules' ) );
     }
 
     /**
@@ -138,6 +144,7 @@ class Blog_Poster {
     public function deactivate() {
         // スケジュールされたCronジョブをクリア
         wp_clear_scheduled_hook( 'blog_poster_scheduled_generation' );
+        wp_clear_scheduled_hook( 'blog_poster_process_queue' );
     }
 
     /**
@@ -175,12 +182,21 @@ class Blog_Poster {
             id bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
             topic varchar(500) NOT NULL,
             additional_instructions text,
+            ai_provider varchar(20) DEFAULT '',
+            ai_model varchar(100) DEFAULT '',
+            temperature float DEFAULT NULL,
             status varchar(20) DEFAULT 'pending',
             current_step int(11) DEFAULT 0,
             total_steps int(11) DEFAULT 3,
-            outline longtext,
-            sections_content longtext,
-            final_content longtext,
+            current_section_index int(11) DEFAULT 0,
+            total_sections int(11) DEFAULT 0,
+            previous_context text,
+            outline_md longtext,
+            content_md longtext,
+            final_markdown longtext,
+            final_html longtext,
+            post_id bigint(20) UNSIGNED DEFAULT 0,
+            final_title text,
             error_message text,
             created_at datetime DEFAULT CURRENT_TIMESTAMP,
             updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -204,7 +220,7 @@ class Blog_Poster {
             'default_model' => array(
                 'gemini' => 'gemini-2.5-pro',
                 'claude' => 'claude-sonnet-4-5-20250929',
-                'openai' => 'gpt-4o'
+                'openai' => 'gpt-5.2'
             ),
             'temperature' => 0.7,
             'max_tokens' => 2000,
@@ -233,6 +249,31 @@ class Blog_Poster {
             false,
             dirname( BLOG_POSTER_PLUGIN_BASENAME ) . '/languages'
         );
+    }
+
+    /**
+     * Cron: キュー処理
+     */
+    public function process_queue_cron() {
+        $runner = new Blog_Poster_Queue_Runner();
+        $runner->process_queue( 1 );
+    }
+
+    /**
+     * Cron schedule追加（1分間隔）
+     *
+     * @param array $schedules 既存スケジュール
+     * @return array
+     */
+    public function add_cron_schedules( $schedules ) {
+        if ( ! isset( $schedules['blog_poster_minute'] ) ) {
+            $schedules['blog_poster_minute'] = array(
+                'interval' => 60,
+                'display'  => 'Every Minute (Blog Poster)',
+            );
+        }
+
+        return $schedules;
     }
 }
 
