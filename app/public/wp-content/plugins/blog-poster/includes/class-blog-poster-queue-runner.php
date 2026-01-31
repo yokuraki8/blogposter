@@ -199,7 +199,8 @@ class Blog_Poster_Queue_Runner {
 
         $model = isset( $job['ai_model'] ) ? $job['ai_model'] : '';
         $title = isset( $review_result['title'] ) ? $review_result['title'] : 'Untitled';
-        $prefixed_title = $model !== '' ? $model . $title : $title;
+        // テスト用にモデル名をプレフィックスとして追加（区切り文字付き）
+        $prefixed_title = $model !== '' ? '[' . $model . '] ' . $title : $title;
 
         $post_id = wp_insert_post( array(
             'post_title'   => $prefixed_title,
@@ -229,6 +230,17 @@ class Blog_Poster_Queue_Runner {
                 'final_title' => $prefixed_title,
             )
         );
+
+        // post_metaにモデル情報を保存
+        if ( ! empty( $job['ai_provider'] ) ) {
+            update_post_meta( $post_id, '_blog_poster_provider', $job['ai_provider'] );
+        }
+        if ( ! empty( $job['ai_model'] ) ) {
+            update_post_meta( $post_id, '_blog_poster_model', $job['ai_model'] );
+        }
+        if ( isset( $job['temperature'] ) ) {
+            update_post_meta( $post_id, '_blog_poster_temperature', $job['temperature'] );
+        }
 
         return $post_id;
     }
