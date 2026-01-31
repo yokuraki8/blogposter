@@ -214,10 +214,10 @@ class Blog_Poster_Generator {
                 return new WP_Error( 'outline_no_sections', 'アウトラインからセクションを抽出できませんでした。' );
             }
 
-            if ( $section_count < 5 || $section_count > 7 ) {
+            if ( $section_count < 4 || $section_count > 7 ) {
                 error_log( 'Blog Poster: Outline section count out of range: ' . $section_count );
                 error_log( 'Blog Poster: Full outline MD: ' . $outline_md );
-                return new WP_Error( 'outline_section_count', 'アウトラインのH2セクション数が不足しています。実際: ' . $section_count . '個（必要: 5-7個）' );
+                return new WP_Error( 'outline_section_count', 'アウトラインのH2セクション数が不足しています。実際: ' . $section_count . '個（必要: 4-7個）' );
             }
 
             return array(
@@ -248,7 +248,7 @@ class Blog_Poster_Generator {
 
         $additional_text = ! empty( $additional_instructions ) ? "\n追加指示: {$additional_instructions}" : '';
 
-        $prompt = "以下のトピックについて、ブログ記事のセクション見出し（H2）を5-7個考えてください。
+        $prompt = "以下のトピックについて、ブログ記事のセクション見出し（H2）を4-7個考えてください。
 
 トピック: {$topic}{$additional_text}
 
@@ -257,7 +257,7 @@ class Blog_Poster_Generator {
 2. 憶測・推測・断定できない表現に基づく構成は禁止
 
 【重要な制約】
-1. セクション見出しは必ず5個以上7個以下
+1. セクション見出しは必ず4個以上7個以下
 2. 各見出しは読者の課題解決を意識
 3. 論理的な流れを持つ構成
 
@@ -307,9 +307,9 @@ class Blog_Poster_Generator {
             }
 
             $count = count( $titles );
-            if ( $count < 5 || $count > 7 ) {
+            if ( $count < 4 || $count > 7 ) {
                 error_log( 'Blog Poster: Step1 section count out of range: ' . $count );
-                return new WP_Error( 'step1_count', 'セクション数が不足しています。実際: ' . $count . '個（必要: 5-7個）' );
+                return new WP_Error( 'step1_count', 'セクション数が不足しています。実際: ' . $count . '個（必要: 4-7個）' );
             }
 
             error_log( 'Blog Poster: Step1 generated ' . $count . ' section titles' );
@@ -520,7 +520,7 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
     private function build_outline_prompt( $topic, $additional_instructions = '' ) {
         $additional_text = ! empty( $additional_instructions ) ? "\n追加指示: {$additional_instructions}" : '';
 
-        return "あなたは日本語ブログ記事のプロフェッショナルライターです。
+あなたは日本語ブログ記事のプロフェッショナルライターです。
 
 トピック: {$topic}{$additional_text}
 
@@ -528,7 +528,7 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
 - 事実に基づく内容のみで構成案を作成すること
 - 憶測・推測・断定できない表現に基づく構成は禁止
 
-以下の形式で記事のアウトラインを作成してください:
+【重要】以下の形式で記事のアウトラインを作成してください:
 
 ---
 title: \"記事タイトル（SEO最適化、30-60文字）\"
@@ -568,18 +568,21 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
 （必要に応じて6-7個目のセクションも追加）
 
 【重要な制約】
-1. H2見出し（##）は「必ず5個以上7個以下」作成すること
-2. 5個未満は絶対に禁止
+1. **H2見出し（##）は「必ず5個以上7個以下」作成すること** ← これが最重要です
+2. 5個未満は絶対に禁止（4個、3個では不十分です）
 3. 8個以上も禁止
 4. 各H2の下にH3見出し（###）を2-4個配置
 5. 読者の課題解決を意識した構成
 6. 具体例やコード例を含むセクション構成を計画
 
 数値確認:
-- H2（##）の数: 5個、6個、または7個のいずれか
+- H2（##）の数: 5個、6個、または7個のいずれか（絶対ルール）
 - H3（###）の数: 各H2につき2-4個
 
-出力はMarkdown形式のみ。説明文は不要です。H2見出しを5-7個必ず作成してください。";
+【最終確認】
+出力はMarkdown形式のみ。説明文は不要です。
+H2見出し（##）を「必ず5個、6個、または7個」作成してください。
+他の数（3個、4個、8個以上）での出力は再生成の対象となります。";
     }
 
     /**

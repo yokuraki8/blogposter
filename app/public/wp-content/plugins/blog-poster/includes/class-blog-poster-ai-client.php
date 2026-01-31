@@ -116,8 +116,37 @@ abstract class Blog_Poster_AI_Client {
             );
 
             // 詳細なエラー情報を追加
+            $error_detail = '';
             if ( isset( $data['error']['message'] ) ) {
-                $error_message .= ' - ' . $data['error']['message'];
+                $error_detail = $data['error']['message'];
+                $error_message .= ' - ' . $error_detail;
+            }
+
+            // 具体的なエラー原因を判定
+            $specific_error = '';
+            if ( $status_code === 429 ) {
+                $specific_error = 'APIレート制限に達しました。しばらく待ってからもう一度試してください。';
+            } elseif ( $status_code === 403 ) {
+                if ( stripos( $error_detail, 'credit' ) !== false || stripos( $response_body, 'credit' ) !== false ) {
+                    $specific_error = 'APIクレジットが不足しています。設定ページでAPIキーと設定を確認してください。';
+                } else {
+                    $specific_error = 'APIアクセス権限がありません。APIキーが正しいか確認してください。';
+                }
+            } elseif ( $status_code === 401 ) {
+                $specific_error = 'APIキーが無効です。設定ページで正しいAPIキーを入力してください。';
+            } elseif ( $status_code === 400 ) {
+                if ( stripos( $error_detail, 'model' ) !== false || stripos( $response_body, 'model' ) !== false ) {
+                    $specific_error = 'サポートされていないモデルが指定されています。モデル設定を確認してください。';
+                } else {
+                    $specific_error = 'リクエスト形式に誤りがあります。プラグイン設定を確認してください。';
+                }
+            } elseif ( $status_code === 500 || $status_code === 502 || $status_code === 503 ) {
+                $specific_error = 'AIサービスが一時的に利用できません。しばらく待ってからもう一度試してください。';
+            }
+
+            // 具体的なエラーが判定できた場合は追加
+            if ( ! empty( $specific_error ) ) {
+                $error_message = $specific_error . "\n（詳細: " . $error_message . "）";
             }
 
             return new WP_Error(
