@@ -517,7 +517,9 @@ class Blog_Poster_Job_Manager {
 				}
 			}
 			if ( empty( $title ) ) {
-				$title = 'Untitled';
+				// ユーザー入力のトピックをフォールバックとして使用
+				$title = ! empty( $topic ) ? $topic : 'Untitled';
+				error_log( 'Blog Poster: Using topic as title fallback: ' . $title );
 			}
 
 			return array(

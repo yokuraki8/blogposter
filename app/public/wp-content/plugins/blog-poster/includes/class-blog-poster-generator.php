@@ -252,6 +252,10 @@ class Blog_Poster_Generator {
 
 トピック: {$topic}{$additional_text}
 
+【事実性の厳守】
+1. 構成は事実に基づく内容のみを想定すること
+2. 憶測・推測・断定できない表現に基づく構成は禁止
+
 【重要な制約】
 1. セクション見出しは必ず5個以上7個以下
 2. 各見出しは読者の課題解決を意識
@@ -353,6 +357,10 @@ class Blog_Poster_Generator {
 
 セクション構成:
 {$titles_list}
+
+【事実性の厳守】
+1. 事実に基づく内容のみでアウトラインを構成すること
+2. 憶測・推測・断定できない表現に基づく構成は禁止
 
 以下の形式で出力してください:
 
@@ -516,6 +524,10 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
 
 トピック: {$topic}{$additional_text}
 
+【事実性の厳守】
+- 事実に基づく内容のみで構成案を作成すること
+- 憶測・推測・断定できない表現に基づく構成は禁止
+
 以下の形式で記事のアウトラインを作成してください:
 
 ---
@@ -602,6 +614,10 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
 
 セクション: ## {$section_title}
 {$subsections_text}{$context_text}{$additional_text}
+
+【事実性の厳守】
+- 事実に基づく内容のみを記述すること
+- 憶測・推測・断定できない表現は禁止
 
 要件:
 - 各サブセクションは300-500文字で詳細に
@@ -753,8 +769,8 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
                 $first_section_title = $sections[0]['title'];
                 // 一般的な構成セクション名を除外（目次、はじめに等）
                 if ( ! preg_match( '/^(目次|はじめに|概要|はじめにあたって|まとめ|結論|参考文献|付録)$/', $first_section_title ) ) {
-                    // トピックに基づいた自動生成フォールバック
-                    error_log( 'Blog Poster: No title found, first section: ' . $first_section_title );
+                    $meta['title'] = $first_section_title;
+                    error_log( 'Blog Poster: Using first section as title: ' . $first_section_title );
                 }
             }
         }
