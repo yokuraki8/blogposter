@@ -477,7 +477,7 @@ class Blog_Poster_Job_Manager {
 		$job = $this->get_job( $job_id );
 		$original_settings = $this->apply_job_settings( $job );
 
-		if ( ! $job || 'content' !== $job['status'] ) {
+		if ( ! $job || ! in_array( $job['status'], array( 'content', 'review' ), true ) ) {
 			$this->restore_job_settings( $original_settings );
 			return array(
 				'success' => false,
