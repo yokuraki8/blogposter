@@ -72,6 +72,9 @@ class Blog_Poster_Job_Manager {
 			id bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
 			topic varchar(500) NOT NULL,
 			additional_instructions text,
+			ai_provider varchar(100),
+			ai_model varchar(100),
+			temperature float DEFAULT 0.7,
 			status varchar(20) DEFAULT 'pending',
 			current_step int(11) DEFAULT 0,
 			total_steps int(11) DEFAULT 3,
@@ -108,16 +111,25 @@ class Blog_Poster_Job_Manager {
 	 *
 	 * @param string $topic トピック
 	 * @param string $additional_instructions 追加指示
+	 * @param array  $options オプション配列 (ai_provider, ai_model, temperature)
 	 * @return int ジョブID
 	 */
-	public function create_job( $topic, $additional_instructions = '' ) {
+	public function create_job( $topic, $additional_instructions = '', $options = array() ) {
 		global $wpdb;
+
+		// $options から ai_provider, ai_model, temperature を取得
+		$ai_provider = isset( $options['ai_provider'] ) ? $options['ai_provider'] : '';
+		$ai_model = isset( $options['ai_model'] ) ? $options['ai_model'] : '';
+		$temperature = isset( $options['temperature'] ) ? floatval( $options['temperature'] ) : 0.7;
 
 		$result = $wpdb->insert(
 			$this->table_name,
 			array(
 				'topic'                    => $topic,
 				'additional_instructions'  => $additional_instructions,
+				'ai_provider'              => $ai_provider,
+				'ai_model'                 => $ai_model,
+				'temperature'              => $temperature,
 				'status'                   => 'pending',
 				'current_section_index'    => 0,
 				'total_sections'           => 0,

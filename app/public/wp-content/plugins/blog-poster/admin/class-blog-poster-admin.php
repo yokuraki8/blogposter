@@ -418,8 +418,20 @@ class Blog_Poster_Admin {
             wp_send_json_error( array( 'message' => 'トピックを入力してください' ) );
         }
 
+        // 現在の設定からai_provider、ai_modelを取得
+        $settings = get_option( 'blog_poster_settings', array() );
+        $ai_provider = isset( $settings['ai_provider'] ) ? $settings['ai_provider'] : 'gemini';
+        $ai_model = isset( $settings[ $ai_provider . '_model' ] ) ? $settings[ $ai_provider . '_model' ] : '';
+        $temperature = isset( $settings['temperature'] ) ? floatval( $settings['temperature'] ) : 0.7;
+
+        $options = array(
+            'ai_provider' => $ai_provider,
+            'ai_model' => $ai_model,
+            'temperature' => $temperature,
+        );
+
         $job_manager = new Blog_Poster_Job_Manager();
-        $job_id      = $job_manager->create_job( $topic, $additional_instructions );
+        $job_id      = $job_manager->create_job( $topic, $additional_instructions, $options );
 
         wp_send_json_success(
             array(
@@ -544,6 +556,22 @@ class Blog_Poster_Admin {
         if ( is_wp_error( $post_id ) ) {
             error_log( 'Blog Poster: wp_insert_post error: ' . $post_id->get_error_message() );
             wp_send_json_error( array( 'message' => $post_id->get_error_message() ) );
+        }
+
+        // ジョブからモデル情報を取得して post_meta に保存
+        if ( $job_id > 0 ) {
+            global $wpdb;
+            $job = $wpdb->get_row( $wpdb->prepare(
+                "SELECT ai_provider, ai_model, temperature FROM {$wpdb->prefix}blog_poster_jobs WHERE id = %d",
+                $job_id
+            ), ARRAY_A );
+
+            if ( $job ) {
+                update_post_meta( $post_id, '_blog_poster_provider', $job['ai_provider'] );
+                update_post_meta( $post_id, '_blog_poster_model', $job['ai_model'] );
+                update_post_meta( $post_id, '_blog_poster_temperature', $job['temperature'] );
+                error_log( 'Blog Poster: Job metadata saved. Provider: ' . $job['ai_provider'] . ', Model: ' . $job['ai_model'] . ', Temperature: ' . $job['temperature'] );
+            }
         }
 
         // Yoast SEO連携（設定ON + Yoast有効時のみ）
