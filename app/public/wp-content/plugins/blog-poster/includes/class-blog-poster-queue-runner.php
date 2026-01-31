@@ -194,6 +194,11 @@ class Blog_Poster_Queue_Runner {
 
     private function create_post_from_review( $job, $review_result ) {
         if ( ! empty( $job['post_id'] ) ) {
+            // 既に投稿作成済みの場合、statusをcompletedに更新して返す
+            $this->job_manager->update_job(
+                intval( $job['id'] ),
+                array( 'status' => 'completed' )
+            );
             return intval( $job['post_id'] );
         }
 
@@ -228,6 +233,7 @@ class Blog_Poster_Queue_Runner {
             array(
                 'post_id' => $post_id,
                 'final_title' => $prefixed_title,
+                'status' => 'completed',
             )
         );
 

@@ -544,7 +544,6 @@ class Blog_Poster_Job_Manager {
 			$this->update_job(
 				$job_id,
 				array(
-					'status'          => 'completed',
 					'final_markdown'  => $final_markdown,
 					'final_html'      => $final_html,
 					'current_step'    => 3,
