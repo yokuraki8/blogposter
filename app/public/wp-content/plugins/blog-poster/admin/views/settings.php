@@ -32,12 +32,11 @@ $openai_models = array(
     'gpt-5-mini',
 );
 $gemini_models = array(
+    'gemini-3-pro-preview',
+    'gemini-3-flash-preview',
     'gemini-2.5-pro',
     'gemini-2.5-flash',
     'gemini-2.5-flash-lite',
-    'gemini-2.0-flash',
-    'gemini-2.0-flash-lite',
-    'gemini-3-flash',
 );
 $claude_models = array(
     'claude-sonnet-4-5-20250929',  // Claude Sonnet 4.5
