@@ -48,124 +48,151 @@ class Blog_Poster_OpenAI_Client extends Blog_Poster_AI_Client {
         $is_gpt5 = ( 0 === strpos( $this->model, 'gpt-5' ) );
         $supports_temperature = ! $is_gpt5;
 
-        if ( $is_gpt5 ) {
-            $url = self::API_BASE_URL . 'responses';
-            $body = array(
-                'model' => $this->model,
-                'input' => $adjusted_prompt,
-                'max_output_tokens' => $max_tokens,
-            );
-            if ( $supports_temperature ) {
-                $body['temperature'] = $this->temperature;
-            }
-            $format = array( 'type' => 'text' );
-            if ( ! empty( $response_format ) ) {
-                if ( isset( $response_format['type'], $response_format['json_schema'] ) && 'json_schema' === $response_format['type'] ) {
-                    $format = array_merge(
-                        array( 'type' => 'json_schema' ),
-                        $response_format['json_schema']
-                    );
-                } elseif ( isset( $response_format['type'] ) ) {
-                    $format = $response_format;
+        // リトライロジック
+        $max_retries = 2;
+        $last_error = null;
+
+        for ( $attempt = 0; $attempt <= $max_retries; $attempt++ ) {
+            if ( $is_gpt5 ) {
+                $url = self::API_BASE_URL . 'responses';
+                $body = array(
+                    'model' => $this->model,
+                    'input' => $adjusted_prompt,
+                    'max_output_tokens' => $max_tokens,
+                );
+                if ( $supports_temperature ) {
+                    $body['temperature'] = $this->temperature;
                 }
-            }
-            $body['text'] = array(
-                'format' => $format,
-            );
-        } else {
-            $url = self::API_BASE_URL . 'chat/completions';
-            $body = array(
-                'model' => $this->model,
-                'messages' => array(
-                    array(
-                        'role' => 'user',
-                        'content' => $adjusted_prompt
-                    )
-                ),
-                'temperature' => $this->temperature,
-                'max_tokens' => $max_tokens,
-            );
-            if ( ! empty( $response_format ) ) {
-                $body['response_format'] = $response_format;
-            }
-        }
-
-        $headers = array(
-            'Content-Type' => 'application/json',
-            'Authorization' => 'Bearer ' . $this->api_key,
-        );
-
-        $response = $this->make_request( $url, $body, $headers );
-
-        if ( is_wp_error( $response ) ) {
-            return $this->error_response( $response->get_error_message() );
-        }
-
-        // レスポンスからテキストとトークン数を抽出
-        $text = '';
-        $tokens = 0;
-
-        if ( isset( $response['status'] ) && 'incomplete' === $response['status'] ) {
-            $reason = '';
-            if ( isset( $response['incomplete_details']['reason'] ) ) {
-                $reason = $response['incomplete_details']['reason'];
-            }
-            error_log( 'Blog Poster: OpenAI incomplete response: ' . wp_json_encode( $response, JSON_UNESCAPED_UNICODE ) );
-            return $this->error_response(
-                sprintf(
-                    __( 'OpenAIのレスポンスが不完全です（reason: %s）。', 'blog-poster' ),
-                    $reason !== '' ? $reason : 'unknown'
-                )
-            );
-        }
-
-        if ( isset( $response['choices'][0]['message']['content'] ) ) {
-            $content = $response['choices'][0]['message']['content'];
-            if ( is_array( $content ) ) {
-                $parts = array();
-                foreach ( $content as $item ) {
-                    if ( isset( $item['text'] ) ) {
-                        $parts[] = $item['text'];
+                $format = array( 'type' => 'text' );
+                if ( ! empty( $response_format ) ) {
+                    if ( isset( $response_format['type'], $response_format['json_schema'] ) && 'json_schema' === $response_format['type'] ) {
+                        $format = array_merge(
+                            array( 'type' => 'json_schema' ),
+                            $response_format['json_schema']
+                        );
+                    } elseif ( isset( $response_format['type'] ) ) {
+                        $format = $response_format;
                     }
                 }
-                $text = implode( '', $parts );
+                $body['text'] = array(
+                    'format' => $format,
+                );
             } else {
-                $text = $content;
+                $url = self::API_BASE_URL . 'chat/completions';
+                $body = array(
+                    'model' => $this->model,
+                    'messages' => array(
+                        array(
+                            'role' => 'user',
+                            'content' => $adjusted_prompt
+                        )
+                    ),
+                    'temperature' => $this->temperature,
+                    'max_tokens' => $max_tokens,
+                );
+                if ( ! empty( $response_format ) ) {
+                    $body['response_format'] = $response_format;
+                }
             }
-        } elseif ( isset( $response['output'] ) && is_array( $response['output'] ) ) {
-            // gpt-5系のレスポンス形式: output配列内のmessageタイプを探す
-            $parts = array();
-            foreach ( $response['output'] as $output_item ) {
-                if ( isset( $output_item['type'] ) && 'message' === $output_item['type'] && isset( $output_item['content'] ) ) {
-                    foreach ( $output_item['content'] as $content_item ) {
-                        if ( isset( $content_item['type'] ) && 'output_text' === $content_item['type'] && isset( $content_item['text'] ) ) {
-                            $parts[] = $content_item['text'];
-                        } elseif ( isset( $content_item['text'] ) ) {
-                            $parts[] = $content_item['text'];
+
+            $headers = array(
+                'Content-Type' => 'application/json',
+                'Authorization' => 'Bearer ' . $this->api_key,
+            );
+
+            $response = $this->make_request( $url, $body, $headers );
+
+            if ( is_wp_error( $response ) ) {
+                return $this->error_response( $response->get_error_message() );
+            }
+
+            // レスポンスからテキストとトークン数を抽出
+            $text = '';
+            $tokens = 0;
+
+            if ( isset( $response['status'] ) && 'incomplete' === $response['status'] ) {
+                $reason = '';
+                if ( isset( $response['incomplete_details']['reason'] ) ) {
+                    $reason = $response['incomplete_details']['reason'];
+                }
+                error_log( 'Blog Poster: OpenAI incomplete response (attempt ' . ( $attempt + 1 ) . '): ' . wp_json_encode( $response, JSON_UNESCAPED_UNICODE ) );
+
+                // max_output_tokensが原因でリトライ可能な場合
+                if ( 'max_output_tokens' === $reason && $attempt < $max_retries ) {
+                    $old_max_tokens = $max_tokens;
+                    $max_tokens = (int) ( $max_tokens * 1.5 );
+                    error_log( 'Blog Poster: Retrying with increased max_tokens: ' . $old_max_tokens . ' -> ' . $max_tokens );
+                    continue;
+                }
+
+                // リトライ上限到達またはリトライ不可な理由
+                $last_error = sprintf(
+                    __( 'OpenAIのレスポンスが不完全です（reason: %s）。', 'blog-poster' ),
+                    $reason !== '' ? $reason : 'unknown'
+                );
+                if ( $attempt < $max_retries ) {
+                    continue;
+                } else {
+                    return $this->error_response( $last_error );
+                }
+            }
+
+            if ( isset( $response['choices'][0]['message']['content'] ) ) {
+                $content = $response['choices'][0]['message']['content'];
+                if ( is_array( $content ) ) {
+                    $parts = array();
+                    foreach ( $content as $item ) {
+                        if ( isset( $item['text'] ) ) {
+                            $parts[] = $item['text'];
+                        }
+                    }
+                    $text = implode( '', $parts );
+                } else {
+                    $text = $content;
+                }
+            } elseif ( isset( $response['output'] ) && is_array( $response['output'] ) ) {
+                // gpt-5系のレスポンス形式: output配列内のmessageタイプを探す
+                $parts = array();
+                foreach ( $response['output'] as $output_item ) {
+                    if ( isset( $output_item['type'] ) && 'message' === $output_item['type'] && isset( $output_item['content'] ) ) {
+                        foreach ( $output_item['content'] as $content_item ) {
+                            if ( isset( $content_item['type'] ) && 'output_text' === $content_item['type'] && isset( $content_item['text'] ) ) {
+                                $parts[] = $content_item['text'];
+                            } elseif ( isset( $content_item['text'] ) ) {
+                                $parts[] = $content_item['text'];
+                            }
                         }
                     }
                 }
+                $text = implode( '', $parts );
+            } elseif ( isset( $response['output_text'] ) ) {
+                $text = $response['output_text'];
             }
-            $text = implode( '', $parts );
-        } elseif ( isset( $response['output_text'] ) ) {
-            $text = $response['output_text'];
+
+            if ( '' === $text ) {
+                error_log( 'Blog Poster: OpenAI empty content response: ' . wp_json_encode( $response, JSON_UNESCAPED_UNICODE ) );
+                return $this->error_response( __( 'OpenAIのレスポンスが空です。', 'blog-poster' ) );
+            }
+
+            if ( ! preg_match( '//u', $text ) ) {
+                error_log( 'Blog Poster: OpenAI invalid UTF-8 response detected.' );
+                return $this->error_response( __( 'OpenAIのレスポンスに不正なUTF-8が含まれています。', 'blog-poster' ) );
+            }
+
+            if ( isset( $response['usage']['total_tokens'] ) ) {
+                $tokens = $response['usage']['total_tokens'];
+            }
+
+            // 成功時はループを抜ける
+            return $this->success_response( $text, $tokens );
         }
 
-        if ( '' === $text ) {
-            error_log( 'Blog Poster: OpenAI empty content response: ' . wp_json_encode( $response, JSON_UNESCAPED_UNICODE ) );
-            return $this->error_response( __( 'OpenAIのレスポンスが空です。', 'blog-poster' ) );
+        // リトライがすべて失敗した場合のエラー返却（通常は上のループ内でreturnされるため到達しない）
+        if ( ! empty( $last_error ) ) {
+            return $this->error_response( $last_error );
         }
 
-        if ( ! preg_match( '//u', $text ) ) {
-            error_log( 'Blog Poster: OpenAI invalid UTF-8 response detected.' );
-            return $this->error_response( __( 'OpenAIのレスポンスに不正なUTF-8が含まれています。', 'blog-poster' ) );
-        }
-
-        if ( isset( $response['usage']['total_tokens'] ) ) {
-            $tokens = $response['usage']['total_tokens'];
-        }
-
-        return $this->success_response( $text, $tokens );
+        return $this->error_response( __( 'OpenAIのレスポンスから有効なテキストを抽出できませんでした。', 'blog-poster' ) );
     }
 
     /**

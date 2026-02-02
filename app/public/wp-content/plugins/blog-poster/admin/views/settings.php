@@ -299,7 +299,7 @@ $claude_models = array(
                                 id="max_tokens"
                                 value="<?php echo esc_attr( isset( $settings['max_tokens'] ) ? $settings['max_tokens'] : 4000 ); ?>"
                                 min="100"
-                                max="4000"
+                                max="8000"
                                 step="100"
                                 class="small-text"
                             />
