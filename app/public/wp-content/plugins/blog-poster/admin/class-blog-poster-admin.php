@@ -794,6 +794,25 @@ class Blog_Poster_Admin {
         );
         $markdown = strtr( $markdown, $html_entity_replacements );
 
+        // 1-3.5. HTMLのコードブロックをMarkdownに正規化
+        if ( preg_match( '/<pre><code/i', $markdown ) ) {
+            $markdown = preg_replace_callback(
+                '/<pre><code(?:\\s+class="language-([^"]+)")?>\\s*([\\s\\S]*?)\\s*<\\/code><\\/pre>/i',
+                function ( $matches ) {
+                    $lang = isset( $matches[1] ) ? trim( $matches[1] ) : '';
+                    $code = isset( $matches[2] ) ? $matches[2] : '';
+                    $code = html_entity_decode( $code, ENT_QUOTES | ENT_HTML5, 'UTF-8' );
+                    $fence = '```' . $lang;
+                    return "\n{$fence}\n{$code}\n```\n";
+                },
+                $markdown
+            );
+        }
+
+        // 1-3.6. フェンス前後の改行を強制
+        $markdown = preg_replace( '/([^\n])```/u', "$1\n```", $markdown );
+        $markdown = preg_replace( '/```([^\n])/u', "```\n$1", $markdown );
+
         // 1-4. AIが出力した不正なコードブロック形式を修正
         // パターン: 言語指定が単独行で、その後にコードが続く場合
         // 例: "python\n# code\nimport csv" → "```python\n# code\nimport csv\n```"
