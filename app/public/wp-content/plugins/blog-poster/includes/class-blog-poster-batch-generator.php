@@ -266,14 +266,9 @@ if ( defined( 'WP_CLI' ) && WP_CLI ) {
             : '/Users/yoshiki/Documents/Obsidian26/Projects/ProjectDetail/P2203/P2203記事生成テストのテンプレート.md';
 
         $models = array(
-            'claude-sonnet-4-5-20250929',
-            'claude-haiku-4-5-20251001',
             'claude-opus-4-5-20251101',
-            'gemini-3-pro-preview',
-            'gemini-3-flash-preview',
             'gemini-2.5-pro',
             'gemini-2.5-flash',
-            'gemini-2.5-flash-lite',
             'gpt-5.2',
             'gpt-5.2-pro',
             'gpt-5-mini',
@@ -335,14 +330,9 @@ if ( defined( 'WP_CLI' ) && WP_CLI ) {
             : '/Users/yoshiki/Documents/Obsidian26/Projects/ProjectDetail/P2203/P2203記事生成テストのテンプレート.md';
 
         $models = array(
-            'claude-sonnet-4-5-20250929',
-            'claude-haiku-4-5-20251001',
             'claude-opus-4-5-20251101',
-            'gemini-3-pro-preview',
-            'gemini-3-flash-preview',
             'gemini-2.5-pro',
             'gemini-2.5-flash',
-            'gemini-2.5-flash-lite',
             'gpt-5.2',
             'gpt-5.2-pro',
             'gpt-5-mini',
