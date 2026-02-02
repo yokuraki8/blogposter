@@ -331,8 +331,8 @@ class Blog_Poster_Job_Manager {
 					}
 				}
 
-				$outline_result = $this->generator->generate_outline_markdown( $job['topic'], $additional_instructions, 'gemini-2.5-flash' );
-				$used_fallback = true;
+				$outline_result = $this->generator->generate_outline_markdown( $job['topic'], $additional_instructions );
+				$used_fallback = false;
 
 				if ( ! is_wp_error( $outline_result ) ) {
 					break;
