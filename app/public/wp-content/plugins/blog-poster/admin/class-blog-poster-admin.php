@@ -809,9 +809,8 @@ class Blog_Poster_Admin {
             );
         }
 
-        // 1-3.6. フェンス前後の改行を強制
+        // 1-3.6. フェンス前の改行を強制（言語指定は維持）
         $markdown = preg_replace( '/([^\n])```/u', "$1\n```", $markdown );
-        $markdown = preg_replace( '/```([^\n])/u', "```\n$1", $markdown );
 
         // 1-4. AIが出力した不正なコードブロック形式を修正
         // パターン: 言語指定が単独行で、その後にコードが続く場合
