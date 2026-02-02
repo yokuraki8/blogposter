@@ -26,9 +26,21 @@ class Blog_Poster_OpenAI_Client extends Blog_Poster_AI_Client {
      * @param string $prompt プロンプト
      * @return array レスポンス
      */
-    public function generate_text( $prompt, $response_format = null ) {
+    public function generate_text( $prompt, $options = null ) {
         if ( empty( $this->api_key ) ) {
             return $this->error_response( __( 'OpenAI APIキーが設定されていません。', 'blog-poster' ) );
+        }
+
+        // オプションからmax_tokensを取得（指定があれば上書き）
+        $max_tokens = $this->max_tokens;
+        $response_format = null;
+        if ( is_array( $options ) ) {
+            if ( isset( $options['max_tokens'] ) ) {
+                $max_tokens = (int) $options['max_tokens'];
+            }
+            if ( isset( $options['type'] ) || isset( $options['json_schema'] ) ) {
+                $response_format = $options;
+            }
         }
 
         $adjusted_prompt = $this->apply_tone_settings( $prompt );
@@ -42,7 +54,7 @@ class Blog_Poster_OpenAI_Client extends Blog_Poster_AI_Client {
             $body = array(
                 'model' => $this->model,
                 'input' => $adjusted_prompt,
-                'max_output_tokens' => $this->max_tokens,
+                'max_output_tokens' => $max_tokens,
             );
             if ( $supports_temperature ) {
                 $body['temperature'] = $this->temperature;
@@ -72,7 +84,7 @@ class Blog_Poster_OpenAI_Client extends Blog_Poster_AI_Client {
                     )
                 ),
                 'temperature' => $this->temperature,
-                'max_tokens' => $this->max_tokens,
+                'max_tokens' => $max_tokens,
             );
             if ( ! empty( $response_format ) ) {
                 $body['response_format'] = $response_format;
@@ -107,11 +119,18 @@ class Blog_Poster_OpenAI_Client extends Blog_Poster_AI_Client {
             } else {
                 $text = $content;
             }
-        } elseif ( isset( $response['output'][0]['content'] ) ) {
+        } elseif ( isset( $response['output'] ) && is_array( $response['output'] ) ) {
+            // gpt-5系のレスポンス形式: output配列内のmessageタイプを探す
             $parts = array();
-            foreach ( $response['output'][0]['content'] as $item ) {
-                if ( isset( $item['text'] ) ) {
-                    $parts[] = $item['text'];
+            foreach ( $response['output'] as $output_item ) {
+                if ( isset( $output_item['type'] ) && 'message' === $output_item['type'] && isset( $output_item['content'] ) ) {
+                    foreach ( $output_item['content'] as $content_item ) {
+                        if ( isset( $content_item['type'] ) && 'output_text' === $content_item['type'] && isset( $content_item['text'] ) ) {
+                            $parts[] = $content_item['text'];
+                        } elseif ( isset( $content_item['text'] ) ) {
+                            $parts[] = $content_item['text'];
+                        }
+                    }
                 }
             }
             $text = implode( '', $parts );
