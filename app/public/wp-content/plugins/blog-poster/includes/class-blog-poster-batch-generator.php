@@ -179,6 +179,7 @@ class Blog_Poster_Batch_Generator {
                         'ai_provider' => $provider,
                         'ai_model' => $model,
                         'temperature' => $run_temperature,
+                        'is_batch' => true,
                     )
                 );
 

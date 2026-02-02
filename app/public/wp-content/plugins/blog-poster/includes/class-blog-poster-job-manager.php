@@ -109,6 +109,7 @@ class Blog_Poster_Job_Manager {
 			ai_model varchar(100),
 			temperature float DEFAULT 0.7,
 			article_length varchar(20) DEFAULT 'standard',
+			is_batch tinyint(1) DEFAULT 0,
 			status varchar(20) DEFAULT 'pending',
 			current_step int(11) DEFAULT 0,
 			total_steps int(11) DEFAULT 3,
@@ -153,11 +154,12 @@ class Blog_Poster_Job_Manager {
 	public function create_job( $topic, $additional_instructions = '', $options = array() ) {
 		global $wpdb;
 
-		// $options から ai_provider, ai_model, temperature, article_length を取得
+		// $options から ai_provider, ai_model, temperature, article_length, is_batch を取得
 		$ai_provider = isset( $options['ai_provider'] ) ? $options['ai_provider'] : '';
 		$ai_model = isset( $options['ai_model'] ) ? $options['ai_model'] : '';
 		$temperature = isset( $options['temperature'] ) ? floatval( $options['temperature'] ) : 0.7;
 		$article_length = isset( $options['article_length'] ) ? $options['article_length'] : 'standard';
+		$is_batch = ! empty( $options['is_batch'] ) ? 1 : 0;
 
 		$result = $wpdb->insert(
 			$this->table_name,
@@ -168,6 +170,7 @@ class Blog_Poster_Job_Manager {
 				'ai_model'                 => $ai_model,
 				'temperature'              => $temperature,
 				'article_length'           => $article_length,
+				'is_batch'                 => $is_batch,
 				'status'                   => 'pending',
 				'current_section_index'    => 0,
 				'total_sections'           => 0,

@@ -217,8 +217,9 @@ class Blog_Poster_Queue_Runner {
 
         $model = isset( $job['ai_model'] ) ? $job['ai_model'] : '';
         $title = isset( $review_result['title'] ) ? $review_result['title'] : 'Untitled';
-        // テスト用にモデル名をプレフィックスとして追加（区切り文字付き）
-        $prefixed_title = $model !== '' ? '[' . $model . '] ' . $title : $title;
+        $is_batch = ! empty( $job['is_batch'] );
+        // バッチ生成時のみモデル名をプレフィックスとして追加
+        $prefixed_title = ( $is_batch && $model !== '' ) ? '[' . $model . '] ' . $title : $title;
 
         $post_id = wp_insert_post( array(
             'post_title'   => $prefixed_title,
