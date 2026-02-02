@@ -543,6 +543,21 @@ class Blog_Poster_Admin {
     public function ajax_create_post() {
         check_ajax_referer( 'blog_poster_nonce', 'nonce' );
 
+        ob_start();
+        $send_json = function ( $success, $payload ) {
+            if ( ob_get_length() ) {
+                $buffer = ob_get_contents();
+                ob_end_clean();
+                if ( $buffer ) {
+                    error_log( 'Blog Poster: ajax_create_post cleared unexpected output buffer.' );
+                }
+            }
+            if ( $success ) {
+                wp_send_json_success( $payload );
+            }
+            wp_send_json_error( $payload );
+        };
+
         error_log( 'Blog Poster: ajax_create_post called' );
 
         $title            = isset( $_POST['title'] ) ? sanitize_text_field( wp_unslash( $_POST['title'] ) ) : '';
@@ -581,7 +596,7 @@ class Blog_Poster_Admin {
 
         if ( empty( $title ) || empty( $html_content ) ) {
             error_log( 'Blog Poster: Empty title or content after job fallback' );
-            wp_send_json_error( array( 'message' => 'ジョブが未完了の可能性があります。完了後に再試行してください。' ) );
+            $send_json( false, array( 'message' => 'ジョブが未完了の可能性があります。完了後に再試行してください。' ) );
         }
 
         // 投稿を作成
@@ -603,7 +618,7 @@ class Blog_Poster_Admin {
 
         if ( is_wp_error( $post_id ) ) {
             error_log( 'Blog Poster: wp_insert_post error: ' . $post_id->get_error_message() );
-            wp_send_json_error( array( 'message' => $post_id->get_error_message() ) );
+            $send_json( false, array( 'message' => $post_id->get_error_message() ) );
         }
 
         // ジョブからモデル情報を取得して post_meta に保存
@@ -674,7 +689,8 @@ class Blog_Poster_Admin {
 
         error_log( 'Blog Poster: Post created successfully with ID: ' . $post_id );
 
-        wp_send_json_success(
+        $send_json(
+            true,
             array(
                 'post_id'  => $post_id,
                 'edit_url' => admin_url( 'post.php?post=' . $post_id . '&action=edit' ),
