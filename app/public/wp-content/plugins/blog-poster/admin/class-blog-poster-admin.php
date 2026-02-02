@@ -789,6 +789,11 @@ class Blog_Poster_Admin {
         );
         $markdown = strtr( $markdown, $html_entity_replacements );
 
+        // 1-4. AIが出力した不正なコードブロック形式を修正
+        // パターン: 言語指定が単独行で、その後にコードが続く場合
+        // 例: "python\n# code\nimport csv" → "```python\n# code\nimport csv\n```"
+        $markdown = self::fix_malformed_code_blocks( $markdown );
+
         // ステップ2: コードブロックの構造検証と修正
         $lines = explode( "\n", $markdown );
         $fixed_lines = array();
@@ -848,6 +853,112 @@ class Blog_Poster_Admin {
         $html = wp_kses( $html, $allowed_html );
 
         return $html;
+    }
+
+    /**
+     * AIが出力した不正なコードブロック形式を修正
+     *
+     * 問題パターン:
+     * - 言語指定が単独行で、その後にコードが続く場合
+     * - 例: "python\n# code\nimport csv" → "```python\n# code\nimport csv\n```"
+     *
+     * @param string $markdown マークダウン文字列
+     * @return string 修正後のマークダウン
+     */
+    private static function fix_malformed_code_blocks( $markdown ) {
+        $lines = explode( "\n", $markdown );
+        $fixed_lines = array();
+        $i = 0;
+        $supported_languages = array(
+            'python', 'javascript', 'js', 'typescript', 'ts', 'bash', 'shell', 'sh',
+            'php', 'sql', 'html', 'css', 'scss', 'sass', 'less', 'json', 'xml',
+            'yaml', 'yml', 'markdown', 'md', 'ruby', 'rb', 'java', 'c', 'cpp',
+            'csharp', 'cs', 'go', 'rust', 'rust', 'kotlin', 'swift', 'objc',
+            'perl', 'lua', 'r', 'scala', 'haskell', 'clojure', 'groovy', 'gradle',
+            'cmake', 'makefile', 'dockerfile', 'diff', 'patch', 'text', 'plain',
+            'plaintext', 'ini', 'toml', 'docker', 'latex', 'tex', 'matlab',
+            'scheme', 'lisp', 'elisp', 'vim', 'nasm', 'asm', 'assembly',
+        );
+
+        while ( $i < count( $lines ) ) {
+            $line = $lines[ $i ];
+            $trimmed = trim( $line );
+
+            // 言語指定が単独行か判定（行の先頭が直接言語名である場合）
+            if ( $i < count( $lines ) - 1 &&
+                 in_array( strtolower( $trimmed ), $supported_languages, true ) &&
+                 ! preg_match( '/^```/u', $trimmed ) &&
+                 strlen( $trimmed ) > 0 &&
+                 ! preg_match( '/\s/u', $trimmed ) ) { // スペースが含まれていない（純粋な言語名）
+
+                $next_line = trim( $lines[ $i + 1 ] );
+
+                // 次の行が空白でない場合、コードブロックと判定
+                if ( strlen( $next_line ) > 0 ) {
+                    $language = $trimmed;
+                    $code_lines = array( "```$language" );
+                    $i++;
+
+                    // 連続する空行をスキップ（最初）
+                    while ( $i < count( $lines ) && trim( $lines[ $i ] ) === '' ) {
+                        $i++;
+                    }
+
+                    // コードをスキャンして、ブロック終了まで追加
+                    $found_code_end = false;
+                    $blank_line_count = 0;
+
+                    while ( $i < count( $lines ) && ! $found_code_end ) {
+                        $current = $lines[ $i ];
+                        $current_trimmed = trim( $current );
+
+                        // 2行以上の連続空行があればコードブロック終了
+                        if ( strlen( $current_trimmed ) === 0 ) {
+                            $blank_line_count++;
+                            if ( $blank_line_count >= 2 ) {
+                                $found_code_end = true;
+                                $code_lines[] = '```';
+                                $i--; // 一つ戻す
+                            } else {
+                                $code_lines[] = $current;
+                            }
+                        } else {
+                            $blank_line_count = 0;
+
+                            // 見出しが現れたかチェック（# heading の形式）
+                            // ファイル名コメント（# file.py）は見出しではなく、コードと見做す
+                            $is_markdown_heading = preg_match( '/^#{1,6}\s+/u', $current_trimmed ) &&
+                                                 ! preg_match( '/\.\w{1,4}$/u', $current_trimmed ); // ファイル拡張子を除外
+
+                            if ( $is_markdown_heading ) {
+                                $found_code_end = true;
+                                $code_lines[] = '```';
+                                $i--; // 一つ戻す
+                            } else {
+                                $code_lines[] = $current;
+                            }
+                        }
+
+                        $i++;
+                    }
+
+                    // 最後に```を追加（ループが終了した場合）
+                    if ( ! $found_code_end ) {
+                        $code_lines[] = '```';
+                    }
+
+                    $fixed_lines = array_merge( $fixed_lines, $code_lines );
+                } else {
+                    $fixed_lines[] = $line;
+                }
+            } else {
+                $fixed_lines[] = $line;
+            }
+
+            $i++;
+        }
+
+        return implode( "\n", $fixed_lines );
     }
 
     /**
