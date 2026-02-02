@@ -59,6 +59,9 @@ class Blog_Poster_Queue_Runner {
                 $results['processed']++;
 
                 if ( ! $step_result['success'] ) {
+                    if ( ! empty( $step_result['retry'] ) ) {
+                        continue;
+                    }
                     $results['errors'][] = $step_result['message'];
                     continue;
                 }
@@ -119,6 +122,9 @@ class Blog_Poster_Queue_Runner {
                 $results['processed']++;
 
                 if ( empty( $step_result['success'] ) ) {
+                    if ( ! empty( $step_result['retry'] ) ) {
+                        continue;
+                    }
                     $results['errors'][] = $step_result['message'];
                     break;
                 }

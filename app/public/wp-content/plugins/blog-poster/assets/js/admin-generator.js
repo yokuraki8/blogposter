@@ -233,6 +233,13 @@ jQuery(document).ready(function($) {
                         processNextStep(stepIndex + 1);
                     }, 500);
                 } else {
+                    if (response.data && response.data.retry) {
+                        updateProgress(progress, '処理継続中（他プロセス実行中）...');
+                        setTimeout(function() {
+                            processNextStep(stepIndex);
+                        }, 1500);
+                        return;
+                    }
                     console.log('Step failed:', response.data.message);
                     showError(response.data.message || 'ステップ処理に失敗しました');
                 }

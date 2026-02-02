@@ -260,6 +260,23 @@ class Blog_Poster_Job_Manager {
 		return $job;
 	}
 
+	private function get_job_lock_key( $job_id ) {
+		return 'blog_poster_job_lock_' . intval( $job_id );
+	}
+
+	private function acquire_job_lock( $job_id, $ttl = 600 ) {
+		$key = $this->get_job_lock_key( $job_id );
+		if ( get_transient( $key ) ) {
+			return false;
+		}
+		set_transient( $key, time(), intval( $ttl ) );
+		return true;
+	}
+
+	private function release_job_lock( $job_id ) {
+		delete_transient( $this->get_job_lock_key( $job_id ) );
+	}
+
 	/**
 	 * Step 1: アウトライン生成
 	 *
@@ -272,6 +289,7 @@ class Blog_Poster_Job_Manager {
 		$original_settings = $this->apply_job_settings( $job );
 		$attempt_count = 0;
 		$used_fallback = false;
+		$lock_acquired = false;
 
 		if ( ! $job || 'pending' !== $job['status'] ) {
 			$this->restore_job_settings( $original_settings );
@@ -282,6 +300,16 @@ class Blog_Poster_Job_Manager {
 		}
 
 		try {
+			$lock_acquired = $this->acquire_job_lock( $job_id, 900 );
+			if ( ! $lock_acquired ) {
+				return array(
+					'success' => false,
+					'message' => '処理中のため再試行してください。',
+					'retry'   => true,
+					'code'    => 'job_locked',
+				);
+			}
+
 			error_log( 'Blog Poster: Starting Markdown outline flow (claude default).' );
 			$additional_instructions = $job['additional_instructions'] ?? '';
 
@@ -382,6 +410,9 @@ class Blog_Poster_Job_Manager {
 					$used_fallback ? 'yes' : 'no'
 				)
 			);
+			if ( $lock_acquired ) {
+				$this->release_job_lock( $job_id );
+			}
 			$this->restore_job_settings( $original_settings );
 		}
 	}
@@ -396,6 +427,7 @@ class Blog_Poster_Job_Manager {
 		$step_start = microtime( true );
 		$job = $this->get_job( $job_id );
 		$original_settings = $this->apply_job_settings( $job );
+		$lock_acquired = false;
 
 		if ( ! $job || ! in_array( $job['status'], array( 'outline', 'content' ), true ) ) {
 			$this->restore_job_settings( $original_settings );
@@ -406,6 +438,16 @@ class Blog_Poster_Job_Manager {
 		}
 
 		try {
+			$lock_acquired = $this->acquire_job_lock( $job_id, 900 );
+			if ( ! $lock_acquired ) {
+				return array(
+					'success' => false,
+					'message' => '処理中のため再試行してください。',
+					'retry'   => true,
+					'code'    => 'job_locked',
+				);
+			}
+
 			// article_lengthをジョブから取得してジェネレーターに設定
 			$article_length = $job['article_length'] ?? 'standard';
 			$this->generator->set_article_length( $article_length );
@@ -587,6 +629,9 @@ class Blog_Poster_Job_Manager {
 					$elapsed
 				)
 			);
+			if ( $lock_acquired ) {
+				$this->release_job_lock( $job_id );
+			}
 			$this->restore_job_settings( $original_settings );
 		}
 	}
@@ -601,6 +646,7 @@ class Blog_Poster_Job_Manager {
 		$step_start = microtime( true );
 		$job = $this->get_job( $job_id );
 		$original_settings = $this->apply_job_settings( $job );
+		$lock_acquired = false;
 
 		if ( ! $job || ! in_array( $job['status'], array( 'content', 'review' ), true ) ) {
 			$this->restore_job_settings( $original_settings );
@@ -619,6 +665,16 @@ class Blog_Poster_Job_Manager {
 		);
 
 		try {
+			$lock_acquired = $this->acquire_job_lock( $job_id, 900 );
+			if ( ! $lock_acquired ) {
+				return array(
+					'success' => false,
+					'message' => '処理中のため再試行してください。',
+					'retry'   => true,
+					'code'    => 'job_locked',
+				);
+			}
+
 			// article_lengthをジョブから取得してジェネレーターに設定
 			$article_length = $job['article_length'] ?? 'standard';
 			$this->generator->set_article_length( $article_length );
@@ -726,6 +782,9 @@ class Blog_Poster_Job_Manager {
 					$elapsed
 				)
 			);
+			if ( $lock_acquired ) {
+				$this->release_job_lock( $job_id );
+			}
 			$this->restore_job_settings( $original_settings );
 		}
 	}
