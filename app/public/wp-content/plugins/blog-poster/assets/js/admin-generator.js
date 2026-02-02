@@ -237,7 +237,7 @@ jQuery(document).ready(function($) {
                         updateProgress(progress, '処理継続中（他プロセス実行中）...');
                         setTimeout(function() {
                             processNextStep(stepIndex);
-                        }, 1500);
+                        }, 5000);
                         return;
                     }
                     console.log('Step failed:', response.data.message);

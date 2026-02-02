@@ -79,7 +79,7 @@ class Blog_Poster_Generator {
                 'h2_min' => 3,
                 'h2_max' => 4,
                 'section_chars' => '200-300',
-                'max_tokens' => 2000,
+                'max_tokens' => 1500,
             ),
             'standard' => array(
                 'total_chars' => 5000,
@@ -87,7 +87,7 @@ class Blog_Poster_Generator {
                 'h2_min' => 4,
                 'h2_max' => 5,
                 'section_chars' => '300-500',
-                'max_tokens' => 4000,
+                'max_tokens' => 3000,
             ),
             'long' => array(
                 'total_chars' => 10000,
@@ -95,7 +95,7 @@ class Blog_Poster_Generator {
                 'h2_min' => 6,
                 'h2_max' => 8,
                 'section_chars' => '500-800',
-                'max_tokens' => 6000,
+                'max_tokens' => 4500,
             ),
         );
         return isset( $configs[ $article_length ] ) ? $configs[ $article_length ] : $configs['standard'];

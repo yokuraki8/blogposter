@@ -400,16 +400,18 @@ class Blog_Poster_Job_Manager {
 				'message' => $e->getMessage(),
 			);
 		} finally {
-			$elapsed = microtime( true ) - $step_start;
-			error_log(
-				sprintf(
-					'Blog Poster Timing: step=outline job_id=%d elapsed=%.3fs attempts=%d fallback=%s',
-					(int) $job_id,
-					$elapsed,
-					$attempt_count,
-					$used_fallback ? 'yes' : 'no'
-				)
-			);
+			if ( $lock_acquired ) {
+				$elapsed = microtime( true ) - $step_start;
+				error_log(
+					sprintf(
+						'Blog Poster Timing: step=outline job_id=%d elapsed=%.3fs attempts=%d fallback=%s',
+						(int) $job_id,
+						$elapsed,
+						$attempt_count,
+						$used_fallback ? 'yes' : 'no'
+					)
+				);
+			}
 			if ( $lock_acquired ) {
 				$this->release_job_lock( $job_id );
 			}
@@ -621,14 +623,16 @@ class Blog_Poster_Job_Manager {
 				'message' => $e->getMessage(),
 			);
 		} finally {
-			$elapsed = microtime( true ) - $step_start;
-			error_log(
-				sprintf(
-					'Blog Poster Timing: step=content job_id=%d elapsed=%.3fs',
-					(int) $job_id,
-					$elapsed
-				)
-			);
+			if ( $lock_acquired ) {
+				$elapsed = microtime( true ) - $step_start;
+				error_log(
+					sprintf(
+						'Blog Poster Timing: step=content job_id=%d elapsed=%.3fs',
+						(int) $job_id,
+						$elapsed
+					)
+				);
+			}
 			if ( $lock_acquired ) {
 				$this->release_job_lock( $job_id );
 			}
@@ -774,14 +778,16 @@ class Blog_Poster_Job_Manager {
 				'message' => $e->getMessage(),
 			);
 		} finally {
-			$elapsed = microtime( true ) - $step_start;
-			error_log(
-				sprintf(
-					'Blog Poster Timing: step=review job_id=%d elapsed=%.3fs',
-					(int) $job_id,
-					$elapsed
-				)
-			);
+			if ( $lock_acquired ) {
+				$elapsed = microtime( true ) - $step_start;
+				error_log(
+					sprintf(
+						'Blog Poster Timing: step=review job_id=%d elapsed=%.3fs',
+						(int) $job_id,
+						$elapsed
+					)
+				);
+			}
 			if ( $lock_acquired ) {
 				$this->release_job_lock( $job_id );
 			}
