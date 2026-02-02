@@ -46,8 +46,7 @@ class Blog_Poster_OpenAI_Client extends Blog_Poster_AI_Client {
         $adjusted_prompt = $this->apply_tone_settings( $prompt );
 
         $is_gpt5 = ( 0 === strpos( $this->model, 'gpt-5' ) );
-        // gpt-5.2-proはtemperatureパラメータをサポートしない
-        $supports_temperature = ( 'gpt-5.2-pro' !== $this->model );
+        $supports_temperature = ! $is_gpt5;
 
         if ( $is_gpt5 ) {
             $url = self::API_BASE_URL . 'responses';
