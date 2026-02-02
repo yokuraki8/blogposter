@@ -98,6 +98,9 @@ class Blog_Poster {
             $admin = new Blog_Poster_Admin();
         }
 
+        // 設定の軽微な移行
+        add_action( 'init', array( $this, 'maybe_upgrade_settings' ) );
+
         // 国際化対応
         add_action( 'plugins_loaded', array( $this, 'load_textdomain' ) );
 
@@ -223,7 +226,7 @@ class Blog_Poster {
                 'openai' => 'gpt-5.2'
             ),
             'temperature' => 0.7,
-            'max_tokens' => 2000,
+            'max_tokens' => 8000,
             'formality' => 50,      // フォーマル度 (0-100)
             'expertise' => 50,      // 専門性 (0-100)
             'friendliness' => 50,   // 親しみやすさ (0-100)
@@ -237,6 +240,23 @@ class Blog_Poster {
 
         if ( ! get_option( 'blog_poster_settings' ) ) {
             add_option( 'blog_poster_settings', $default_settings );
+        }
+    }
+
+    /**
+     * 旧デフォルト設定の軽微な移行
+     */
+    public function maybe_upgrade_settings() {
+        $settings = get_option( 'blog_poster_settings', array() );
+        if ( empty( $settings ) || ! is_array( $settings ) ) {
+            return;
+        }
+
+        $current_max = isset( $settings['max_tokens'] ) ? intval( $settings['max_tokens'] ) : 0;
+        if ( 0 === $current_max || 2000 === $current_max ) {
+            $settings['max_tokens'] = 8000;
+            update_option( 'blog_poster_settings', $settings );
+            error_log( 'Blog Poster: Upgraded max_tokens setting to 8000.' );
         }
     }
 

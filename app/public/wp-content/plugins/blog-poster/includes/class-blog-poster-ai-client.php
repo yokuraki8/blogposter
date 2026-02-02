@@ -54,7 +54,7 @@ abstract class Blog_Poster_AI_Client {
         $this->api_key = $api_key;
         $this->model = $model;
         $this->temperature = isset( $options['temperature'] ) ? $options['temperature'] : 0.7;
-        $this->max_tokens = isset( $options['max_tokens'] ) ? $options['max_tokens'] : 2000;
+        $this->max_tokens = isset( $options['max_tokens'] ) ? $options['max_tokens'] : 8000;
     }
 
     /**

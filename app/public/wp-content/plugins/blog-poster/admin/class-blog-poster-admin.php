@@ -185,7 +185,7 @@ class Blog_Poster_Admin {
 
         // Parameters
         $sanitized['temperature'] = isset( $input['temperature'] ) ? floatval( $input['temperature'] ) : 0.7;
-        $sanitized['max_tokens'] = isset( $input['max_tokens'] ) ? intval( $input['max_tokens'] ) : 2000;
+        $sanitized['max_tokens'] = isset( $input['max_tokens'] ) ? intval( $input['max_tokens'] ) : 8000;
 
         // Slider settings
         $sanitized['formality'] = isset( $input['formality'] ) ? intval( $input['formality'] ) : 50;
