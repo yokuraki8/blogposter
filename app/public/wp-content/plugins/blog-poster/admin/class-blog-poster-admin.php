@@ -459,6 +459,25 @@ class Blog_Poster_Admin {
         }
 
         $job_manager = new Blog_Poster_Job_Manager();
+        $job = $job_manager->get_job( $job_id );
+
+        if ( ! $job ) {
+            wp_send_json_error( array( 'message' => 'ジョブが見つかりません' ) );
+        }
+
+        if ( in_array( $job['status'], array( 'failed', 'cancelled', 'completed' ), true ) ) {
+            $message = ! empty( $job['error_message'] ) ? $job['error_message'] : 'ジョブは既に終了しています。';
+            wp_send_json_error( array( 'message' => $message ) );
+        }
+
+        // ステータスに合わせて実行ステップを補正（競合・再送対策）
+        if ( 'pending' === $job['status'] ) {
+            $step = 'outline';
+        } elseif ( in_array( $job['status'], array( 'outline', 'content' ), true ) ) {
+            $step = 'content';
+        } elseif ( 'review' === $job['status'] ) {
+            $step = 'review';
+        }
 
         switch ( $step ) {
             case 'outline':

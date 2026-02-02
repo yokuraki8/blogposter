@@ -245,14 +245,6 @@ class Blog_Poster_Job_Manager {
 			);
 		}
 
-		$this->update_job(
-			$job_id,
-			array(
-				'status'       => 'outline',
-				'current_step' => 1,
-			)
-		);
-
 		try {
 			error_log( 'Blog Poster: Starting Markdown outline flow (claude default).' );
 			$additional_instructions = $job['additional_instructions'] ?? '';
@@ -308,6 +300,7 @@ class Blog_Poster_Job_Manager {
 				array(
 					'outline_md'      => $outline_md,
 					'current_step'    => 1,
+					'status'          => 'outline',
 					'total_sections'  => $total_sections,
 					'current_section_index' => 0,
 					'previous_context' => '',
@@ -356,15 +349,6 @@ class Blog_Poster_Job_Manager {
 			);
 		}
 
-		// 初回または継続のステータス更新
-		$this->update_job(
-			$job_id,
-			array(
-				'status'       => 'content',
-				'current_step' => 2,
-			)
-		);
-
 		try {
 			// article_lengthをジョブから取得してジェネレーターに設定
 			$article_length = $job['article_length'] ?? 'standard';
@@ -386,8 +370,20 @@ class Blog_Poster_Job_Manager {
 			}
 
 			if ( empty( $outline_md ) ) {
-				throw new Exception( 'アウトラインが見つかりません。' );
+				return array(
+					'success' => false,
+					'message' => 'アウトライン生成中です。しばらく待ってから再試行してください。',
+				);
 			}
+
+			// 初回または継続のステータス更新（アウトライン確認後）
+			$this->update_job(
+				$job_id,
+				array(
+					'status'       => 'content',
+					'current_step' => 2,
+				)
+			);
 
 			// Markdownアウトラインからセクション情報を取得
 			$parsed_outline = $this->generator->parse_markdown_frontmatter( $outline_md );
