@@ -58,7 +58,7 @@ class Blog_Poster_Generator {
         $lower_message = strtolower( $message );
         if ( false !== strpos( $lower_message, 'insufficient_quota' ) || false !== strpos( $lower_message, 'quota' ) ) {
             $code = 'api_insufficient_quota';
-        } elseif ( preg_match( '/\b429\b/', $message ) ) {
+        } elseif ( preg_match( '/\b429\b/u', $message ) ) {
             $code = 'api_rate_limit';
         }
 
@@ -431,7 +431,7 @@ class Blog_Poster_Generator {
             foreach ( $lines as $line ) {
                 $line = trim( $line );
                 // "1. タイトル" または "1) タイトル" 形式を抽出
-                if ( preg_match( '/^\d+[\.\)]\s+(.+)$/', $line, $matches ) ) {
+                if ( preg_match( '/^\d+[\.\)]\s+(.+)$/u', $line, $matches ) ) {
                     $titles[] = trim( $matches[1] );
                 }
             }
@@ -785,13 +785,13 @@ PROMPT;
         $section_md = ltrim( $section_md );
         $expected_heading = "## {$section_title}";
 
-        if ( preg_match( '/^##\s+.+$/m', $section_md, $matches, PREG_OFFSET_CAPTURE ) ) {
+        if ( preg_match( '/^##\s+.+$/mu', $section_md, $matches, PREG_OFFSET_CAPTURE ) ) {
             $first_heading = trim( $matches[0][0] );
             if ( $first_heading === $expected_heading ) {
                 return $section_md;
             }
             // 最初のH2を置換
-            $section_md = preg_replace( '/^##\s+.+$/m', $expected_heading, $section_md, 1 );
+            $section_md = preg_replace( '/^##\s+.+$/mu', $expected_heading, $section_md, 1 );
             return $section_md;
         }
 
@@ -818,7 +818,7 @@ PROMPT;
         $sections = array();
 
         // YAML frontmatterを抽出
-        if ( preg_match( '/^---\s*\n(.*?)\n---\s*\n/s', $markdown, $matches ) ) {
+        if ( preg_match( '/^---\s*\n(.*?)\n---\s*\n/su', $markdown, $matches ) ) {
             $frontmatter = $matches[1];
             $body = trim( substr( $markdown, strlen( $matches[0] ) ) );
 
@@ -830,7 +830,7 @@ PROMPT;
                 // title, slug, excerpt, meta_description - シングルクォート、ダブルクォート両対応
                 if ( preg_match( '/^(title|slug|excerpt|meta_description):\s*["\']([^"\']*)["\']/', $line, $m ) ) {
                     $meta[ $m[1] ] = $m[2];
-                } elseif ( preg_match( '/^(title|slug|excerpt|meta_description):\s*(.+)$/', $line, $m ) ) {
+                } elseif ( preg_match( '/^(title|slug|excerpt|meta_description):\s*(.+)$/u', $line, $m ) ) {
                     $value = trim( $m[2] );
                     // 前後のクォートを削除（シングル/ダブル両対応）
                     if ( preg_match( '/^["\'](.+)["\']$/', $value, $quote_match ) ) {
@@ -861,14 +861,14 @@ PROMPT;
             $line = trim( $line );
 
             // H1（タイトル候補）
-            if ( preg_match( '/^#\s+(.+)$/', $line, $m ) ) {
+            if ( preg_match( '/^#\s+(.+)$/u', $line, $m ) ) {
                 if ( $h1_title === null ) {
                     $h1_title = trim( $m[1] );
                 }
             }
 
             // H2セクション
-            elseif ( preg_match( '/^##\s+(.+)$/', $line, $m ) ) {
+            elseif ( preg_match( '/^##\s+(.+)$/u', $line, $m ) ) {
                 if ( $current_section !== null ) {
                     $sections[] = $current_section;
                 }
@@ -880,7 +880,7 @@ PROMPT;
             }
 
             // H3サブセクション
-            elseif ( preg_match( '/^###\s+(.+)$/', $line, $m ) ) {
+            elseif ( preg_match( '/^###\s+(.+)$/u', $line, $m ) ) {
                 if ( $current_section !== null ) {
                     $current_subsection = array(
                         'title' => trim( $m[1] ),
@@ -891,7 +891,7 @@ PROMPT;
             }
 
             // リストポイント
-            elseif ( preg_match( '/^-\s+(.+)$/', $line, $m ) ) {
+            elseif ( preg_match( '/^-\s+(.+)$/u', $line, $m ) ) {
                 if ( $current_subsection !== null ) {
                     $last_idx = count( $current_section['subsections'] ) - 1;
                     $current_section['subsections'][ $last_idx ]['points'][] = trim( $m[1] );
@@ -913,7 +913,7 @@ PROMPT;
                 // 最初のH2セクションをタイトルとして使用（ただしトピックベースの自動生成を推奨）
                 $first_section_title = $sections[0]['title'];
                 // 一般的な構成セクション名を除外（目次、はじめに等）
-                if ( ! preg_match( '/^(目次|はじめに|概要|はじめにあたって|まとめ|結論|参考文献|付録)$/', $first_section_title ) ) {
+                if ( ! preg_match( '/^(目次|はじめに|概要|はじめにあたって|まとめ|結論|参考文献|付録)$/u', $first_section_title ) ) {
                     $meta['title'] = $first_section_title;
                     error_log( 'Blog Poster: Using first section as title: ' . $first_section_title );
                 }
@@ -986,7 +986,7 @@ PROMPT;
 
         foreach ( $lines as $line ) {
             // コードブロック制御
-            if ( preg_match( '/^```/', $line ) ) {
+            if ( preg_match( '/^```/u', $line ) ) {
                 $in_code_block = ! $in_code_block;
                 continue;
             }
@@ -996,7 +996,7 @@ PROMPT;
             }
 
             // 見出し行をスキップ
-            if ( preg_match( '/^#{2,}/', $line ) ) {
+            if ( preg_match( '/^#{2,}/u', $line ) ) {
                 continue;
             }
 
@@ -1024,7 +1024,7 @@ PROMPT;
      */
     private function validate_section_code_blocks( $markdown ) {
         // コードブロックの開始・終了をカウント
-        $open_count = preg_match_all( '/```/m', $markdown, $matches );
+        $open_count = preg_match_all( '/```/mu', $markdown, $matches );
 
         // 奇数個の場合、最後に閉じタグを追加
         if ( $open_count % 2 !== 0 ) {
@@ -1034,7 +1034,7 @@ PROMPT;
 
         // セクション末尾のコードブロックチェック
         // 末尾が```で終わる場合、次のセクションとの干渉を防ぐため改行を追加
-        if ( preg_match( '/```\s*$/m', $markdown ) ) {
+        if ( preg_match( '/```\s*$/mu', $markdown ) ) {
             $markdown .= "\n";
         }
 
@@ -1049,8 +1049,8 @@ PROMPT;
      */
     public function postprocess_markdown( $markdown ) {
         // 1. コードブロック開始/終了の一致確認（柔軟な正規表現）
-        $open_count = preg_match_all( '/```[\w]*/m', $markdown, $open_matches );
-        $close_count = preg_match_all( '/```\s*$|```\s*\n/m', $markdown, $close_matches );
+        $open_count = preg_match_all( '/```[\w]*/mu', $markdown, $open_matches );
+        $close_count = preg_match_all( '/```\s*$|```\s*\n/mu', $markdown, $close_matches );
 
         error_log( "Blog Poster: Code block check - Open: {$open_count}, Close: {$close_count}" );
 
@@ -1064,7 +1064,7 @@ PROMPT;
         }
 
         // 2. 連続する空行を2つまでに制限
-        $markdown = preg_replace( "/\n{4,}/", "\n\n\n", $markdown );
+        $markdown = preg_replace( "/\n{4,}/u", "\n\n\n", $markdown );
 
         // 3. 末尾の余分な空白削除
         $markdown = rtrim( $markdown ) . "\n";
@@ -1082,7 +1082,7 @@ PROMPT;
         $converted = 0;
 
         $markdown = preg_replace_callback(
-            '/```([^\n]*)\R(.*?)\R```/s',
+            '/```([^\n]*)\R(.*?)\R```/su',
             function( $matches ) use ( &$converted ) {
                 $language = trim( $matches[1] );
                 $language_normalized = strtolower( $language );
@@ -1154,15 +1154,15 @@ PROMPT;
             return false;
         }
 
-        if ( preg_match( '/^#{1,6}\s+/', $last_line ) ) {
+        if ( preg_match( '/^#{1,6}\s+/u', $last_line ) ) {
             return false;
         }
 
-        if ( preg_match( '/^(\d+[\.)]\s+|[-*+]\s+)/', $last_line ) ) {
+        if ( preg_match( '/^(\d+[\.)]\s+|[-*+]\s+)/u', $last_line ) ) {
             return false;
         }
 
-        if ( preg_match( '/[`>]$/', $last_line ) ) {
+        if ( preg_match( '/[`>]$/u', $last_line ) ) {
             return false;
         }
 
@@ -1196,15 +1196,15 @@ PROMPT;
     private function is_prose_like_code_block( $content ) {
         $has_japanese = preg_match( '/[\x{3040}-\x{30FF}\x{4E00}-\x{9FFF}]/u', $content );
         $has_sentence = preg_match( '/[。！？]/u', $content ) || preg_match( '/(です|ます|こと|ため|例えば|なお)/u', $content );
-        $has_heading  = preg_match( '/^\s*#{1,6}\s+/m', $content );
-        $has_list     = preg_match( '/^\s*[-*+]\s+/m', $content );
+        $has_heading  = preg_match( '/^\s*#{1,6}\s+/mu', $content );
+        $has_list     = preg_match( '/^\s*[-*+]\s+/mu', $content );
 
-        $content_for_code = preg_replace( '/\{\{[^}]+\}\}/', '', $content );
+        $content_for_code = preg_replace( '/\{\{[^}]+\}\}/u', '', $content );
         $has_code_tokens = preg_match(
-            '/[{};]|=>|\b(function|const|let|var|class|import|export|return|public|private|protected|if|else|for|while|switch|case|def|echo|print|console|new)\b/',
+            '/[{};]|=>|\b(function|const|let|var|class|import|export|return|public|private|protected|if|else|for|while|switch|case|def|echo|print|console|new)\b/u',
             $content_for_code
         );
-        $has_code_indent = preg_match( '/^\s{4,}\S/m', $content );
+        $has_code_indent = preg_match( '/^\s{4,}\S/mu', $content );
 
         $has_prose_signal = $has_japanese || $has_sentence || $has_heading || $has_list;
         $has_code_signal  = $has_code_tokens || $has_code_indent;
@@ -1269,8 +1269,8 @@ PROMPT;
      * @return array 検証結果
      */
     public function validate_code_blocks( $content ) {
-        $open_count = preg_match_all( '/```\w*/m', $content, $open_matches );
-        $close_count = preg_match_all( '/```\s*$/m', $content, $close_matches );
+        $open_count = preg_match_all( '/```\w*/mu', $content, $open_matches );
+        $close_count = preg_match_all( '/```\s*$/mu', $content, $close_matches );
 
         if ( $open_count !== $close_count ) {
             return array(

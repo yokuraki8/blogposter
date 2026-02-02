@@ -738,7 +738,7 @@ class Blog_Poster_Admin {
      */
     private function build_meta_description( $html_content, $max_length = 160 ) {
         $text = wp_strip_all_tags( $html_content );
-        $text = preg_replace( '/\s+/', ' ', $text );
+        $text = preg_replace( '/\s+/u', ' ', $text );
         $text = trim( $text );
 
         if ( '' === $text ) {
@@ -769,12 +769,12 @@ class Blog_Poster_Admin {
         $markdown = html_entity_decode( $markdown, ENT_QUOTES | ENT_HTML5, 'UTF-8' );
 
         // 1-1.5. バッククォートのネスト正規化（5重 → 3重）
-        $markdown = preg_replace( '/`{5,}/', '```', $markdown );
-        $markdown = preg_replace( '/`{4}/', '```', $markdown );
+        $markdown = preg_replace( '/`{5,}/u', '```', $markdown );
+        $markdown = preg_replace( '/`{4}/u', '```', $markdown );
 
         // 1-2. 記事全体を囲む```markdownブロックを削除
-        $markdown = preg_replace( '/^```(?:markdown|md)\s*\n/', '', $markdown );
-        $markdown = preg_replace( '/\n```\s*$/', '', $markdown );
+        $markdown = preg_replace( '/^```(?:markdown|md)\s*\n/u', '', $markdown );
+        $markdown = preg_replace( '/\n```\s*$/u', '', $markdown );
 
         // 1-3. HTMLエンティティ化されたタグを修正
         $html_entity_replacements = array(
@@ -808,7 +808,7 @@ class Blog_Poster_Admin {
             }
 
             // コードブロック開始を検出
-            if ( preg_match( '/^```(\w*)/', $trimmed ) ) {
+            if ( preg_match( '/^```(\w*)/u', $trimmed ) ) {
                 // すでにコードブロック内なら前のブロックを閉じる
                 if ( $in_code_block ) {
                     $fixed_lines[] = '```';
