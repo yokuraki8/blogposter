@@ -473,8 +473,15 @@ class Blog_Poster_Admin {
         // ステータスに合わせて実行ステップを補正（競合・再送対策）
         if ( 'pending' === $job['status'] ) {
             $step = 'outline';
-        } elseif ( in_array( $job['status'], array( 'outline', 'content' ), true ) ) {
+        } elseif ( 'outline' === $job['status'] ) {
             $step = 'content';
+        } elseif ( 'content' === $job['status'] ) {
+            // content完了済みならreviewを許可
+            $total_sections = isset( $job['total_sections'] ) ? intval( $job['total_sections'] ) : 0;
+            $current_section = isset( $job['current_section_index'] ) ? intval( $job['current_section_index'] ) : 0;
+            if ( 'review' !== $step || ( $total_sections > 0 && $current_section < $total_sections ) ) {
+                $step = 'content';
+            }
         } elseif ( 'review' === $job['status'] ) {
             $step = 'review';
         }

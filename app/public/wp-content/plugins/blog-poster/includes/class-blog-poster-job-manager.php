@@ -401,6 +401,13 @@ class Blog_Poster_Job_Manager {
 
 			// すべて完了しているかチェック
 			if ( $current_section_index >= $total_sections ) {
+				$this->update_job(
+					$job_id,
+					array(
+						'status'       => 'review',
+						'current_step' => 3,
+					)
+				);
 				return array(
 					'success'         => true,
 					'done'            => true,
@@ -465,6 +472,15 @@ class Blog_Poster_Job_Manager {
 
 			// 完了判定
 			$is_done = ( $next_index >= $total_sections );
+			if ( $is_done ) {
+				$this->update_job(
+					$job_id,
+					array(
+						'status'       => 'review',
+						'current_step' => 3,
+					)
+				);
+			}
 
 			return array(
 				'success'          => true,
