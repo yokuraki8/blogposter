@@ -57,6 +57,19 @@ $settings = get_option( 'blog_poster_settings', array() );
                             ></textarea>
                         </td>
                     </tr>
+                    <tr>
+                        <th scope="row">
+                            <label for="article_length">記事の長さ</label>
+                        </th>
+                        <td>
+                            <select name="article_length" id="article_length" class="regular-text">
+                                <option value="short">短文（約2,000文字）</option>
+                                <option value="standard" selected>標準（約5,000文字）</option>
+                                <option value="long">長文（約10,000文字）</option>
+                            </select>
+                            <p class="description">生成する記事の目安文字数を選択してください。実際の文字数は多少前後します。</p>
+                        </td>
+                    </tr>
                 </table>
 
                 <p class="submit">

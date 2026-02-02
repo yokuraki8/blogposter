@@ -48,9 +48,11 @@ jQuery(document).ready(function($) {
 
         const topic = $('#topic').val().trim();
         const additionalInstructions = $('#additional_instructions').val().trim();
+        const articleLength = $('#article_length').val();
 
         console.log('Topic:', topic);
         console.log('Additional instructions:', additionalInstructions);
+        console.log('Article length:', articleLength);
 
         if (!topic) {
             alert('トピックを入力してください');
@@ -76,7 +78,8 @@ jQuery(document).ready(function($) {
                 action: 'blog_poster_create_job',
                 nonce: blogPosterAjax.nonce,
                 topic: topic,
-                additional_instructions: additionalInstructions
+                additional_instructions: additionalInstructions,
+                article_length: articleLength
             },
             success: function(response) {
                 console.log('Create job response:', response);

@@ -75,6 +75,7 @@ class Blog_Poster_Job_Manager {
 			ai_provider varchar(100),
 			ai_model varchar(100),
 			temperature float DEFAULT 0.7,
+			article_length varchar(20) DEFAULT 'standard',
 			status varchar(20) DEFAULT 'pending',
 			current_step int(11) DEFAULT 0,
 			total_steps int(11) DEFAULT 3,
@@ -85,6 +86,8 @@ class Blog_Poster_Job_Manager {
 			content_md longtext,
 			final_markdown longtext,
 			final_html longtext,
+			post_id bigint(20) UNSIGNED DEFAULT 0,
+			final_title text,
 			error_message text,
 			created_at datetime DEFAULT CURRENT_TIMESTAMP,
 			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -111,16 +114,17 @@ class Blog_Poster_Job_Manager {
 	 *
 	 * @param string $topic トピック
 	 * @param string $additional_instructions 追加指示
-	 * @param array  $options オプション配列 (ai_provider, ai_model, temperature)
+	 * @param array  $options オプション配列 (ai_provider, ai_model, temperature, article_length)
 	 * @return int ジョブID
 	 */
 	public function create_job( $topic, $additional_instructions = '', $options = array() ) {
 		global $wpdb;
 
-		// $options から ai_provider, ai_model, temperature を取得
+		// $options から ai_provider, ai_model, temperature, article_length を取得
 		$ai_provider = isset( $options['ai_provider'] ) ? $options['ai_provider'] : '';
 		$ai_model = isset( $options['ai_model'] ) ? $options['ai_model'] : '';
 		$temperature = isset( $options['temperature'] ) ? floatval( $options['temperature'] ) : 0.7;
+		$article_length = isset( $options['article_length'] ) ? $options['article_length'] : 'standard';
 
 		$result = $wpdb->insert(
 			$this->table_name,
@@ -130,6 +134,7 @@ class Blog_Poster_Job_Manager {
 				'ai_provider'              => $ai_provider,
 				'ai_model'                 => $ai_model,
 				'temperature'              => $temperature,
+				'article_length'           => $article_length,
 				'status'                   => 'pending',
 				'current_section_index'    => 0,
 				'total_sections'           => 0,
@@ -252,6 +257,10 @@ class Blog_Poster_Job_Manager {
 			error_log( 'Blog Poster: Starting Markdown outline flow (claude default).' );
 			$additional_instructions = $job['additional_instructions'] ?? '';
 
+			// article_lengthをジョブから取得してジェネレーターに設定
+			$article_length = $job['article_length'] ?? 'standard';
+			$this->generator->set_article_length( $article_length );
+
 			$outline_result = null;
 			$last_error     = '';
 			$max_attempt    = 5;
@@ -354,6 +363,10 @@ class Blog_Poster_Job_Manager {
 		);
 
 		try {
+			// article_lengthをジョブから取得してジェネレーターに設定
+			$article_length = $job['article_length'] ?? 'standard';
+			$this->generator->set_article_length( $article_length );
+
 			$outline_md = $job['outline_md'] ?? '';
 			$additional_instructions = $job['additional_instructions'] ?? '';
 			$current_section_index = intval( $job['current_section_index'] ?? 0 );
@@ -494,6 +507,10 @@ class Blog_Poster_Job_Manager {
 		);
 
 		try {
+			// article_lengthをジョブから取得してジェネレーターに設定
+			$article_length = $job['article_length'] ?? 'standard';
+			$this->generator->set_article_length( $article_length );
+
 			$content_md = $job['content_md'] ?? '';
 			$topic      = $job['topic'];
 			$outline_md = $job['outline_md'] ?? '';

@@ -21,6 +21,55 @@ if ( ! defined( 'ABSPATH' ) ) {
 class Blog_Poster_Generator {
 
     /**
+     * 現在の記事長設定
+     *
+     * @var string
+     */
+    private $current_article_length = 'standard';
+
+    /**
+     * 記事長に応じた設定を取得
+     *
+     * @param string $article_length 記事長（short/standard/long）
+     * @return array 設定配列
+     */
+    private function get_length_config( $article_length ) {
+        $configs = array(
+            'short' => array(
+                'total_chars' => 2000,
+                'h2_count' => '3-4',
+                'h2_min' => 3,
+                'h2_max' => 4,
+                'section_chars' => '200-300',
+            ),
+            'standard' => array(
+                'total_chars' => 5000,
+                'h2_count' => '4-5',
+                'h2_min' => 4,
+                'h2_max' => 5,
+                'section_chars' => '300-500',
+            ),
+            'long' => array(
+                'total_chars' => 10000,
+                'h2_count' => '6-8',
+                'h2_min' => 6,
+                'h2_max' => 8,
+                'section_chars' => '500-800',
+            ),
+        );
+        return isset( $configs[ $article_length ] ) ? $configs[ $article_length ] : $configs['standard'];
+    }
+
+    /**
+     * 記事長を設定
+     *
+     * @param string $article_length 記事長（short/standard/long）
+     */
+    public function set_article_length( $article_length ) {
+        $this->current_article_length = $article_length;
+    }
+
+    /**
      * AIクライアントを取得
      *
      * @return object|WP_Error AIクライアントまたはエラー
@@ -248,28 +297,36 @@ class Blog_Poster_Generator {
 
         $additional_text = ! empty( $additional_instructions ) ? "\n追加指示: {$additional_instructions}" : '';
 
-        $prompt = "以下のトピックについて、ブログ記事のセクション見出し（H2）を4-7個考えてください。
+        $config = $this->get_length_config( $this->current_article_length );
+        $h2_count = $config['h2_count'];
+        $h2_min = $config['h2_min'];
+        $h2_max = $config['h2_max'];
+        $total_chars = $config['total_chars'];
+
+        // セクション例を動的に生成
+        $section_examples = '';
+        for ( $i = 1; $i <= $h2_max; $i++ ) {
+            $optional = $i > $h2_min ? '（任意）' : '';
+            $section_examples .= "{$i}. セクション{$i}のタイトル{$optional}\n";
+        }
+
+        $prompt = "以下のトピックについて、ブログ記事のセクション見出し（H2）を{$h2_count}個考えてください。
 
 トピック: {$topic}{$additional_text}
+
+【記事の目標文字数】約{$total_chars}文字
 
 【事実性の厳守】
 1. 構成は事実に基づく内容のみを想定すること
 2. 憶測・推測・断定できない表現に基づく構成は禁止
 
 【重要な制約】
-1. セクション見出しは必ず4個以上7個以下
+1. セクション見出しは必ず{$h2_min}個以上{$h2_max}個以下
 2. 各見出しは読者の課題解決を意識
 3. 論理的な流れを持つ構成
 
 出力形式（番号付きリストのみ）:
-1. セクション1のタイトル
-2. セクション2のタイトル
-3. セクション3のタイトル
-4. セクション4のタイトル
-5. セクション5のタイトル
-6. セクション6のタイトル（任意）
-7. セクション7のタイトル（任意）
-
+{$section_examples}
 番号付きリストのみを出力してください。説明文は不要です。";
 
         try {
@@ -307,9 +364,9 @@ class Blog_Poster_Generator {
             }
 
             $count = count( $titles );
-            if ( $count < 4 || $count > 7 ) {
+            if ( $count < $h2_min || $count > $h2_max ) {
                 error_log( 'Blog Poster: Step1 section count out of range: ' . $count );
-                return new WP_Error( 'step1_count', 'セクション数が不足しています。実際: ' . $count . '個（必要: 4-7個）' );
+                return new WP_Error( 'step1_count', 'セクション数が不足しています。実際: ' . $count . '個（必要: ' . $h2_count . '個）' );
             }
 
             error_log( 'Blog Poster: Step1 generated ' . $count . ' section titles' );
@@ -341,6 +398,9 @@ class Blog_Poster_Generator {
 
         $additional_text = ! empty( $additional_instructions ) ? "\n追加指示: {$additional_instructions}" : '';
 
+        $config = $this->get_length_config( $this->current_article_length );
+        $total_chars = $config['total_chars'];
+
         // セクションタイトルをリスト化
         $titles_list = '';
         foreach ( $section_titles as $idx => $title ) {
@@ -348,12 +408,14 @@ class Blog_Poster_Generator {
             $titles_list .= "{$num}. {$title}\n";
         }
 
-        $title_example_1 = $section_titles[0] ?? 'セクション1のタイトル';
-        $title_example_2 = $section_titles[1] ?? 'セクション2のタイトル';
+        $title_example_1 = isset( $section_titles[0] ) ? $section_titles[0] : 'セクション1のタイトル';
+        $title_example_2 = isset( $section_titles[1] ) ? $section_titles[1] : 'セクション2のタイトル';
 
         $prompt = "以下のトピックとセクション構成に基づいて、詳細なアウトラインを作成してください。
 
 トピック: {$topic}{$additional_text}
+
+【記事の目標文字数】約{$total_chars}文字
 
 セクション構成:
 {$titles_list}
@@ -519,12 +581,31 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
      */
     private function build_outline_prompt( $topic, $additional_instructions = '' ) {
         $additional_text = ! empty( $additional_instructions ) ? "\n追加指示: {$additional_instructions}" : '';
+        $config = $this->get_length_config( $this->current_article_length );
+        $h2_count = $config['h2_count'];
+        $h2_min = $config['h2_min'];
+        $h2_max = $config['h2_max'];
+        $total_chars = $config['total_chars'];
+
+        // セクション例を動的に生成
+        $section_examples = '';
+        for ( $i = 1; $i <= $h2_min; $i++ ) {
+            $section_examples .= "\n## セクション{$i}のタイトル\n\n### サブセクション{$i}-1\n- キーポイント\n";
+            if ( $i <= 2 ) {
+                $section_examples .= "\n### サブセクション{$i}-2\n- キーポイント\n";
+            }
+        }
+        if ( $h2_max > $h2_min ) {
+            $section_examples .= "\n（必要に応じて" . ( $h2_min + 1 ) . "-{$h2_max}個目のセクションも追加）\n";
+        }
 
         return <<<PROMPT
 
 あなたは日本語ブログ記事のプロフェッショナルライターです。
 
 トピック: {$topic}{$additional_text}
+
+【記事の目標文字数】約{$total_chars}文字
 
 【事実性の厳守】
 - 事実に基づく内容のみで構成案を作成すること
@@ -533,59 +614,28 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
 【重要】以下の形式で記事のアウトラインを作成してください:
 
 ---
-title: \"記事タイトル（SEO最適化、30-60文字）\"
-slug: \"url-friendly-slug\"
-excerpt: \"記事の抜粋（120-160文字）\"
-meta_description: \"120〜160文字の記事概要。検索結果に表示されるSEO用テキスト。キーワードを自然に含む\"
-keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
+title: "記事タイトル（SEO最適化、30-60文字）"
+slug: "url-friendly-slug"
+excerpt: "記事の抜粋（120-160文字）"
+meta_description: "120〜160文字の記事概要。検索結果に表示されるSEO用テキスト。キーワードを自然に含む"
+keywords: ["キーワード1", "キーワード2", "キーワード3"]
 ---
-
-## セクション1のタイトル
-
-### サブセクション1-1
-- キーポイント
-
-### サブセクション1-2
-- キーポイント
-
-## セクション2のタイトル
-
-### サブセクション2-1
-- キーポイント
-
-## セクション3のタイトル
-
-### サブセクション3-1
-- キーポイント
-
-## セクション4のタイトル
-
-### サブセクション4-1
-- キーポイント
-
-## セクション5のタイトル
-
-### サブセクション5-1
-- キーポイント
-
-（必要に応じて6-7個目のセクションも追加）
-
+{$section_examples}
 【重要な制約】
-1. **H2見出し（##）は「必ず5個以上7個以下」作成すること** ← これが最重要です
-2. 5個未満は絶対に禁止（4個、3個では不十分です）
-3. 8個以上も禁止
+1. **H2見出し（##）は「必ず{$h2_min}個以上{$h2_max}個以下」作成すること** ← これが最重要です
+2. {$h2_min}個未満は絶対に禁止
+3. {$h2_max}個を超えることも禁止
 4. 各H2の下にH3見出し（###）を2-4個配置
 5. 読者の課題解決を意識した構成
 6. 具体例やコード例を含むセクション構成を計画
 
 数値確認:
-- H2（##）の数: 5個、6個、または7個のいずれか（絶対ルール）
+- H2（##）の数: {$h2_count}個の範囲（絶対ルール）
 - H3（###）の数: 各H2につき2-4個
 
 【最終確認】
 出力はMarkdown形式のみ。説明文は不要です。
-H2見出し（##）を「必ず5個、6個、または7個」作成してください。
-他の数（3個、4個、8個以上）での出力は再生成の対象となります。
+H2見出し（##）を「必ず{$h2_count}個」作成してください。
 PROMPT;
     }
 
@@ -617,6 +667,9 @@ PROMPT;
         $context_text = ! empty( $previous_context ) ? "\n前のセクションの内容: {$previous_context}" : '';
         $additional_text = ! empty( $additional_instructions ) ? "\n追加指示: {$additional_instructions}" : '';
 
+        $config = $this->get_length_config( $this->current_article_length );
+        $section_chars = $config['section_chars'];
+
         return "以下のセクションの本文を、Markdown形式で詳細に執筆してください。
 
 セクション: ## {$section_title}
@@ -627,7 +680,7 @@ PROMPT;
 - 憶測・推測・断定できない表現は禁止
 
 要件:
-- 各サブセクションは300-500文字で詳細に
+- 各サブセクションは{$section_chars}文字で詳細に
 - 具体例や手順を含める（コード例は必要に応じて）
 - コードブロックは\`\`\`言語名\\nコード\\n\`\`\`形式で
 - 読者が実行できる内容を提供

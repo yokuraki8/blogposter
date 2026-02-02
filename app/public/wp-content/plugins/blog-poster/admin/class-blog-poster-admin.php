@@ -413,6 +413,7 @@ class Blog_Poster_Admin {
 
         $topic = isset( $_POST['topic'] ) ? sanitize_text_field( wp_unslash( $_POST['topic'] ) ) : '';
         $additional_instructions = isset( $_POST['additional_instructions'] ) ? sanitize_textarea_field( wp_unslash( $_POST['additional_instructions'] ) ) : '';
+        $article_length = isset( $_POST['article_length'] ) ? sanitize_text_field( wp_unslash( $_POST['article_length'] ) ) : 'standard';
 
         if ( empty( $topic ) ) {
             wp_send_json_error( array( 'message' => 'トピックを入力してください' ) );
@@ -428,6 +429,7 @@ class Blog_Poster_Admin {
             'ai_provider' => $ai_provider,
             'ai_model' => $ai_model,
             'temperature' => $temperature,
+            'article_length' => $article_length,
         );
 
         $job_manager = new Blog_Poster_Job_Manager();
