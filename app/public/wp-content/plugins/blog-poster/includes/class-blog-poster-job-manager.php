@@ -319,7 +319,7 @@ class Blog_Poster_Job_Manager {
 
 			$outline_result = null;
 			$last_error     = '';
-			$max_attempt    = 5;
+			$max_attempt    = 3;
 
 			for ( $attempt = 0; $attempt < $max_attempt; $attempt++ ) {
 				$attempt_count++;
@@ -331,12 +331,8 @@ class Blog_Poster_Job_Manager {
 					}
 				}
 
-				if ( $attempt >= 2 ) {
-					$outline_result = $this->generator->generate_outline_markdown( $job['topic'], $additional_instructions, 'gemini-2.5-flash' );
-					$used_fallback = true;
-				} else {
-					$outline_result = $this->generator->generate_outline_markdown( $job['topic'], $additional_instructions );
-				}
+				$outline_result = $this->generator->generate_outline_markdown( $job['topic'], $additional_instructions, 'gemini-2.5-flash' );
+				$used_fallback = true;
 
 				if ( ! is_wp_error( $outline_result ) ) {
 					break;

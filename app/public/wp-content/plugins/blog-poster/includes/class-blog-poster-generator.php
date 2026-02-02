@@ -79,6 +79,7 @@ class Blog_Poster_Generator {
                 'h2_min' => 3,
                 'h2_max' => 4,
                 'section_chars' => '200-300',
+                'outline_max_tokens' => 1200,
                 'max_tokens' => 1500,
             ),
             'standard' => array(
@@ -87,6 +88,7 @@ class Blog_Poster_Generator {
                 'h2_min' => 4,
                 'h2_max' => 5,
                 'section_chars' => '300-500',
+                'outline_max_tokens' => 1500,
                 'max_tokens' => 3000,
             ),
             'long' => array(
@@ -95,6 +97,7 @@ class Blog_Poster_Generator {
                 'h2_min' => 6,
                 'h2_max' => 8,
                 'section_chars' => '500-800',
+                'outline_max_tokens' => 2000,
                 'max_tokens' => 4500,
             ),
         );
@@ -264,6 +267,7 @@ class Blog_Poster_Generator {
         $h2_min = $config['h2_min'];
         $h2_max = $config['h2_max'];
         $h2_count = $config['h2_count'];
+        $outline_max_tokens = $config['outline_max_tokens'];
 
         $max_outline_retries = 2;
         for ( $outline_attempt = 0; $outline_attempt <= $max_outline_retries; $outline_attempt++ ) {
@@ -284,7 +288,7 @@ class Blog_Poster_Generator {
             }
 
             try {
-                $response = $client->generate_text( $prompt, array( 'max_tokens' => 3000, 'model' => $model_override ) );
+            $response = $client->generate_text( $prompt, array( 'max_tokens' => $outline_max_tokens, 'model' => $model_override ) );
 
                 if ( is_wp_error( $response ) ) {
                     return $response;
@@ -371,6 +375,7 @@ class Blog_Poster_Generator {
         $h2_min = $config['h2_min'];
         $h2_max = $config['h2_max'];
         $total_chars = $config['total_chars'];
+        $outline_max_tokens = $config['outline_max_tokens'];
 
         // セクション例を動的に生成
         $section_examples = '';
@@ -399,7 +404,7 @@ class Blog_Poster_Generator {
 番号付きリストのみを出力してください。説明文は不要です。";
 
         try {
-            $options = array( 'max_tokens' => 2000 );
+            $options = array( 'max_tokens' => $outline_max_tokens );
             if ( ! empty( $forced_model ) ) {
                 $options['model'] = $forced_model;
             }
@@ -533,7 +538,7 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
         error_log( 'Blog Poster: Step2 section titles: ' . print_r( $section_titles, true ) );
 
         try {
-            $options = array( 'max_tokens' => 4000 );
+            $options = array( 'max_tokens' => $outline_max_tokens );
             if ( ! empty( $forced_model ) ) {
                 $options['model'] = $forced_model;
             }
