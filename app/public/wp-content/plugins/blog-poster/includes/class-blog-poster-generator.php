@@ -238,6 +238,13 @@ class Blog_Poster_Generator {
                 return $response;
             }
 
+            // error_response()の場合もチェック
+            if ( isset( $response['success'] ) && false === $response['success'] ) {
+                $error_msg = isset( $response['error'] ) ? $response['error'] : 'APIエラーが発生しました。';
+                error_log( 'Blog Poster: API error response: ' . $error_msg );
+                return new WP_Error( 'api_error', $error_msg );
+            }
+
             $outline_md = '';
             if ( isset( $response['data'] ) && is_string( $response['data'] ) ) {
                 $outline_md = $response['data'];
@@ -263,10 +270,14 @@ class Blog_Poster_Generator {
                 return new WP_Error( 'outline_no_sections', 'アウトラインからセクションを抽出できませんでした。' );
             }
 
-            if ( $section_count < 4 || $section_count > 7 ) {
-                error_log( 'Blog Poster: Outline section count out of range: ' . $section_count );
+            // 動的に設定された記事長に応じたH2数チェック
+            $config = $this->get_length_config( $this->current_article_length );
+            $h2_min = $config['h2_min'];
+            $h2_max = $config['h2_max'];
+            if ( $section_count < $h2_min || $section_count > $h2_max ) {
+                error_log( 'Blog Poster: Outline section count out of range: ' . $section_count . ' (expected: ' . $h2_min . '-' . $h2_max . ')' );
                 error_log( 'Blog Poster: Full outline MD: ' . $outline_md );
-                return new WP_Error( 'outline_section_count', 'アウトラインのH2セクション数が不足しています。実際: ' . $section_count . '個（必要: 4-7個）' );
+                return new WP_Error( 'outline_section_count', 'アウトラインのH2セクション数が不足しています。実際: ' . $section_count . '個（必要: ' . $config['h2_count'] . '個）' );
             }
 
             return array(
