@@ -218,6 +218,13 @@ jQuery(document).ready(function($) {
                     // 最終ステップなら結果を表示
                     if (step === 'review') {
                         console.log('Review completed, displaying result with data:', response.data);
+                        if (!response.data || !response.data.title || !response.data.markdown) {
+                            updateProgress(progress, '完了処理中...（投稿作成前の再確認）');
+                            setTimeout(function() {
+                                processNextStep(stepIndex);
+                            }, 1500);
+                            return;
+                        }
                         displayResult(response.data);
                     }
 

@@ -549,20 +549,19 @@ class Blog_Poster_Admin {
         error_log( 'Blog Poster: Title: ' . $title );
         error_log( 'Blog Poster: Content length: ' . strlen( $content ) );
 
-        if ( empty( $title ) || empty( $content ) ) {
-            error_log( 'Blog Poster: Empty title or content' );
-            wp_send_json_error( array( 'message' => 'タイトルまたは本文が空です' ) );
-        }
-
         // マークダウンをHTMLに変換（ジョブがあればジョブ側の生成結果を優先）
         $html_content = '';
         $job = null;
         if ( $job_id > 0 ) {
             global $wpdb;
             $job = $wpdb->get_row( $wpdb->prepare(
-                "SELECT final_html, final_markdown, ai_provider, ai_model, temperature FROM {$wpdb->prefix}blog_poster_jobs WHERE id = %d",
+                "SELECT final_html, final_markdown, final_title, ai_provider, ai_model, temperature FROM {$wpdb->prefix}blog_poster_jobs WHERE id = %d",
                 $job_id
             ), ARRAY_A );
+        }
+
+        if ( empty( $title ) && $job && ! empty( $job['final_title'] ) ) {
+            $title = $job['final_title'];
         }
 
         if ( $job && ! empty( $job['final_html'] ) ) {
@@ -571,6 +570,11 @@ class Blog_Poster_Admin {
             $html_content = self::markdown_to_html( $job['final_markdown'] );
         } else {
             $html_content = self::markdown_to_html( $content );
+        }
+
+        if ( empty( $title ) || empty( $html_content ) ) {
+            error_log( 'Blog Poster: Empty title or content after job fallback' );
+            wp_send_json_error( array( 'message' => 'ジョブが未完了の可能性があります。完了後に再試行してください。' ) );
         }
 
         // 投稿を作成

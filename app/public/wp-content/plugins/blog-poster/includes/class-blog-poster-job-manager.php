@@ -570,15 +570,6 @@ class Blog_Poster_Job_Manager {
 				$outline_meta   = isset( $parsed_outline['meta'] ) ? $parsed_outline['meta'] : array();
 			}
 
-			$this->update_job(
-				$job_id,
-				array(
-					'final_markdown'  => $final_markdown,
-					'final_html'      => $final_html,
-					'current_step'    => 3,
-				)
-			);
-
 			// Markdownからタイトルを抽出
 			$title = $outline_meta['title'] ?? '';
 			if ( empty( $title ) && ! empty( $final_markdown ) ) {
@@ -591,6 +582,16 @@ class Blog_Poster_Job_Manager {
 				$title = ! empty( $topic ) ? $topic : 'Untitled';
 				error_log( 'Blog Poster: Using topic as title fallback: ' . $title );
 			}
+
+			$this->update_job(
+				$job_id,
+				array(
+					'final_markdown'  => $final_markdown,
+					'final_html'      => $final_html,
+					'current_step'    => 3,
+					'final_title'     => $title,
+				)
+			);
 
 			return array(
 				'success'          => true,
