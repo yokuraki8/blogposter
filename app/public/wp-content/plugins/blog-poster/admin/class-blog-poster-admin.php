@@ -535,8 +535,24 @@ class Blog_Poster_Admin {
             wp_send_json_error( array( 'message' => 'タイトルまたは本文が空です' ) );
         }
 
-        // マークダウンをHTMLに変換
-        $html_content = self::markdown_to_html( $content );
+        // マークダウンをHTMLに変換（ジョブがあればジョブ側の生成結果を優先）
+        $html_content = '';
+        $job = null;
+        if ( $job_id > 0 ) {
+            global $wpdb;
+            $job = $wpdb->get_row( $wpdb->prepare(
+                "SELECT final_html, final_markdown, ai_provider, ai_model, temperature FROM {$wpdb->prefix}blog_poster_jobs WHERE id = %d",
+                $job_id
+            ), ARRAY_A );
+        }
+
+        if ( $job && ! empty( $job['final_html'] ) ) {
+            $html_content = $job['final_html'];
+        } elseif ( $job && ! empty( $job['final_markdown'] ) ) {
+            $html_content = self::markdown_to_html( $job['final_markdown'] );
+        } else {
+            $html_content = self::markdown_to_html( $content );
+        }
 
         // 投稿を作成
         $post_data = array(
@@ -562,11 +578,13 @@ class Blog_Poster_Admin {
 
         // ジョブからモデル情報を取得して post_meta に保存
         if ( $job_id > 0 ) {
-            global $wpdb;
-            $job = $wpdb->get_row( $wpdb->prepare(
-                "SELECT ai_provider, ai_model, temperature FROM {$wpdb->prefix}blog_poster_jobs WHERE id = %d",
-                $job_id
-            ), ARRAY_A );
+            if ( ! $job ) {
+                global $wpdb;
+                $job = $wpdb->get_row( $wpdb->prepare(
+                    "SELECT ai_provider, ai_model, temperature FROM {$wpdb->prefix}blog_poster_jobs WHERE id = %d",
+                    $job_id
+                ), ARRAY_A );
+            }
 
             if ( $job ) {
                 update_post_meta( $post_id, '_blog_poster_provider', $job['ai_provider'] );
@@ -574,6 +592,18 @@ class Blog_Poster_Admin {
                 update_post_meta( $post_id, '_blog_poster_temperature', $job['temperature'] );
                 error_log( 'Blog Poster: Job metadata saved. Provider: ' . $job['ai_provider'] . ', Model: ' . $job['ai_model'] . ', Temperature: ' . $job['temperature'] );
             }
+        }
+
+        // ジョブに post_id を紐付け
+        if ( $job_id > 0 ) {
+            global $wpdb;
+            $wpdb->update(
+                "{$wpdb->prefix}blog_poster_jobs",
+                array( 'post_id' => $post_id ),
+                array( 'id' => $job_id ),
+                array( '%d' ),
+                array( '%d' )
+            );
         }
 
         // Yoast SEO連携（設定ON + Yoast有効時のみ）
