@@ -43,6 +43,13 @@ class Blog_Poster_Queue_Runner {
 
         try {
             for ( $i = 0; $i < $step_limit; $i++ ) {
+                if ( ! method_exists( $this->job_manager, 'get_next_runnable_job' ) ) {
+                    $message = 'Job manager missing get_next_runnable_job().';
+                    error_log( 'Blog Poster: ' . $message );
+                    $results['errors'][] = $message;
+                    break;
+                }
+
                 $job = $this->job_manager->get_next_runnable_job();
                 if ( ! $job ) {
                     break;
@@ -255,6 +262,7 @@ class Blog_Poster_Queue_Runner {
         $author_id = get_current_user_id();
         return $author_id > 0 ? $author_id : 1;
     }
+
 
     private function is_locked() {
         return (bool) get_transient( 'blog_poster_queue_lock' );

@@ -297,9 +297,9 @@ $claude_models = array(
                                 type="number"
                                 name="blog_poster_settings[max_tokens]"
                                 id="max_tokens"
-                                value="<?php echo esc_attr( isset( $settings['max_tokens'] ) ? $settings['max_tokens'] : 8000 ); ?>"
+                                value="<?php echo esc_attr( isset( $settings['max_tokens'] ) ? $settings['max_tokens'] : 4000 ); ?>"
                                 min="100"
-                                max="8000"
+                                max="4000"
                                 step="100"
                                 class="small-text"
                             />

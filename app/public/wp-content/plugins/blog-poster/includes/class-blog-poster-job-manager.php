@@ -43,6 +43,19 @@ class Blog_Poster_Job_Manager {
 	}
 
 	/**
+	 * Exponential Backoff遅延を計算
+	 *
+	 * @param int   $attempt 試行回数（0ベース）
+	 * @param int   $base ベース値（デフォルト2）
+	 * @param int   $max_delay 最大遅延時間（秒）
+	 * @return float 遅延時間（秒）
+	 */
+	private function calculate_backoff_delay( $attempt, $base = 2, $max_delay = 30 ) {
+		$delay = min( pow( $base, $attempt ) + ( rand( 0, 1000 ) / 1000 ), $max_delay );
+		return $delay;
+	}
+
+	/**
 	 * テーブルの存在を確認し、なければ作成、あれば更新
 	 */
 	private function ensure_table_exists() {
@@ -259,6 +272,14 @@ class Blog_Poster_Job_Manager {
 			$used_fallback  = false;
 
 			for ( $attempt = 0; $attempt < $max_attempt; $attempt++ ) {
+				if ( $attempt > 0 ) {
+					$backoff_delay = $this->calculate_backoff_delay( $attempt - 1 );
+					sleep( (int) $backoff_delay );
+					if ( isset( $outline_result ) && is_wp_error( $outline_result ) && 'api_rate_limit' === $outline_result->get_error_code() ) {
+						sleep( 5 );
+					}
+				}
+
 				if ( $attempt >= 2 ) {
 					$outline_result = $this->generator->generate_outline_markdown( $job['topic'], $additional_instructions, 'gemini-2.5-flash' );
 					$used_fallback = true;
@@ -271,7 +292,8 @@ class Blog_Poster_Job_Manager {
 				}
 
 				$last_error = $outline_result->get_error_message();
-				if ( 'api_insufficient_quota' === $outline_result->get_error_code() ) {
+				$error_code = $outline_result->get_error_code();
+				if ( 'api_insufficient_quota' === $error_code ) {
 					break;
 				}
 				error_log( 'Blog Poster: Outline generation retry ' . ( $attempt + 1 ) . ' failed: ' . $last_error );
@@ -428,6 +450,14 @@ class Blog_Poster_Job_Manager {
 			$last_error_msg = '';
 
 			for ( $attempt = 1; $attempt <= $max_retries; $attempt++ ) {
+				if ( $attempt > 1 ) {
+					$backoff_delay = $this->calculate_backoff_delay( $attempt - 2 );
+					sleep( (int) $backoff_delay );
+					if ( isset( $section_result ) && is_wp_error( $section_result ) && 'api_rate_limit' === $section_result->get_error_code() ) {
+						sleep( 5 );
+					}
+				}
+
 				$section_result = $this->generator->generate_section_markdown(
 					$sections,
 					$current_section_index,
@@ -440,14 +470,11 @@ class Blog_Poster_Job_Manager {
 				}
 
 				$last_error_msg = $section_result->get_error_message();
+				$error_code = $section_result->get_error_code();
 				error_log( "Blog Poster: Section generation retry {$attempt} failed: {$last_error_msg}" );
 
-				if ( 'api_insufficient_quota' === $section_result->get_error_code() ) {
+				if ( 'api_insufficient_quota' === $error_code ) {
 					break;
-				}
-
-				if ( $attempt < $max_retries ) {
-					sleep( 2 ); // 少し待ってからリトライ
 				}
 			}
 
