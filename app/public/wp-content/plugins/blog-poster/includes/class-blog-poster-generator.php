@@ -238,6 +238,9 @@ class Blog_Poster_Generator {
         // プロバイダーを判定
         $settings = get_option( 'blog_poster_settings', array() );
         $provider = isset( $settings['ai_provider'] ) ? $settings['ai_provider'] : 'claude';
+        if ( ! empty( $forced_model ) && 0 === strpos( $forced_model, 'gemini-' ) ) {
+            $provider = 'gemini';
+        }
 
         // Geminiの場合は2段階生成
         if ( 'gemini' === $provider ) {
