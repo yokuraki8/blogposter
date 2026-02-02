@@ -28,6 +28,44 @@ class Blog_Poster_Generator {
     private $current_article_length = 'standard';
 
     /**
+     * APIレスポンスのエラーを抽出
+     *
+     * @param mixed $response レスポンス
+     * @return string
+     */
+    private function extract_api_error_message( $response ) {
+        if ( is_array( $response ) && isset( $response['success'] ) && false === $response['success'] ) {
+            return isset( $response['error'] ) ? $response['error'] : 'APIエラーが発生しました。';
+        }
+
+        return '';
+    }
+
+    /**
+     * APIレスポンスからWP_Errorを生成
+     *
+     * @param mixed $response レスポンス
+     * @param string $default_code デフォルトエラーコード
+     * @return WP_Error|null
+     */
+    private function response_to_wp_error( $response, $default_code ) {
+        $message = $this->extract_api_error_message( $response );
+        if ( '' === $message ) {
+            return null;
+        }
+
+        $code = $default_code;
+        $lower_message = strtolower( $message );
+        if ( false !== strpos( $lower_message, 'insufficient_quota' ) || false !== strpos( $lower_message, 'quota' ) ) {
+            $code = 'api_insufficient_quota';
+        } elseif ( preg_match( '/\b429\b/', $message ) ) {
+            $code = 'api_rate_limit';
+        }
+
+        return new WP_Error( $code, $message );
+    }
+
+    /**
      * 記事長に応じた設定を取得
      *
      * @param string $article_length 記事長（short/standard/long）
@@ -237,6 +275,10 @@ class Blog_Poster_Generator {
             if ( is_wp_error( $response ) ) {
                 return $response;
             }
+            $api_error = $this->response_to_wp_error( $response, 'outline_api_error' );
+            if ( $api_error ) {
+                return $api_error;
+            }
 
             // error_response()の場合もチェック
             if ( isset( $response['success'] ) && false === $response['success'] ) {
@@ -349,6 +391,10 @@ class Blog_Poster_Generator {
 
             if ( is_wp_error( $response ) ) {
                 return $response;
+            }
+            $api_error = $this->response_to_wp_error( $response, 'step1_api_error' );
+            if ( $api_error ) {
+                return $api_error;
             }
 
             $content = '';
@@ -481,6 +527,11 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
                 error_log( 'Blog Poster: Step2 WP_Error: ' . $response->get_error_message() );
                 return $response;
             }
+            $api_error = $this->response_to_wp_error( $response, 'step2_api_error' );
+            if ( $api_error ) {
+                error_log( 'Blog Poster: Step2 API error: ' . $api_error->get_error_message() );
+                return $api_error;
+            }
 
             // デバッグ: レスポンス全体をログ出力
             error_log( 'Blog Poster: Step2 raw response: ' . print_r( $response, true ) );
@@ -546,6 +597,10 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
 
             if ( is_wp_error( $response ) ) {
                 return $response;
+            }
+            $api_error = $this->response_to_wp_error( $response, 'section_api_error' );
+            if ( $api_error ) {
+                return $api_error;
             }
 
             // Claude系は data キーに本文が入るケースがあるため両方を確認

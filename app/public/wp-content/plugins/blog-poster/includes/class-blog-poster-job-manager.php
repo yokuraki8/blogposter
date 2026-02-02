@@ -279,6 +279,9 @@ class Blog_Poster_Job_Manager {
 				}
 
 				$last_error = $outline_result->get_error_message();
+				if ( 'api_insufficient_quota' === $outline_result->get_error_code() ) {
+					break;
+				}
 				error_log( 'Blog Poster: Outline generation retry ' . ( $attempt + 1 ) . ' failed: ' . $last_error );
 			}
 
@@ -426,6 +429,10 @@ class Blog_Poster_Job_Manager {
 
 				$last_error_msg = $section_result->get_error_message();
 				error_log( "Blog Poster: Section generation retry {$attempt} failed: {$last_error_msg}" );
+
+				if ( 'api_insufficient_quota' === $section_result->get_error_code() ) {
+					break;
+				}
 
 				if ( $attempt < $max_retries ) {
 					sleep( 2 ); // 少し待ってからリトライ
