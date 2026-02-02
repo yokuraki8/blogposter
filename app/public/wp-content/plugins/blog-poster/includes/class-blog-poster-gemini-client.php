@@ -50,24 +50,25 @@ class Blog_Poster_Gemini_Client extends Blog_Poster_AI_Client {
      * @param string $prompt プロンプト
      * @return array レスポンス
      */
-    public function generate_text( $prompt, $response_format = null ) {
+    public function generate_text( $prompt, $options = null ) {
         if ( empty( $this->api_key ) ) {
             return $this->error_response( __( 'Gemini APIキーが設定されていません。', 'blog-poster' ) );
         }
 
         $model = $this->model;
-        if ( is_array( $response_format ) && ! empty( $response_format['model'] ) ) {
-            $model = $response_format['model'];
+        if ( is_array( $options ) && ! empty( $options['model'] ) ) {
+            $model = $options['model'];
         }
+        // モデル名を正規化（ローカル変数のみ変更、インスタンス変数は変更しない）
         $normalized_model = self::normalize_model( $model );
         if ( $normalized_model !== $model ) {
             $model = $normalized_model;
-            $this->model = $normalized_model;
+            // 注意: $this->modelは変更しない（副作用を避ける）
         }
 
         $max_tokens = $this->max_tokens;
-        if ( is_array( $response_format ) && isset( $response_format['max_tokens'] ) ) {
-            $max_tokens = (int) $response_format['max_tokens'];
+        if ( is_array( $options ) && isset( $options['max_tokens'] ) ) {
+            $max_tokens = (int) $options['max_tokens'];
         }
 
         $url = self::API_BASE_URL . $model . ':generateContent?key=' . $this->api_key;

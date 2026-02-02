@@ -61,9 +61,10 @@ abstract class Blog_Poster_AI_Client {
      * テキスト生成（抽象メソッド）
      *
      * @param string $prompt プロンプト
+     * @param array|null $options オプション（max_tokens, model等）
      * @return array レスポンス
      */
-    abstract public function generate_text( $prompt, $response_format = null );
+    abstract public function generate_text( $prompt, $options = null );
 
     /**
      * 画像生成（抽象メソッド）
