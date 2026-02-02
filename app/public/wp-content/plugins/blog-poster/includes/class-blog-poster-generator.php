@@ -1100,7 +1100,7 @@ PROMPT;
 
                 if ( $this->is_prose_like_code_block( $content ) ) {
                     $converted++;
-                    $lines = preg_split( '/\R/', $content );
+                    $lines = preg_split( '/\R/u', $content );
                     $first_nonempty_index = null;
                     foreach ( $lines as $index => $line ) {
                         if ( '' !== trim( $line ) ) {
@@ -1140,7 +1140,7 @@ PROMPT;
             return false;
         }
 
-        $lines = preg_split( '/\R/', $markdown );
+        $lines = preg_split( '/\R/u', $markdown );
         $last_line = '';
         for ( $i = count( $lines ) - 1; $i >= 0; $i-- ) {
             $candidate = trim( $lines[ $i ] );
