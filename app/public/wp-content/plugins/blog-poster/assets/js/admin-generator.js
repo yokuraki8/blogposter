@@ -172,7 +172,7 @@ jQuery(document).ready(function($) {
                 job_id: currentJobId,
                 step: step
             },
-            timeout: 180000, // 3分のタイムアウト
+            timeout: 300000, // 5分のタイムアウト
             success: function(response) {
                 console.log('Step ' + step + ' response:', response);
                 if (response.success) {
@@ -237,7 +237,32 @@ jQuery(document).ready(function($) {
                     return;
                 }
                 if (status === 'timeout') {
-                    showError('処理がタイムアウトしました。もう一度お試しください。');
+                    // タイムアウト時はジョブ状態を確認して継続可能なら再実行
+                    $.ajax({
+                        url: blogPosterAjax.ajaxurl,
+                        type: 'POST',
+                        data: {
+                            action: 'blog_poster_get_job_status',
+                            nonce: blogPosterAjax.nonce,
+                            job_id: currentJobId
+                        },
+                        success: function(statusResponse) {
+                            if (statusResponse.success && statusResponse.data && statusResponse.data.status) {
+                                const jobStatus = statusResponse.data.status;
+                                if (['pending', 'outline', 'content', 'review'].includes(jobStatus)) {
+                                    updateProgress(progress, '処理継続中（タイムアウト後に再試行）...');
+                                    setTimeout(function() {
+                                        processNextStep(stepIndex);
+                                    }, 1500);
+                                    return;
+                                }
+                            }
+                            showError('処理がタイムアウトしました。もう一度お試しください。');
+                        },
+                        error: function() {
+                            showError('処理がタイムアウトしました。もう一度お試しください。');
+                        }
+                    });
                 } else {
                     showError('通信エラー: ' + error + '<br>詳細をコンソールで確認してください。');
                 }
