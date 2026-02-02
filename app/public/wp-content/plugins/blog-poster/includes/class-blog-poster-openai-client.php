@@ -34,15 +34,19 @@ class Blog_Poster_OpenAI_Client extends Blog_Poster_AI_Client {
         $adjusted_prompt = $this->apply_tone_settings( $prompt );
 
         $is_gpt5 = ( 0 === strpos( $this->model, 'gpt-5' ) );
+        // gpt-5.2-proはtemperatureパラメータをサポートしない
+        $supports_temperature = ( 'gpt-5.2-pro' !== $this->model );
 
         if ( $is_gpt5 ) {
             $url = self::API_BASE_URL . 'responses';
             $body = array(
                 'model' => $this->model,
                 'input' => $adjusted_prompt,
-                'temperature' => $this->temperature,
                 'max_output_tokens' => $this->max_tokens,
             );
+            if ( $supports_temperature ) {
+                $body['temperature'] = $this->temperature;
+            }
             $format = array( 'type' => 'text' );
             if ( ! empty( $response_format ) ) {
                 if ( isset( $response_format['type'], $response_format['json_schema'] ) && 'json_schema' === $response_format['type'] ) {
