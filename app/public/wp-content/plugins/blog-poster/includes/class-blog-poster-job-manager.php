@@ -377,6 +377,15 @@ class Blog_Poster_Job_Manager {
 			$current_content_md = $job['content_md'] ?? '';
 
 			if ( empty( $outline_md ) ) {
+				// 直前の更新反映待ち（非同期実行の競合回避）
+				for ( $retry = 0; $retry < 2 && empty( $outline_md ); $retry++ ) {
+					sleep( 1 );
+					$job_retry = $this->get_job( $job_id );
+					$outline_md = $job_retry['outline_md'] ?? '';
+				}
+			}
+
+			if ( empty( $outline_md ) ) {
 				throw new Exception( 'アウトラインが見つかりません。' );
 			}
 
