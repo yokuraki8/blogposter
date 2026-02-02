@@ -79,6 +79,7 @@ class Blog_Poster_Generator {
                 'h2_min' => 3,
                 'h2_max' => 4,
                 'section_chars' => '200-300',
+                'max_tokens' => 1500,
             ),
             'standard' => array(
                 'total_chars' => 5000,
@@ -86,6 +87,7 @@ class Blog_Poster_Generator {
                 'h2_min' => 4,
                 'h2_max' => 5,
                 'section_chars' => '300-500',
+                'max_tokens' => 2500,
             ),
             'long' => array(
                 'total_chars' => 10000,
@@ -93,6 +95,7 @@ class Blog_Poster_Generator {
                 'h2_min' => 6,
                 'h2_max' => 8,
                 'section_chars' => '500-800',
+                'max_tokens' => 4000,
             ),
         );
         return isset( $configs[ $article_length ] ) ? $configs[ $article_length ] : $configs['standard'];
@@ -257,82 +260,95 @@ class Blog_Poster_Generator {
         // Claude/OpenAIは既存の1段階生成を使用
         error_log( 'Blog Poster: Using standard outline generation for ' . $provider );
 
-        $client = $this->get_ai_client();
-        if ( is_wp_error( $client ) ) {
-            return $client;
-        }
+        $config = $this->get_length_config( $this->current_article_length );
+        $h2_min = $config['h2_min'];
+        $h2_max = $config['h2_max'];
+        $h2_count = $config['h2_count'];
 
-        $prompt = $this->build_outline_prompt( $topic, $additional_instructions );
-        $model_override = '';
-        $settings = get_option( 'blog_poster_settings', array() );
-        if ( isset( $settings['ai_provider'] ) && 'gemini' === $settings['ai_provider'] && ! empty( $forced_model ) ) {
-            $model_override = $forced_model;
-        }
-
-        try {
-            $response = $client->generate_text( $prompt, array( 'max_tokens' => 8000, 'model' => $model_override ) );
-
-            if ( is_wp_error( $response ) ) {
-                return $response;
-            }
-            $api_error = $this->response_to_wp_error( $response, 'outline_api_error' );
-            if ( $api_error ) {
-                return $api_error;
+        $max_outline_retries = 2;
+        for ( $outline_attempt = 0; $outline_attempt <= $max_outline_retries; $outline_attempt++ ) {
+            $client = $this->get_ai_client();
+            if ( is_wp_error( $client ) ) {
+                return $client;
             }
 
-            // error_response()の場合もチェック
-            if ( isset( $response['success'] ) && false === $response['success'] ) {
-                $error_msg = isset( $response['error'] ) ? $response['error'] : 'APIエラーが発生しました。';
-                error_log( 'Blog Poster: API error response: ' . $error_msg );
-                return new WP_Error( 'api_error', $error_msg );
+            $current_additional_instructions = $additional_instructions;
+            if ( $outline_attempt > 0 ) {
+                $current_additional_instructions .= "\n\n【重要】H2見出しは必ず{$h2_min}〜{$h2_max}個にしてください。前回の生成ではこの制約が守られていません。";
             }
 
-            $outline_md = '';
-            if ( isset( $response['data'] ) && is_string( $response['data'] ) ) {
-                $outline_md = $response['data'];
-            } elseif ( isset( $response['content'] ) && is_string( $response['content'] ) ) {
-                $outline_md = $response['content'];
+            $prompt = $this->build_outline_prompt( $topic, $current_additional_instructions );
+            $model_override = '';
+            if ( isset( $settings['ai_provider'] ) && 'gemini' === $settings['ai_provider'] && ! empty( $forced_model ) ) {
+                $model_override = $forced_model;
             }
 
-            if ( empty( $outline_md ) ) {
-                error_log( 'Blog Poster: Outline response empty. Raw response: ' . print_r( $response, true ) );
-                return new WP_Error( 'outline_empty', 'アウトラインが空です。' );
-            }
+            try {
+                $response = $client->generate_text( $prompt, array( 'max_tokens' => 2000, 'model' => $model_override ) );
 
-            // 生成されたアウトラインをログに出力（デバッグ用）
-            error_log( 'Blog Poster: Generated outline (first 500 chars): ' . substr( $outline_md, 0, 500 ) );
+                if ( is_wp_error( $response ) ) {
+                    return $response;
+                }
+                $api_error = $this->response_to_wp_error( $response, 'outline_api_error' );
+                if ( $api_error ) {
+                    return $api_error;
+                }
 
-            // YAML frontmatterとセクション構造を解析
-            $parsed = $this->parse_markdown_frontmatter( $outline_md );
-            $sections = isset( $parsed['sections'] ) ? $parsed['sections'] : array();
-            $section_count = count( $sections );
+                if ( isset( $response['success'] ) && false === $response['success'] ) {
+                    $error_msg = isset( $response['error'] ) ? $response['error'] : 'APIエラーが発生しました。';
+                    error_log( 'Blog Poster: API error response: ' . $error_msg );
+                    return new WP_Error( 'api_error', $error_msg );
+                }
 
-            if ( empty( $sections ) ) {
-                error_log( 'Blog Poster: No sections parsed from outline. Outline MD head: ' . substr( $outline_md, 0, 200 ) );
-                return new WP_Error( 'outline_no_sections', 'アウトラインからセクションを抽出できませんでした。' );
-            }
+                $outline_md = '';
+                if ( isset( $response['data'] ) && is_string( $response['data'] ) ) {
+                    $outline_md = $response['data'];
+                } elseif ( isset( $response['content'] ) && is_string( $response['content'] ) ) {
+                    $outline_md = $response['content'];
+                }
 
-            // 動的に設定された記事長に応じたH2数チェック
-            $config = $this->get_length_config( $this->current_article_length );
-            $h2_min = $config['h2_min'];
-            $h2_max = $config['h2_max'];
-            if ( $section_count < $h2_min || $section_count > $h2_max ) {
-                error_log( 'Blog Poster: Outline section count out of range: ' . $section_count . ' (expected: ' . $h2_min . '-' . $h2_max . ')' );
+                if ( empty( $outline_md ) ) {
+                    error_log( 'Blog Poster: Outline response empty. Raw response: ' . print_r( $response, true ) );
+                    return new WP_Error( 'outline_empty', 'アウトラインが空です。' );
+                }
+
+                error_log( 'Blog Poster: Generated outline (first 500 chars): ' . substr( $outline_md, 0, 500 ) );
+
+                $parsed = $this->parse_markdown_frontmatter( $outline_md );
+                $sections = isset( $parsed['sections'] ) ? $parsed['sections'] : array();
+                $section_count = count( $sections );
+
+                if ( empty( $sections ) ) {
+                    error_log( 'Blog Poster: No sections parsed from outline. Outline MD head: ' . substr( $outline_md, 0, 200 ) );
+                    return new WP_Error( 'outline_no_sections', 'アウトラインからセクションを抽出できませんでした。' );
+                }
+
+                if ( $section_count >= $h2_min && $section_count <= $h2_max ) {
+                    error_log( 'Blog Poster: Outline section count validated: ' . $section_count . ' (within ' . $h2_min . '-' . $h2_max . ')' );
+                    return array(
+                        'success' => true,
+                        'outline_md' => $outline_md,
+                        'meta' => $parsed['meta'],
+                        'sections' => $sections,
+                    );
+                }
+
+                error_log( 'Blog Poster: Outline section count out of range: ' . $section_count . ' (expected: ' . $h2_min . '-' . $h2_max . '), attempt: ' . $outline_attempt . '/' . $max_outline_retries );
                 error_log( 'Blog Poster: Full outline MD: ' . $outline_md );
-                return new WP_Error( 'outline_section_count', 'アウトラインのH2セクション数が不足しています。実際: ' . $section_count . '個（必要: ' . $config['h2_count'] . '個）' );
+
+                if ( $outline_attempt < $max_outline_retries ) {
+                    continue;
+                }
+
+                return new WP_Error( 'outline_section_count', 'アウトラインのH2セクション数が不足しています。実際: ' . $section_count . '個（必要: ' . $h2_count . '個）' );
+
+            } catch ( Exception $e ) {
+                error_log( 'Blog Poster: Outline generation error: ' . $e->getMessage() );
+                return new WP_Error( 'outline_error', $e->getMessage() );
             }
-
-            return array(
-                'success' => true,
-                'outline_md' => $outline_md,
-                'meta' => $parsed['meta'],
-                'sections' => $sections,
-            );
-
-        } catch ( Exception $e ) {
-            error_log( 'Blog Poster: Outline generation error: ' . $e->getMessage() );
-            return new WP_Error( 'outline_error', $e->getMessage() );
         }
+
+        return new WP_Error( 'outline_generation_failed', 'アウトライン生成に失敗しました。' );
     }
 
     /**
@@ -517,7 +533,7 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
         error_log( 'Blog Poster: Step2 section titles: ' . print_r( $section_titles, true ) );
 
         try {
-            $options = array( 'max_tokens' => 8000 );
+            $options = array( 'max_tokens' => 3000 );
             if ( ! empty( $forced_model ) ) {
                 $options['model'] = $forced_model;
             }
@@ -592,8 +608,11 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
         $section = $outline_sections[ $section_index ];
         $prompt = $this->build_section_prompt( $section, $previous_context, $additional_instructions );
 
+        $config = $this->get_length_config( $this->current_article_length );
+        $max_tokens = $config['max_tokens'];
+
         try {
-            $response = $client->generate_text( $prompt, array( 'max_tokens' => 8000 ) );
+            $response = $client->generate_text( $prompt, array( 'max_tokens' => $max_tokens ) );
 
             if ( is_wp_error( $response ) ) {
                 return $response;
