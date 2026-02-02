@@ -267,8 +267,11 @@ class Blog_Poster_Job_Manager {
 	 * @return array 実行結果
 	 */
 	public function process_step_outline( $job_id ) {
+		$step_start = microtime( true );
 		$job = $this->get_job( $job_id );
 		$original_settings = $this->apply_job_settings( $job );
+		$attempt_count = 0;
+		$used_fallback = false;
 
 		if ( ! $job || 'pending' !== $job['status'] ) {
 			$this->restore_job_settings( $original_settings );
@@ -289,9 +292,9 @@ class Blog_Poster_Job_Manager {
 			$outline_result = null;
 			$last_error     = '';
 			$max_attempt    = 5;
-			$used_fallback  = false;
 
 			for ( $attempt = 0; $attempt < $max_attempt; $attempt++ ) {
+				$attempt_count++;
 				if ( $attempt > 0 ) {
 					$backoff_delay = $this->calculate_backoff_delay( $attempt - 1 );
 					sleep( (int) $backoff_delay );
@@ -369,6 +372,16 @@ class Blog_Poster_Job_Manager {
 				'message' => $e->getMessage(),
 			);
 		} finally {
+			$elapsed = microtime( true ) - $step_start;
+			error_log(
+				sprintf(
+					'Blog Poster Timing: step=outline job_id=%d elapsed=%.3fs attempts=%d fallback=%s',
+					(int) $job_id,
+					$elapsed,
+					$attempt_count,
+					$used_fallback ? 'yes' : 'no'
+				)
+			);
 			$this->restore_job_settings( $original_settings );
 		}
 	}
@@ -380,6 +393,7 @@ class Blog_Poster_Job_Manager {
 	 * @return array 実行結果
 	 */
 	public function process_step_content( $job_id ) {
+		$step_start = microtime( true );
 		$job = $this->get_job( $job_id );
 		$original_settings = $this->apply_job_settings( $job );
 
@@ -468,8 +482,10 @@ class Blog_Poster_Job_Manager {
 			$max_retries = 3;
 			$section_result = null;
 			$last_error_msg = '';
+			$section_attempts = 0;
 
 			for ( $attempt = 1; $attempt <= $max_retries; $attempt++ ) {
+				$section_attempts++;
 				if ( $attempt > 1 ) {
 					$backoff_delay = $this->calculate_backoff_delay( $attempt - 2 );
 					sleep( (int) $backoff_delay );
@@ -478,11 +494,23 @@ class Blog_Poster_Job_Manager {
 					}
 				}
 
+				$section_start = microtime( true );
 				$section_result = $this->generator->generate_section_markdown(
 					$sections,
 					$current_section_index,
 					$previous_context,
 					$additional_instructions
+				);
+				$section_elapsed = microtime( true ) - $section_start;
+				error_log(
+					sprintf(
+						'Blog Poster Timing: step=content job_id=%d section=%d/%d elapsed=%.3fs attempt=%d',
+						(int) $job_id,
+						(int) ( $current_section_index + 1 ),
+						(int) $total_sections,
+						$section_elapsed,
+						$attempt
+					)
 				);
 
 				if ( ! is_wp_error( $section_result ) ) {
@@ -551,6 +579,14 @@ class Blog_Poster_Job_Manager {
 				'message' => $e->getMessage(),
 			);
 		} finally {
+			$elapsed = microtime( true ) - $step_start;
+			error_log(
+				sprintf(
+					'Blog Poster Timing: step=content job_id=%d elapsed=%.3fs',
+					(int) $job_id,
+					$elapsed
+				)
+			);
 			$this->restore_job_settings( $original_settings );
 		}
 	}
@@ -562,6 +598,7 @@ class Blog_Poster_Job_Manager {
 	 * @return array 実行結果
 	 */
 	public function process_step_review( $job_id ) {
+		$step_start = microtime( true );
 		$job = $this->get_job( $job_id );
 		$original_settings = $this->apply_job_settings( $job );
 
@@ -681,6 +718,14 @@ class Blog_Poster_Job_Manager {
 				'message' => $e->getMessage(),
 			);
 		} finally {
+			$elapsed = microtime( true ) - $step_start;
+			error_log(
+				sprintf(
+					'Blog Poster Timing: step=review job_id=%d elapsed=%.3fs',
+					(int) $job_id,
+					$elapsed
+				)
+			);
 			$this->restore_job_settings( $original_settings );
 		}
 	}
