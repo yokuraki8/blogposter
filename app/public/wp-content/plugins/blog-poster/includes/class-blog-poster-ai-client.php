@@ -103,6 +103,15 @@ abstract class Blog_Poster_AI_Client {
 
         $status_code = wp_remote_retrieve_response_code( $response );
         $response_body = wp_remote_retrieve_body( $response );
+
+        // UTF-8検証と修復
+        if ( ! mb_check_encoding( $response_body, 'UTF-8' ) ) {
+            error_log( 'Blog Poster: Invalid UTF-8 in API response, attempting to fix.' );
+            $response_body = mb_convert_encoding( $response_body, 'UTF-8', 'auto' );
+        }
+        // 不正なUTF-8シーケンスを除去
+        $response_body = preg_replace( '/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', '', $response_body );
+
         $data = json_decode( $response_body, true );
 
         if ( $status_code !== 200 ) {

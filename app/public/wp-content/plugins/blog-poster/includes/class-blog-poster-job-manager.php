@@ -56,6 +56,26 @@ class Blog_Poster_Job_Manager {
 	}
 
 	/**
+	 * UTF-8文字列を正規化
+	 *
+	 * @param string $text 正規化対象の文字列
+	 * @return string 正規化済み文字列
+	 */
+	private function sanitize_utf8( $text ) {
+		if ( empty( $text ) || ! is_string( $text ) ) {
+			return $text;
+		}
+		if ( ! mb_check_encoding( $text, 'UTF-8' ) ) {
+			$text = mb_convert_encoding( $text, 'UTF-8', 'auto' );
+		}
+		// 不完全なマルチバイトシーケンスを除去
+		$text = mb_convert_encoding( $text, 'UTF-8', 'UTF-8' );
+		// 不正な置換文字を除去
+		$text = preg_replace( '/\x{FFFD}+/u', '', $text );
+		return $text;
+	}
+
+	/**
 	 * テーブルの存在を確認し、なければ作成、あれば更新
 	 */
 	private function ensure_table_exists() {
@@ -320,7 +340,7 @@ class Blog_Poster_Job_Manager {
 			$this->update_job(
 				$job_id,
 				array(
-					'outline_md'      => $outline_md,
+					'outline_md'      => $this->sanitize_utf8( $outline_md ),
 					'current_step'    => 1,
 					'status'          => 'outline',
 					'total_sections'  => $total_sections,
@@ -341,7 +361,7 @@ class Blog_Poster_Job_Manager {
 				$job_id,
 				array(
 					'status'        => 'failed',
-					'error_message' => $e->getMessage(),
+					'error_message' => $this->sanitize_utf8( $e->getMessage() ),
 				)
 			);
 			return array(
@@ -487,12 +507,12 @@ class Blog_Poster_Job_Manager {
 			$new_context    = $section_result['context'];
 			$next_index     = $current_section_index + 1;
 
-			// DB更新
+			// DB更新（UTF-8正規化を適用）
 			$this->update_job(
 				$job_id,
 				array(
-					'content_md'            => $new_content_md,
-					'previous_context'      => $new_context,
+					'content_md'            => $this->sanitize_utf8( $new_content_md ),
+					'previous_context'      => $this->sanitize_utf8( $new_context ),
 					'current_section_index' => $next_index,
 				)
 			);
@@ -523,7 +543,7 @@ class Blog_Poster_Job_Manager {
 				$job_id,
 				array(
 					'status'        => 'failed',
-					'error_message' => $e->getMessage(),
+					'error_message' => $this->sanitize_utf8( $e->getMessage() ),
 				)
 			);
 			return array(
@@ -629,10 +649,10 @@ class Blog_Poster_Job_Manager {
 			$this->update_job(
 				$job_id,
 				array(
-					'final_markdown'  => $final_markdown,
-					'final_html'      => $final_html,
+					'final_markdown'  => $this->sanitize_utf8( $final_markdown ),
+					'final_html'      => $this->sanitize_utf8( $final_html ),
 					'current_step'    => 3,
-					'final_title'     => $title,
+					'final_title'     => $this->sanitize_utf8( $title ),
 				)
 			);
 
@@ -643,8 +663,8 @@ class Blog_Poster_Job_Manager {
 				'slug'             => $outline_meta['slug'] ?? '',
 				'meta_description' => $outline_meta['meta_description'] ?? '',
 				'excerpt'          => $outline_meta['excerpt'] ?? '',
-				'markdown'         => $final_markdown,
-				'html'             => $final_html,
+				'markdown'         => $this->sanitize_utf8( $final_markdown ),
+				'html'             => $this->sanitize_utf8( $final_html ),
 				'keywords'         => $outline_meta['keywords'] ?? array(),
 			);
 
@@ -653,7 +673,7 @@ class Blog_Poster_Job_Manager {
 				$job_id,
 				array(
 					'status'        => 'failed',
-					'error_message' => $e->getMessage(),
+					'error_message' => $this->sanitize_utf8( $e->getMessage() ),
 				)
 			);
 			return array(

@@ -174,11 +174,17 @@ class Blog_Poster_OpenAI_Client extends Blog_Poster_AI_Client {
                 return $this->error_response( __( 'OpenAIのレスポンスが空です。', 'blog-poster' ) );
             }
 
+            // UTF-8検証と修復（自動検出モード）
             if ( ! mb_check_encoding( $text, 'UTF-8' ) ) {
                 error_log( 'Blog Poster: OpenAI invalid UTF-8 response detected, attempting to fix.' );
-                $text = mb_convert_encoding( $text, 'UTF-8', 'UTF-8' );
+                $text = mb_convert_encoding( $text, 'UTF-8', 'auto' );
             }
+            // 不完全なマルチバイト文字シーケンスを除去
+            $text = mb_convert_encoding( $text, 'UTF-8', 'UTF-8' );
+            // 制御文字を除去
             $text = preg_replace( '/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', '', $text );
+            // 不正なUTF-8置換文字（U+FFFD）が連続する場合は除去
+            $text = preg_replace( '/\x{FFFD}+/u', '', $text );
 
             if ( isset( $response['usage']['total_tokens'] ) ) {
                 $tokens = $response['usage']['total_tokens'];

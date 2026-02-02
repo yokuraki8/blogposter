@@ -767,6 +767,11 @@ class Blog_Poster_Admin {
         // ステップ1: マークダウンの前処理
         // 1-1. HTMLエンティティをデコード
         $markdown = html_entity_decode( $markdown, ENT_QUOTES | ENT_HTML5, 'UTF-8' );
+        // UTF-8検証と修復
+        if ( ! mb_check_encoding( $markdown, 'UTF-8' ) ) {
+            $markdown = mb_convert_encoding( $markdown, 'UTF-8', 'auto' );
+        }
+        $markdown = mb_convert_encoding( $markdown, 'UTF-8', 'UTF-8' );
 
         // 1-1.5. バッククォートのネスト正規化（5重 → 3重）
         $markdown = preg_replace( '/`{5,}/u', '```', $markdown );
