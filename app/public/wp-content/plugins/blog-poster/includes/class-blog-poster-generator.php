@@ -241,6 +241,9 @@ class Blog_Poster_Generator {
         if ( ! empty( $forced_model ) && 0 === strpos( $forced_model, 'gemini-' ) ) {
             $provider = 'gemini';
         }
+        $configured_model = isset( $settings['ai_model'] ) ? $settings['ai_model'] : '';
+        $outline_model = ! empty( $forced_model ) ? $forced_model : $configured_model;
+        error_log( sprintf( 'Blog Poster: Outline provider=%s model=%s', $provider, $outline_model !== '' ? $outline_model : 'default' ) );
 
         // Geminiの場合は2段階生成
         if ( 'gemini' === $provider ) {
