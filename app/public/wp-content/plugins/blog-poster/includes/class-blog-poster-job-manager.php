@@ -686,6 +686,12 @@ class Blog_Poster_Job_Manager {
 			$topic      = $job['topic'];
 			$outline_md = $job['outline_md'] ?? '';
 			$additional_instructions = $job['additional_instructions'] ?? '';
+			$code_tag_total = preg_match_all( '/<CODE(?:\\s+lang="[^"]*")?>/i', $content_md, $tmp_matches );
+			$code_tag_closed = preg_match_all( '/<\\/CODE>/i', $content_md, $tmp_matches_close );
+			if ( $code_tag_total !== $code_tag_closed ) {
+				error_log( 'Blog Poster: CODE tag mismatch in content_md: open=' . $code_tag_total . ' close=' . $code_tag_closed );
+			}
+			error_log( 'Blog Poster: CODE tag count in content_md: ' . $code_tag_total );
 
 			if ( empty( $content_md ) ) {
 				throw new Exception( '本文が見つかりません。' );
@@ -694,6 +700,12 @@ class Blog_Poster_Job_Manager {
 			// Markdown後処理
 			$final_markdown = $this->generator->postprocess_markdown( $content_md );
 			$final_markdown = $this->generator->normalize_code_blocks_after_generation( $final_markdown );
+			$code_tag_final = preg_match_all( '/<CODE(?:\\s+lang="[^"]*")?>/i', $final_markdown, $tmp_matches2 );
+			$code_tag_final_closed = preg_match_all( '/<\\/CODE>/i', $final_markdown, $tmp_matches3 );
+			if ( $code_tag_final !== $code_tag_final_closed ) {
+				error_log( 'Blog Poster: CODE tag mismatch in final_markdown: open=' . $code_tag_final . ' close=' . $code_tag_final_closed );
+			}
+			error_log( 'Blog Poster: CODE tag count in final_markdown: ' . $code_tag_final );
 
 			// 末尾切れの保険処理（最終セクションを再生成）
 			if ( $this->generator->is_truncated_markdown( $final_markdown ) ) {
@@ -717,6 +729,10 @@ class Blog_Poster_Job_Manager {
 
 			// MarkdownからHTMLへ変換
 			$final_html = Blog_Poster_Admin::markdown_to_html( $final_markdown );
+			$code_tag_html = preg_match_all( '/<CODE(?:\\s+lang="[^"]*")?>/i', $final_html, $tmp_matches4 );
+			if ( $code_tag_html > 0 ) {
+				error_log( 'Blog Poster: CODE tag leaked into final_html: ' . $code_tag_html );
+			}
 
 			if ( is_wp_error( $final_html ) ) {
 				throw new Exception( $final_html->get_error_message() );
