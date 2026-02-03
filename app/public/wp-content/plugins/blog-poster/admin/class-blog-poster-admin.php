@@ -775,6 +775,59 @@ class Blog_Poster_Admin {
      * @return string HTML
      */
     public static function markdown_to_html( $markdown ) {
+        // CODEタグがある場合はセグメント分割して処理
+        if ( preg_match( '/<CODE(?:\\s+lang="[^"]*")?>/i', $markdown ) ) {
+            return self::markdown_to_html_with_code_tags( $markdown );
+        }
+
+        return self::markdown_to_html_plain( $markdown );
+    }
+
+    /**
+     * CODEタグを含むMarkdownをHTMLに変換
+     *
+     * @param string $markdown マークダウンテキスト
+     * @return string HTML
+     */
+    private static function markdown_to_html_with_code_tags( $markdown ) {
+        $parts = preg_split(
+            '/<CODE(?:\\s+lang="([^"]*)")?>\\s*([\\s\\S]*?)\\s*<\\/CODE>/i',
+            $markdown,
+            -1,
+            PREG_SPLIT_DELIM_CAPTURE
+        );
+
+        $html_parts = array();
+        for ( $i = 0; $i < count( $parts ); $i++ ) {
+            if ( $i % 3 === 0 ) {
+                $text = $parts[ $i ];
+                if ( trim( $text ) !== '' ) {
+                    $html_parts[] = self::markdown_to_html_plain( $text );
+                }
+                continue;
+            }
+
+            $lang = $parts[ $i ];
+            $code = $parts[ $i + 1 ];
+            $i++; // consume code content
+
+            $lang = is_string( $lang ) ? trim( $lang ) : '';
+            $code = is_string( $code ) ? $code : '';
+            $escaped = htmlspecialchars( $code, ENT_QUOTES | ENT_HTML5, 'UTF-8' );
+            $class = $lang !== '' ? ' class="language-' . esc_attr( $lang ) . '"' : '';
+            $html_parts[] = "<pre><code{$class}>{$escaped}</code></pre>";
+        }
+
+        return implode( "\n", $html_parts );
+    }
+
+    /**
+     * マークダウンをHTMLに変換（CODEタグなしの標準ルート）
+     *
+     * @param string $markdown マークダウンテキスト
+     * @return string HTML
+     */
+    private static function markdown_to_html_plain( $markdown ) {
         // Parsedownライブラリを読み込み
         if ( ! class_exists( 'Parsedown' ) ) {
             require_once BLOG_POSTER_PLUGIN_DIR . 'includes/Parsedown.php';
