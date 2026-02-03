@@ -86,12 +86,6 @@ class Blog_Poster_Job_Manager {
 		}
 		$checked = true;
 
-		$version_key = 'blog_poster_jobs_schema_version';
-		$current_version = get_option( $version_key, '' );
-		if ( $current_version === self::JOBS_SCHEMA_VERSION ) {
-			return;
-		}
-
 		global $wpdb;
 
 		$table_exists = $wpdb->get_var( "SHOW TABLES LIKE '{$this->table_name}'" );
@@ -99,21 +93,20 @@ class Blog_Poster_Job_Manager {
 		if ( $table_exists !== $this->table_name ) {
 			error_log( 'Blog Poster: Jobs table does not exist. Creating...' );
 			$this->create_table();
-		} else {
-			$has_column = $wpdb->get_var(
-				$wpdb->prepare(
-					"SHOW COLUMNS FROM {$this->table_name} LIKE %s",
-					'api_key_encrypted'
-				)
-			);
-			if ( $has_column ) {
-				update_option( $version_key, self::JOBS_SCHEMA_VERSION );
-				return;
-			}
-			// 既存テーブルがある場合はスキーマ更新を確認
-			$this->upgrade_table();
+			return;
 		}
-		update_option( $version_key, self::JOBS_SCHEMA_VERSION );
+
+		$has_column = $wpdb->get_var(
+			$wpdb->prepare(
+				"SHOW COLUMNS FROM {$this->table_name} LIKE %s",
+				'api_key_encrypted'
+			)
+		);
+		if ( $has_column ) {
+			return;
+		}
+
+		$wpdb->query( "ALTER TABLE {$this->table_name} ADD COLUMN api_key_encrypted text" );
 	}
 
 	/**
