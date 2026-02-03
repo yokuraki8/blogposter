@@ -45,8 +45,34 @@ $tasks = get_post_meta( $post->ID, '_blog_poster_seo_tasks', true );
     <div class="blog-poster-seo-tasks">
         <div class="tasks-header">
             <strong><?php esc_html_e( '改善タスク', 'blog-poster' ); ?></strong>
-            <button type="button" class="button blog-poster-generate-tasks"><?php esc_html_e( 'タスク生成', 'blog-poster' ); ?></button>
+            <div class="tasks-actions">
+                <select class="blog-poster-task-filter">
+                    <option value="all"><?php esc_html_e( 'すべて', 'blog-poster' ); ?></option>
+                    <option value="1"><?php esc_html_e( 'Critical', 'blog-poster' ); ?></option>
+                    <option value="2"><?php esc_html_e( 'High', 'blog-poster' ); ?></option>
+                    <option value="3"><?php esc_html_e( 'Medium', 'blog-poster' ); ?></option>
+                    <option value="4"><?php esc_html_e( 'Low', 'blog-poster' ); ?></option>
+                </select>
+                <button type="button" class="button blog-poster-generate-tasks"><?php esc_html_e( 'タスク生成', 'blog-poster' ); ?></button>
+                <button type="button" class="button blog-poster-batch-apply"><?php esc_html_e( '選択を一括実行', 'blog-poster' ); ?></button>
+            </div>
         </div>
         <ul class="tasks-list"></ul>
+    </div>
+
+    <div class="blog-poster-rewrite-modal" style="display:none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <strong><?php esc_html_e( 'リライトプレビュー', 'blog-poster' ); ?></strong>
+                <button type="button" class="button-link blog-poster-modal-close">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="preview-text"></div>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="button button-primary blog-poster-apply-rewrite"><?php esc_html_e( '適用', 'blog-poster' ); ?></button>
+                <button type="button" class="button blog-poster-modal-close"><?php esc_html_e( 'キャンセル', 'blog-poster' ); ?></button>
+            </div>
+        </div>
     </div>
 </div>

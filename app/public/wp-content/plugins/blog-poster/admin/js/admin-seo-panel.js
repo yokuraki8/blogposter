@@ -32,8 +32,20 @@
       return;
     }
     tasks.tasks.forEach(t => {
-      const status = t.status === 'completed' ? '✅' : '⬜';
-      $list.append(`<li data-task-id="${t.id}">${status} ${t.title}</li>`);
+      const status = t.status === 'completed' ? 'completed' : 'pending';
+      const priority = t.priority || 3;
+      const checked = t.status === 'completed' ? 'checked' : '';
+      const label = t.status === 'completed' ? '完了' : '未完';
+      $list.append(
+        `<li data-task-id="${t.id}" data-priority="${priority}" data-status="${status}">
+          <label>
+            <input type="checkbox" class="task-checkbox" ${checked} />
+            <span class="task-title">[P${priority}] ${t.title}</span>
+          </label>
+          <button type="button" class="button-link blog-poster-preview-rewrite">提案を見る</button>
+          <span class="task-status">${label}</span>
+        </li>`
+      );
     });
   }
 
@@ -70,5 +82,63 @@
       }
     });
   });
-})(jQuery);
 
+  $(document).on('change', '.blog-poster-task-filter', function() {
+    const value = $(this).val();
+    const $panel = $(this).closest('.blog-poster-seo-panel');
+    $panel.find('.tasks-list li').each(function() {
+      const p = $(this).data('priority').toString();
+      if (value === 'all' || value === p) {
+        $(this).show();
+      } else {
+        $(this).hide();
+      }
+    });
+  });
+
+  $(document).on('click', '.blog-poster-batch-apply', function() {
+    const $panel = $(this).closest('.blog-poster-seo-panel');
+    const postId = $panel.data('post-id');
+    const taskIds = [];
+    $panel.find('.task-checkbox:checked').each(function() {
+      taskIds.push($(this).closest('li').data('task-id'));
+    });
+    if (taskIds.length === 0) return;
+    $.post(blogPosterSeo.ajaxUrl, {
+      action: 'blog_poster_batch_apply',
+      nonce: blogPosterSeo.nonce,
+      post_id: postId,
+      task_ids: taskIds
+    }).done(function(res) {
+      if (res.success) {
+        taskIds.forEach(id => {
+          const $li = $panel.find(`li[data-task-id="${id}"]`);
+          $li.attr('data-status', 'completed');
+          $li.find('.task-status').text('完了');
+        });
+      }
+    });
+  });
+
+  $(document).on('click', '.blog-poster-preview-rewrite', function() {
+    const $panel = $(this).closest('.blog-poster-seo-panel');
+    const postId = $panel.data('post-id');
+    const taskId = $(this).closest('li').data('task-id');
+    const $modal = $panel.find('.blog-poster-rewrite-modal');
+    $.post(blogPosterSeo.ajaxUrl, {
+      action: 'blog_poster_preview_rewrite',
+      nonce: blogPosterSeo.nonce,
+      post_id: postId,
+      task_id: taskId
+    }).done(function(res) {
+      if (res.success) {
+        $modal.find('.preview-text').text(res.data && res.data.message ? res.data.message : 'プレビュー準備中');
+        $modal.show();
+      }
+    });
+  });
+
+  $(document).on('click', '.blog-poster-modal-close', function() {
+    $(this).closest('.blog-poster-rewrite-modal').hide();
+  });
+})(jQuery);
