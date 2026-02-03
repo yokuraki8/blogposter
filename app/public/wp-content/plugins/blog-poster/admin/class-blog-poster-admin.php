@@ -651,15 +651,20 @@ class Blog_Poster_Admin {
             );
         }
 
+        // メタディスクリプションを確定（空なら本文から生成）
+        if ( empty( $meta_description ) ) {
+            $meta_description = $this->build_meta_description( $html_content );
+        }
+
+        if ( ! empty( $meta_description ) ) {
+            update_post_meta( $post_id, '_blog_poster_meta_description', $meta_description );
+        }
+
         // Yoast SEO連携（設定ON + Yoast有効時のみ）
         $settings = get_option( 'blog_poster_settings', array() );
         $yoast_enabled = ! empty( $settings['enable_yoast_integration'] ) && $this->is_yoast_active();
 
         if ( $yoast_enabled ) {
-            if ( empty( $meta_description ) ) {
-                $meta_description = $this->build_meta_description( $html_content );
-            }
-
             if ( ! empty( $meta_description ) ) {
                 update_post_meta( $post_id, '_yoast_wpseo_metadesc', $meta_description );
             }
