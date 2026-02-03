@@ -100,6 +100,16 @@ class Blog_Poster_Job_Manager {
 			error_log( 'Blog Poster: Jobs table does not exist. Creating...' );
 			$this->create_table();
 		} else {
+			$has_column = $wpdb->get_var(
+				$wpdb->prepare(
+					"SHOW COLUMNS FROM {$this->table_name} LIKE %s",
+					'api_key_encrypted'
+				)
+			);
+			if ( $has_column ) {
+				update_option( $version_key, self::JOBS_SCHEMA_VERSION );
+				return;
+			}
 			// 既存テーブルがある場合はスキーマ更新を確認
 			$this->upgrade_table();
 		}
