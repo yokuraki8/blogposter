@@ -23,6 +23,7 @@ class Blog_Poster_Task_Manager {
                     'priority' => (int) ( $rec['priority'] ?? 3 ),
                     'status' => 'pending',
                     'category' => $rec['category'] ?? 'general',
+                    'rec_type' => $rec['type'] ?? '',
                     'section' => $this->map_section( $rec ),
                     'title' => $rec['title'] ?? '改善タスク',
                     'description' => $rec['description'] ?? '',
@@ -58,6 +59,65 @@ class Blog_Poster_Task_Manager {
 
     public function get_tasks( $post_id ) {
         return get_post_meta( $post_id, '_blog_poster_seo_tasks', true );
+    }
+
+    public function get_task( $post_id, $task_id ) {
+        $data = $this->get_tasks( $post_id );
+        if ( empty( $data['tasks'] ) ) {
+            return null;
+        }
+        foreach ( $data['tasks'] as $task ) {
+            if ( $task['id'] === $task_id ) {
+                return $task;
+            }
+        }
+        return null;
+    }
+
+    public function update_task_suggestion( $post_id, $task_id, $suggestion ) {
+        $data = $this->get_tasks( $post_id );
+        if ( empty( $data['tasks'] ) ) {
+            return false;
+        }
+        $updated = false;
+        foreach ( $data['tasks'] as &$task ) {
+            if ( $task['id'] === $task_id ) {
+                $current = isset( $task['suggestion'] ) && is_array( $task['suggestion'] ) ? $task['suggestion'] : array();
+                $task['suggestion'] = array_merge( $current, $suggestion );
+                $updated = true;
+                break;
+            }
+        }
+        if ( ! $updated ) {
+            return false;
+        }
+        $data['updated_at'] = time();
+        update_post_meta( $post_id, '_blog_poster_seo_tasks', $data );
+        return true;
+    }
+
+    public function update_task_result( $post_id, $task_id, $result, $status = 'completed' ) {
+        $data = $this->get_tasks( $post_id );
+        if ( empty( $data['tasks'] ) ) {
+            return false;
+        }
+        $updated = false;
+        foreach ( $data['tasks'] as &$task ) {
+            if ( $task['id'] === $task_id ) {
+                $current = isset( $task['result'] ) && is_array( $task['result'] ) ? $task['result'] : array();
+                $task['result'] = array_merge( $current, $result );
+                $task['status'] = $status;
+                $updated = true;
+                break;
+            }
+        }
+        if ( ! $updated ) {
+            return false;
+        }
+        $data['updated_at'] = time();
+        $data['summary'] = $this->build_summary( $data['tasks'] );
+        update_post_meta( $post_id, '_blog_poster_seo_tasks', $data );
+        return true;
     }
 
     public function update_task( $post_id, $task_id, $status ) {
@@ -132,4 +192,3 @@ class Blog_Poster_Task_Manager {
         return 'body';
     }
 }
-

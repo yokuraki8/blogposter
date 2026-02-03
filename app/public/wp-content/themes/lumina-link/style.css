@@ -1,0 +1,96 @@
+/*
+Theme Name: Lumina Link
+Theme URI: http://blog-poster-plugin.local/
+Author: Internal
+Description: Lumina Link corporate site theme (equipment maintenance).
+Version: 0.1.0
+Text Domain: lumina-link
+*/
+
+html {
+    scroll-behavior: smooth;
+}
+
+body {
+    background-color: #ffffff;
+}
+
+.hero-bg {
+    background-image: linear-gradient(rgba(15, 37, 64, 0.7), rgba(15, 37, 64, 0.6)), url('https://images.unsplash.com/photo-1581094794329-c8112a89af12?q=80&w=2500&auto=format&fit=crop');
+    background-size: cover;
+    background-position: center;
+}
+
+.hero-full {
+    height: 100vh;
+    padding-top: 80px;
+    box-sizing: border-box;
+    overflow: hidden;
+}
+
+.text-shadow {
+    text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+}
+
+@keyframes fade-in {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.animate-fade-in {
+    animation: fade-in 0.4s ease-out;
+}
+
+.bg-lumina-orange {
+    background-color: #F08301;
+}
+
+.hover\:bg-lumina-orangeHover:hover {
+    background-color: #d17200;
+}
+
+.text-lumina-orange {
+    color: #F08301;
+}
+
+.content-body h2 {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin: 1.5rem 0 1rem;
+    color: #0F2540;
+    border-bottom: 1px solid #E5E5E5;
+    padding-bottom: 0.5rem;
+}
+
+.page-title,
+.post-title {
+    font-size: 28px;
+    font-weight: 700;
+}
+
+.content-body h3 {
+    font-size: 1.125rem;
+    font-weight: 700;
+    margin: 1.25rem 0 0.75rem;
+    color: #1a3c66;
+}
+
+.content-body p {
+    margin: 0.75rem 0;
+    line-height: 1.8;
+}
+
+.content-body ul {
+    margin: 0.75rem 0 0.75rem 1.25rem;
+    list-style: disc;
+}
+
+.border-lumina-navy {
+    border-color: #0F2540;
+}

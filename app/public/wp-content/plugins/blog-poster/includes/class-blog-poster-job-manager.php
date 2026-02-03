@@ -34,6 +34,13 @@ class Blog_Poster_Job_Manager {
 	private $generator;
 
 	/**
+	 * ジョブ実行中の一時設定オーバーライド（DBに保存しない）
+	 *
+	 * @var array|null
+	 */
+	private $job_settings_override = null;
+
+	/**
 	 * コンストラクタ
 	 */
 	public function __construct() {
@@ -152,8 +159,6 @@ class Blog_Poster_Job_Manager {
 		) $charset_collate;";
 
 		dbDelta( $sql );
-
-		error_log( 'Blog Poster: Jobs table schema updated.' );
 	}
 
 	/**
@@ -191,6 +196,11 @@ class Blog_Poster_Job_Manager {
 			$api_key_encrypted = $settings[ $key_field ];
 			if ( ! Blog_Poster_Settings::is_encrypted( $api_key_encrypted ) ) {
 				$api_key_encrypted = Blog_Poster_Settings::encrypt( $api_key_encrypted );
+			}
+			// Validate encrypted API key size
+			if ( strlen( $api_key_encrypted ) > 1000 ) {
+				error_log( 'Blog Poster: Encrypted API key is too large, ignoring' );
+				$api_key_encrypted = '';
 			}
 		}
 
@@ -984,42 +994,46 @@ class Blog_Poster_Job_Manager {
 		}
 
 		$settings = get_option( 'blog_poster_settings', array() );
-		$original = $settings;
+		$override = array();
 
 		if ( ! empty( $job['ai_provider'] ) ) {
-			$settings['ai_provider'] = $job['ai_provider'];
+			$override['ai_provider'] = $job['ai_provider'];
 		}
 
 		if ( ! empty( $job['ai_model'] ) ) {
 			$provider = ! empty( $job['ai_provider'] ) ? $job['ai_provider'] : ( $settings['ai_provider'] ?? 'gemini' );
-			$settings[ $provider . '_model' ] = $job['ai_model'];
+			$override[ $provider . '_model' ] = $job['ai_model'];
 		}
 
 		if ( ! empty( $job['api_key_encrypted'] ) ) {
 			$provider = ! empty( $job['ai_provider'] ) ? $job['ai_provider'] : ( $settings['ai_provider'] ?? 'openai' );
-			$settings[ $provider . '_api_key' ] = $job['api_key_encrypted'];
+			$override[ $provider . '_api_key' ] = $job['api_key_encrypted'];
 		}
 
 		if ( isset( $job['temperature'] ) && '' !== $job['temperature'] ) {
-			$settings['temperature'] = floatval( $job['temperature'] );
+			$override['temperature'] = floatval( $job['temperature'] );
 		}
 
-		update_option( 'blog_poster_settings', $settings );
+		// DBに保存せず、メモリ上でオーバーライドを保持
+		$this->job_settings_override = $override;
 
-		return $original;
+		// Generatorにオーバーライド設定を渡す
+		if ( ! empty( $override ) ) {
+			$this->generator->set_settings_override( $override );
+		}
+
+		return $settings; // 元の設定を返す（復元用ではなくログ目的）
 	}
 
 	/**
-	 * 設定を元に戻す
+	 * 設定を元に戻す（メモリ上のオーバーライドをクリア）
 	 *
-	 * @param array|null $original_settings 以前の設定
+	 * @param array|null $original_settings 以前の設定（互換性のため引数を残す）
 	 * @return void
 	 */
 	private function restore_job_settings( $original_settings ) {
-		if ( null === $original_settings ) {
-			return;
-		}
-
-		update_option( 'blog_poster_settings', $original_settings );
+		// メモリ上のオーバーライドをクリアするだけ（DBへのupdate_optionは行わない）
+		$this->job_settings_override = null;
+		$this->generator->clear_settings_override();
 	}
 }

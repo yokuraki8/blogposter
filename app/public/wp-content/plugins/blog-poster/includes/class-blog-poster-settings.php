@@ -112,6 +112,47 @@ class Blog_Poster_Settings {
         return array( 'changed' => $changed );
     }
 
+    /**
+     * 異常に巨大なAPIキーをクリーンアップ
+     *
+     * @return array {cleaned: number, total_before: number, total_after: number}
+     */
+    public static function sanitize_oversized_api_keys() {
+        $settings = get_option( 'blog_poster_settings', array() );
+        if ( empty( $settings ) || ! is_array( $settings ) ) {
+            return array( 'cleaned' => 0, 'total_before' => 0, 'total_after' => 0 );
+        }
+
+        $total_before = strlen( wp_json_encode( $settings ) );
+        $cleaned = 0;
+        $max_key_size = 1000; // 1000バイト以上は異常
+
+        foreach ( array( 'openai', 'claude', 'gemini' ) as $provider ) {
+            $field = $provider . '_api_key';
+            if ( empty( $settings[ $field ] ) ) {
+                continue;
+            }
+
+            $encrypted = $settings[ $field ];
+            if ( strlen( $encrypted ) > $max_key_size ) {
+                error_log( 'Blog Poster: Oversized API key detected for provider=' . $provider . ', size=' . strlen( $encrypted ) . ', clearing it.' );
+                $settings[ $field ] = '';
+                $cleaned++;
+            }
+        }
+
+        if ( $cleaned > 0 ) {
+            update_option( 'blog_poster_settings', $settings );
+        }
+
+        $total_after = strlen( wp_json_encode( $settings ) );
+        return array(
+            'cleaned'      => $cleaned,
+            'total_before' => $total_before,
+            'total_after'  => $total_after,
+        );
+    }
+
     private static function get_key() {
         $seed = ( defined( 'AUTH_KEY' ) ? AUTH_KEY : '' ) . ( defined( 'SECURE_AUTH_KEY' ) ? SECURE_AUTH_KEY : '' );
         return hash( 'sha256', $seed, true );

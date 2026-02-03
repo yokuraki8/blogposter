@@ -21,6 +21,9 @@ $tasks = get_post_meta( $post->ID, '_blog_poster_seo_tasks', true );
         <?php else : ?>
             <div class="score"><?php esc_html_e( '未分析', 'blog-poster' ); ?></div>
         <?php endif; ?>
+        <div class="score-bar" aria-hidden="true">
+            <div class="score-bar-fill" style="width:<?php echo ! empty( $analysis['overall']['composite_score'] ) ? esc_attr( $analysis['overall']['composite_score'] ) : 0; ?>%"></div>
+        </div>
     </div>
 
     <div class="blog-poster-seo-sections">
@@ -40,6 +43,13 @@ $tasks = get_post_meta( $post->ID, '_blog_poster_seo_tasks', true );
             <h4><?php esc_html_e( '信頼性', 'blog-poster' ); ?></h4>
             <div class="content"></div>
         </div>
+    </div>
+
+    <div class="blog-poster-seo-recommendations">
+        <div class="recommendations-header">
+            <strong><?php esc_html_e( '改善提案', 'blog-poster' ); ?></strong>
+        </div>
+        <ul class="recommendations-list"></ul>
     </div>
 
     <div class="blog-poster-seo-tasks">
@@ -68,6 +78,7 @@ $tasks = get_post_meta( $post->ID, '_blog_poster_seo_tasks', true );
             </div>
             <div class="modal-body">
                 <div class="preview-text"></div>
+                <div class="diff-text" style="display:none;"></div>
             </div>
             <div class="modal-actions">
                 <button type="button" class="button button-primary blog-poster-apply-rewrite"><?php esc_html_e( '適用', 'blog-poster' ); ?></button>

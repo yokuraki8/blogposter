@@ -82,7 +82,6 @@ class Blog_Poster {
         require_once BLOG_POSTER_PLUGIN_DIR . 'includes/class-blog-poster-generator.php';
         require_once BLOG_POSTER_PLUGIN_DIR . 'includes/class-blog-poster-settings.php';
         require_once BLOG_POSTER_PLUGIN_DIR . 'includes/class-blog-poster-job-manager.php';
-        require_once BLOG_POSTER_PLUGIN_DIR . 'includes/class-blog-poster-batch-generator.php';
         require_once BLOG_POSTER_PLUGIN_DIR . 'includes/class-blog-poster-queue-runner.php';
 
         // SEO分析・リライト

@@ -40,10 +40,15 @@ class Blog_Poster_Admin {
         add_action( 'add_meta_boxes', array( $this, 'add_seo_metabox' ) );
         add_action( 'wp_ajax_blog_poster_analyze_seo', array( $this, 'ajax_analyze_seo' ) );
         add_action( 'wp_ajax_blog_poster_get_analysis', array( $this, 'ajax_get_analysis' ) );
+        add_action( 'wp_ajax_blog_poster_get_tasks', array( $this, 'ajax_get_tasks' ) );
         add_action( 'wp_ajax_blog_poster_generate_tasks', array( $this, 'ajax_generate_tasks' ) );
         add_action( 'wp_ajax_blog_poster_apply_task', array( $this, 'ajax_apply_task' ) );
         add_action( 'wp_ajax_blog_poster_batch_apply', array( $this, 'ajax_batch_apply' ) );
         add_action( 'wp_ajax_blog_poster_preview_rewrite', array( $this, 'ajax_preview_rewrite' ) );
+        add_action( 'wp_ajax_blog_poster_apply_rewrite', array( $this, 'ajax_apply_rewrite' ) );
+
+        // Yoast SEOメタ同期（投稿保存時）
+        add_action( 'save_post', array( $this, 'sync_yoast_meta_on_save' ), 20, 2 );
     }
 
     /**
@@ -234,6 +239,17 @@ class Blog_Poster_Admin {
         wp_send_json_success( $analysis );
     }
 
+    public function ajax_get_tasks() {
+        check_ajax_referer( 'blog_poster_nonce', 'nonce' );
+        if ( ! current_user_can( 'edit_posts' ) ) {
+            wp_send_json_error( array( 'message' => 'Unauthorized' ) );
+        }
+        $post_id = intval( $_POST['post_id'] ?? 0 );
+        $manager = new Blog_Poster_Task_Manager();
+        $tasks = $manager->get_tasks( $post_id );
+        wp_send_json_success( $tasks );
+    }
+
     public function ajax_generate_tasks() {
         check_ajax_referer( 'blog_poster_nonce', 'nonce' );
         if ( ! current_user_can( 'edit_posts' ) ) {
@@ -283,7 +299,69 @@ class Blog_Poster_Admin {
         if ( ! current_user_can( 'edit_posts' ) ) {
             wp_send_json_error( array( 'message' => 'Unauthorized' ) );
         }
-        wp_send_json_success( array( 'message' => 'リライト機能は準備中です。' ) );
+        $post_id = intval( $_POST['post_id'] ?? 0 );
+        $task_id = sanitize_text_field( $_POST['task_id'] ?? '' );
+
+        $manager = new Blog_Poster_Task_Manager();
+        $task = $manager->get_task( $post_id, $task_id );
+        if ( empty( $task ) ) {
+            wp_send_json_error( array( 'message' => 'Task not found' ) );
+        }
+
+        $task_type = $this->resolve_rewrite_task_type( $task );
+        $original_text = $this->get_original_text_for_task( $post_id, $task_type );
+
+        $rewriter = new Blog_Poster_Rewriter();
+        $result = $rewriter->rewrite_content( $post_id, $task );
+        if ( is_wp_error( $result ) ) {
+            wp_send_json_error( array( 'message' => $result->get_error_message() ) );
+        }
+
+        $manager->update_task_suggestion(
+            $post_id,
+            $task_id,
+            array(
+                'content' => $result['content'],
+                'reason' => $result['suggestion']['reason'] ?? 'AI提案',
+                'confidence_score' => $result['suggestion']['confidence_score'] ?? 70,
+            )
+        );
+
+        wp_send_json_success(
+            array(
+                'task_id' => $task_id,
+                'content' => $result['content'],
+                'task_type' => $result['task_type'],
+                'original' => $original_text,
+            )
+        );
+    }
+
+    public function ajax_apply_rewrite() {
+        check_ajax_referer( 'blog_poster_nonce', 'nonce' );
+        if ( ! current_user_can( 'edit_posts' ) ) {
+            wp_send_json_error( array( 'message' => 'Unauthorized' ) );
+        }
+
+        $post_id = intval( $_POST['post_id'] ?? 0 );
+        $task_id = sanitize_text_field( $_POST['task_id'] ?? '' );
+        $content = isset( $_POST['content'] ) ? wp_unslash( $_POST['content'] ) : '';
+
+        $rewriter = new Blog_Poster_Rewriter();
+        $result = $rewriter->apply_rewrite( $post_id, $task_id, $content );
+        if ( is_wp_error( $result ) ) {
+            wp_send_json_error( array( 'message' => $result->get_error_message() ) );
+        }
+
+        wp_send_json_success(
+            array(
+                'task_id' => $task_id,
+                'status' => 'completed',
+                'task_type' => $result['task_type'] ?? '',
+                'updated_content' => $result['updated_content'] ?? '',
+                'updated_meta' => ! empty( $result['updated_meta'] ),
+            )
+        );
     }
 
     /**
@@ -859,6 +937,13 @@ class Blog_Poster_Admin {
             }
         }
 
+        // 投稿作成後にSEO分析を自動実行
+        $analyzer = new Blog_Poster_SEO_Analyzer();
+        $analysis = $analyzer->analyze_comprehensive( $post_id );
+        if ( ! empty( $analysis ) ) {
+            $analyzer->save_analysis( $post_id, $analysis );
+        }
+
         error_log( 'Blog Poster: Post created successfully with ID: ' . $post_id );
 
         $send_json(
@@ -882,6 +967,67 @@ class Blog_Poster_Admin {
         }
 
         return function_exists( 'is_plugin_active' ) && is_plugin_active( 'wordpress-seo/wp-seo.php' );
+    }
+
+    public function sync_yoast_meta_on_save( $post_id, $post ) {
+        if ( wp_is_post_autosave( $post_id ) || wp_is_post_revision( $post_id ) ) {
+            return;
+        }
+        if ( ! $post || 'post' !== $post->post_type ) {
+            return;
+        }
+        if ( ! current_user_can( 'edit_post', $post_id ) ) {
+            return;
+        }
+
+        $settings = get_option( 'blog_poster_settings', array() );
+        $yoast_enabled = ! empty( $settings['enable_yoast_integration'] ) && $this->is_yoast_active();
+        if ( ! $yoast_enabled ) {
+            return;
+        }
+
+        $meta = get_post_meta( $post_id, '_blog_poster_meta_description', true );
+        if ( empty( $meta ) ) {
+            return;
+        }
+
+        $meta = sanitize_text_field( $meta );
+        update_post_meta( $post_id, '_yoast_wpseo_metadesc', $meta );
+    }
+
+    private function resolve_rewrite_task_type( $task ) {
+        if ( ! empty( $task['rec_type'] ) ) {
+            return $task['rec_type'];
+        }
+        $title = isset( $task['title'] ) ? $task['title'] : '';
+        $section = isset( $task['section'] ) ? $task['section'] : '';
+
+        if ( false !== mb_strpos( $title, 'リード' ) ) {
+            return 'missing_lead';
+        }
+        if ( false !== mb_strpos( $title, '結論' ) || 'conclusion' === $section ) {
+            return 'missing_conclusion';
+        }
+        if ( false !== mb_strpos( $title, 'CTA' ) ) {
+            return 'missing_cta';
+        }
+        if ( false !== mb_strpos( $title, 'ディスクリプション' ) ) {
+            return 'meta_description';
+        }
+
+        return 'unsupported';
+    }
+
+    private function get_original_text_for_task( $post_id, $task_type ) {
+        if ( 'meta_description' === $task_type ) {
+            $meta = get_post_meta( $post_id, '_blog_poster_meta_description', true );
+            if ( empty( $meta ) ) {
+                $meta = get_post_meta( $post_id, '_yoast_wpseo_metadesc', true );
+            }
+            return (string) $meta;
+        }
+
+        return '';
     }
 
     /**

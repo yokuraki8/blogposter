@@ -28,6 +28,45 @@ class Blog_Poster_Generator {
     private $current_article_length = 'standard';
 
     /**
+     * 設定オーバーライド（ジョブ実行時の一時設定、DBに保存しない）
+     *
+     * @var array|null
+     */
+    private $settings_override = null;
+
+    /**
+     * 設定オーバーライドを設定
+     *
+     * @param array $override オーバーライドする設定
+     * @return void
+     */
+    public function set_settings_override( $override ) {
+        $this->settings_override = $override;
+    }
+
+    /**
+     * 設定オーバーライドをクリア
+     *
+     * @return void
+     */
+    public function clear_settings_override() {
+        $this->settings_override = null;
+    }
+
+    /**
+     * 設定を取得（オーバーライドがあればマージ）
+     *
+     * @return array
+     */
+    private function get_effective_settings() {
+        $settings = get_option( 'blog_poster_settings', array() );
+        if ( ! empty( $this->settings_override ) ) {
+            $settings = array_merge( $settings, $this->settings_override );
+        }
+        return $settings;
+    }
+
+    /**
      * APIレスポンスのエラーを抽出
      *
      * @param mixed $response レスポンス
@@ -119,7 +158,8 @@ class Blog_Poster_Generator {
      * @return object|WP_Error AIクライアントまたはエラー
      */
     private function get_ai_client() {
-        $settings = get_option( 'blog_poster_settings', array() );
+        // オーバーライドを含む有効な設定を取得（DBに保存せずメモリ上でマージ）
+        $settings = $this->get_effective_settings();
         $provider = isset( $settings['ai_provider'] ) ? $settings['ai_provider'] : 'claude';
 
         $api_key = '';
@@ -235,8 +275,8 @@ class Blog_Poster_Generator {
      * @return array|WP_Error ['success' => bool, 'outline_md' => string, 'meta' => array, 'sections' => array]
      */
     public function generate_outline_markdown( $topic, $additional_instructions = '', $forced_model = '' ) {
-        // プロバイダーを判定
-        $settings = get_option( 'blog_poster_settings', array() );
+        // プロバイダーを判定（オーバーライドを含む有効な設定を取得）
+        $settings = $this->get_effective_settings();
         $provider = isset( $settings['ai_provider'] ) ? $settings['ai_provider'] : 'claude';
         if ( ! empty( $forced_model ) && 0 === strpos( $forced_model, 'gemini-' ) ) {
             $provider = 'gemini';
