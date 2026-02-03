@@ -17,6 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
  * ジョブ管理クラス
  */
 class Blog_Poster_Job_Manager {
+	const JOBS_SCHEMA_VERSION = '0.3.3-alpha-1';
 
 	/**
 	 * テーブル名
@@ -85,8 +86,9 @@ class Blog_Poster_Job_Manager {
 		}
 		$checked = true;
 
-		$cache_key = 'blog_poster_jobs_schema_checked';
-		if ( get_transient( $cache_key ) ) {
+		$version_key = 'blog_poster_jobs_schema_version';
+		$current_version = get_option( $version_key, '' );
+		if ( $current_version === self::JOBS_SCHEMA_VERSION ) {
 			return;
 		}
 
@@ -101,8 +103,7 @@ class Blog_Poster_Job_Manager {
 			// 既存テーブルがある場合はスキーマ更新を確認
 			$this->upgrade_table();
 		}
-
-		set_transient( $cache_key, 1, DAY_IN_SECONDS );
+		update_option( $version_key, self::JOBS_SCHEMA_VERSION );
 	}
 
 	/**
