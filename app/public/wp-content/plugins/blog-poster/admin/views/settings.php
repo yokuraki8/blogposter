@@ -38,6 +38,21 @@ $gemini_models = array(
 $claude_models = array(
     'claude-opus-4-5-20251101',    // Claude Opus 4.5
 );
+
+$mask_key = function ( $value ) {
+    $value = is_string( $value ) ? $value : '';
+    $len = strlen( $value );
+    if ( $len === 0 ) {
+        return '';
+    }
+    if ( $len <= 8 ) {
+        return str_repeat( '*', $len );
+    }
+    return substr( $value, 0, 4 ) . str_repeat( '*', max( 4, $len - 8 ) ) . substr( $value, -4 );
+};
+$masked_openai = $mask_key( isset( $settings['openai_api_key'] ) ? $settings['openai_api_key'] : '' );
+$masked_gemini = $mask_key( isset( $settings['gemini_api_key'] ) ? $settings['gemini_api_key'] : '' );
+$masked_claude = $mask_key( isset( $settings['claude_api_key'] ) ? $settings['claude_api_key'] : '' );
 ?>
 
 <div class="wrap blog-poster-settings">
@@ -102,7 +117,8 @@ $claude_models = array(
                                 type="password"
                                 name="blog_poster_settings[gemini_api_key]"
                                 id="gemini_api_key"
-                                value="<?php echo esc_attr( isset( $settings['gemini_api_key'] ) ? $settings['gemini_api_key'] : '' ); ?>"
+                                value=""
+                                placeholder="<?php echo esc_attr( $masked_gemini ); ?>"
                                 class="regular-text"
                             />
                             <p class="description">
@@ -157,7 +173,8 @@ $claude_models = array(
                                 type="password"
                                 name="blog_poster_settings[claude_api_key]"
                                 id="claude_api_key"
-                                value="<?php echo esc_attr( isset( $settings['claude_api_key'] ) ? $settings['claude_api_key'] : '' ); ?>"
+                                value=""
+                                placeholder="<?php echo esc_attr( $masked_claude ); ?>"
                                 class="regular-text"
                             />
                             <p class="description">
@@ -207,7 +224,8 @@ $claude_models = array(
                                 type="password"
                                 name="blog_poster_settings[openai_api_key]"
                                 id="openai_api_key"
-                                value="<?php echo esc_attr( isset( $settings['openai_api_key'] ) ? $settings['openai_api_key'] : '' ); ?>"
+                                value=""
+                                placeholder="<?php echo esc_attr( $masked_openai ); ?>"
                                 class="regular-text"
                             />
                             <p class="description">

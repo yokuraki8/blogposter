@@ -172,6 +172,7 @@ class Blog_Poster_Admin {
      */
     public function sanitize_settings( $input ) {
         $sanitized = array();
+        $existing = get_option( 'blog_poster_settings', array() );
 
         // AI Provider
         if ( isset( $input['ai_provider'] ) ) {
@@ -179,9 +180,12 @@ class Blog_Poster_Admin {
         }
 
         // API Keys
-        $sanitized['gemini_api_key'] = isset( $input['gemini_api_key'] ) ? sanitize_text_field( $input['gemini_api_key'] ) : '';
-        $sanitized['claude_api_key'] = isset( $input['claude_api_key'] ) ? sanitize_text_field( $input['claude_api_key'] ) : '';
-        $sanitized['openai_api_key'] = isset( $input['openai_api_key'] ) ? sanitize_text_field( $input['openai_api_key'] ) : '';
+        $gemini_key = isset( $input['gemini_api_key'] ) ? sanitize_text_field( $input['gemini_api_key'] ) : '';
+        $claude_key = isset( $input['claude_api_key'] ) ? sanitize_text_field( $input['claude_api_key'] ) : '';
+        $openai_key = isset( $input['openai_api_key'] ) ? sanitize_text_field( $input['openai_api_key'] ) : '';
+        $sanitized['gemini_api_key'] = $gemini_key !== '' ? $gemini_key : ( isset( $existing['gemini_api_key'] ) ? $existing['gemini_api_key'] : '' );
+        $sanitized['claude_api_key'] = $claude_key !== '' ? $claude_key : ( isset( $existing['claude_api_key'] ) ? $existing['claude_api_key'] : '' );
+        $sanitized['openai_api_key'] = $openai_key !== '' ? $openai_key : ( isset( $existing['openai_api_key'] ) ? $existing['openai_api_key'] : '' );
 
         // Parameters
         $sanitized['temperature'] = isset( $input['temperature'] ) ? floatval( $input['temperature'] ) : 0.7;
