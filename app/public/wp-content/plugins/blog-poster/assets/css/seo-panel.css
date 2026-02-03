@@ -1,0 +1,37 @@
+.blog-poster-seo-panel {
+  border: 1px solid #e0e0e0;
+  padding: 12px;
+  background: #fff;
+}
+.blog-poster-seo-header {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.blog-poster-seo-summary .score {
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+.blog-poster-seo-sections .section {
+  border-top: 1px solid #eee;
+  padding: 8px 0;
+}
+.blog-poster-seo-sections .section h4 {
+  margin: 0 0 4px;
+}
+.blog-poster-seo-tasks {
+  border-top: 1px solid #eee;
+  margin-top: 10px;
+  padding-top: 8px;
+}
+.blog-poster-seo-tasks .tasks-header {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+.blog-poster-seo-tasks ul {
+  margin: 0;
+  padding-left: 18px;
+}

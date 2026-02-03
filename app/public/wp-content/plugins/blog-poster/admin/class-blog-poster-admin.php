@@ -35,6 +35,15 @@ class Blog_Poster_Admin {
 
         // APIキー確認ハンドラー
         add_action( 'wp_ajax_blog_poster_check_api_key', array( $this, 'ajax_check_api_key' ) );
+
+        // SEO分析・リライト
+        add_action( 'add_meta_boxes', array( $this, 'add_seo_metabox' ) );
+        add_action( 'wp_ajax_blog_poster_analyze_seo', array( $this, 'ajax_analyze_seo' ) );
+        add_action( 'wp_ajax_blog_poster_get_analysis', array( $this, 'ajax_get_analysis' ) );
+        add_action( 'wp_ajax_blog_poster_generate_tasks', array( $this, 'ajax_generate_tasks' ) );
+        add_action( 'wp_ajax_blog_poster_apply_task', array( $this, 'ajax_apply_task' ) );
+        add_action( 'wp_ajax_blog_poster_batch_apply', array( $this, 'ajax_batch_apply' ) );
+        add_action( 'wp_ajax_blog_poster_preview_rewrite', array( $this, 'ajax_preview_rewrite' ) );
     }
 
     /**
@@ -97,7 +106,7 @@ class Blog_Poster_Admin {
      * スタイルシートを読み込み
      */
     public function enqueue_styles( $hook ) {
-        if ( strpos( $hook, 'blog-poster' ) === false ) {
+        if ( strpos( $hook, 'blog-poster' ) === false && $hook !== 'post.php' && $hook !== 'post-new.php' ) {
             return;
         }
 
@@ -107,13 +116,22 @@ class Blog_Poster_Admin {
             array(),
             BLOG_POSTER_VERSION
         );
+
+        if ( $hook === 'post.php' || $hook === 'post-new.php' ) {
+            wp_enqueue_style(
+                'blog-poster-seo-panel',
+                BLOG_POSTER_PLUGIN_URL . 'assets/css/seo-panel.css',
+                array(),
+                BLOG_POSTER_VERSION
+            );
+        }
     }
 
     /**
      * JavaScriptを読み込み
      */
     public function enqueue_scripts( $hook ) {
-        if ( strpos( $hook, 'blog-poster' ) === false ) {
+        if ( strpos( $hook, 'blog-poster' ) === false && $hook !== 'post.php' && $hook !== 'post-new.php' ) {
             return;
         }
 
@@ -154,12 +172,127 @@ class Blog_Poster_Admin {
                 'nonce' => wp_create_nonce( 'blog_poster_nonce' )
             )
         );
+
+        if ( $hook === 'post.php' || $hook === 'post-new.php' ) {
+            wp_enqueue_script(
+                'blog-poster-seo-panel',
+                BLOG_POSTER_PLUGIN_URL . 'admin/js/admin-seo-panel.js',
+                array( 'jquery' ),
+                BLOG_POSTER_VERSION,
+                true
+            );
+
+            wp_localize_script(
+                'blog-poster-seo-panel',
+                'blogPosterSeo',
+                array(
+                    'ajaxUrl' => admin_url( 'admin-ajax.php' ),
+                    'nonce' => wp_create_nonce( 'blog_poster_nonce' ),
+                )
+            );
+        }
+    }
+
+    public function add_seo_metabox() {
+        add_meta_box(
+            'blog-poster-seo-panel',
+            __( 'Blog Poster SEO分析', 'blog-poster' ),
+            array( $this, 'render_seo_metabox' ),
+            'post',
+            'normal',
+            'high'
+        );
+    }
+
+    public function render_seo_metabox( $post ) {
+        require BLOG_POSTER_PLUGIN_DIR . 'admin/views/metabox-seo-panel.php';
+    }
+
+    public function ajax_analyze_seo() {
+        check_ajax_referer( 'blog_poster_nonce', 'nonce' );
+        if ( ! current_user_can( 'edit_posts' ) ) {
+            wp_send_json_error( array( 'message' => 'Unauthorized' ) );
+        }
+        $post_id = intval( $_POST['post_id'] ?? 0 );
+        if ( ! $post_id ) {
+            wp_send_json_error( array( 'message' => 'Invalid post id' ) );
+        }
+        $analyzer = new Blog_Poster_SEO_Analyzer();
+        $analysis = $analyzer->analyze_comprehensive( $post_id );
+        $analyzer->save_analysis( $post_id, $analysis );
+        wp_send_json_success( $analysis );
+    }
+
+    public function ajax_get_analysis() {
+        check_ajax_referer( 'blog_poster_nonce', 'nonce' );
+        if ( ! current_user_can( 'edit_posts' ) ) {
+            wp_send_json_error( array( 'message' => 'Unauthorized' ) );
+        }
+        $post_id = intval( $_POST['post_id'] ?? 0 );
+        $analyzer = new Blog_Poster_SEO_Analyzer();
+        $analysis = $analyzer->get_analysis( $post_id );
+        wp_send_json_success( $analysis );
+    }
+
+    public function ajax_generate_tasks() {
+        check_ajax_referer( 'blog_poster_nonce', 'nonce' );
+        if ( ! current_user_can( 'edit_posts' ) ) {
+            wp_send_json_error( array( 'message' => 'Unauthorized' ) );
+        }
+        $post_id = intval( $_POST['post_id'] ?? 0 );
+        $analyzer = new Blog_Poster_SEO_Analyzer();
+        $analysis = $analyzer->get_analysis( $post_id );
+        if ( empty( $analysis ) ) {
+            $analysis = $analyzer->analyze_comprehensive( $post_id );
+            $analyzer->save_analysis( $post_id, $analysis );
+        }
+        $manager = new Blog_Poster_Task_Manager();
+        $tasks = $manager->create_tasks( $post_id, $analysis );
+        wp_send_json_success( $tasks );
+    }
+
+    public function ajax_apply_task() {
+        check_ajax_referer( 'blog_poster_nonce', 'nonce' );
+        if ( ! current_user_can( 'edit_posts' ) ) {
+            wp_send_json_error( array( 'message' => 'Unauthorized' ) );
+        }
+        $post_id = intval( $_POST['post_id'] ?? 0 );
+        $task_id = sanitize_text_field( $_POST['task_id'] ?? '' );
+        $manager = new Blog_Poster_Task_Manager();
+        $ok = $manager->apply_task( $post_id, $task_id );
+        if ( ! $ok ) {
+            wp_send_json_error( array( 'message' => 'Task not found' ) );
+        }
+        wp_send_json_success( array( 'task_id' => $task_id, 'status' => 'completed' ) );
+    }
+
+    public function ajax_batch_apply() {
+        check_ajax_referer( 'blog_poster_nonce', 'nonce' );
+        if ( ! current_user_can( 'edit_posts' ) ) {
+            wp_send_json_error( array( 'message' => 'Unauthorized' ) );
+        }
+        $post_id = intval( $_POST['post_id'] ?? 0 );
+        $task_ids = isset( $_POST['task_ids'] ) && is_array( $_POST['task_ids'] ) ? array_map( 'sanitize_text_field', $_POST['task_ids'] ) : array();
+        $manager = new Blog_Poster_Task_Manager();
+        $applied = $manager->batch_apply( $post_id, $task_ids );
+        wp_send_json_success( array( 'applied' => $applied ) );
+    }
+
+    public function ajax_preview_rewrite() {
+        check_ajax_referer( 'blog_poster_nonce', 'nonce' );
+        if ( ! current_user_can( 'edit_posts' ) ) {
+            wp_send_json_error( array( 'message' => 'Unauthorized' ) );
+        }
+        wp_send_json_success( array( 'message' => 'リライト機能は準備中です。' ) );
     }
 
     /**
      * 設定を登録
      */
     public function register_settings() {
+        // 自動クリーンアップ: 巨大なAPIキーを削除
+        Blog_Poster_Settings::sanitize_oversized_api_keys();
+
         register_setting(
             'blog_poster_settings_group',
             'blog_poster_settings',
