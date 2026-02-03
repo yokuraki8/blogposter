@@ -74,6 +74,49 @@ class Blog_Poster_Settings {
         return self::decrypt( $raw );
     }
 
+    public static function migrate_plaintext_keys( $settings ) {
+        $settings = is_array( $settings ) ? $settings : array();
+        $changed = false;
+        foreach ( array( 'openai', 'claude', 'gemini' ) as $provider ) {
+            $field = $provider . '_api_key';
+            if ( empty( $settings[ $field ] ) ) {
+                continue;
+            }
+            if ( ! self::is_encrypted( $settings[ $field ] ) ) {
+                $settings[ $field ] = self::encrypt( $settings[ $field ] );
+                $changed = true;
+            }
+        }
+        return array( $settings, $changed );
+    }
+
+    public static function rotate_api_keys() {
+        $settings = get_option( 'blog_poster_settings', array() );
+        if ( empty( $settings ) || ! is_array( $settings ) ) {
+            return array( 'changed' => 0 );
+        }
+
+        $changed = 0;
+        foreach ( array( 'openai', 'claude', 'gemini' ) as $provider ) {
+            $field = $provider . '_api_key';
+            if ( empty( $settings[ $field ] ) ) {
+                continue;
+            }
+            $plain = self::decrypt( $settings[ $field ] );
+            if ( $plain === '' ) {
+                continue;
+            }
+            $settings[ $field ] = self::encrypt( $plain );
+            $changed++;
+        }
+
+        if ( $changed > 0 ) {
+            update_option( 'blog_poster_settings', $settings );
+        }
+
+        return array( 'changed' => $changed );
+    }
+
     private static function get_key() {
         $seed = ( defined( 'AUTH_KEY' ) ? AUTH_KEY : '' ) . ( defined( 'SECURE_AUTH_KEY' ) ? SECURE_AUTH_KEY : '' );
         return hash( 'sha256', $seed, true );
@@ -83,4 +126,11 @@ class Blog_Poster_Settings {
         $seed = ( defined( 'AUTH_SALT' ) ? AUTH_SALT : '' ) . ( defined( 'SECURE_AUTH_SALT' ) ? SECURE_AUTH_SALT : '' );
         return hash( 'sha256', $seed, true );
     }
+}
+
+if ( defined( 'WP_CLI' ) && WP_CLI ) {
+    WP_CLI::add_command( 'blog-poster rotate-keys', function() {
+        $result = Blog_Poster_Settings::rotate_api_keys();
+        WP_CLI::success( 'API keys rotated. updated=' . $result['changed'] );
+    } );
 }

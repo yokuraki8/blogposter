@@ -253,6 +253,12 @@ class Blog_Poster {
             return;
         }
 
+        list( $settings, $keys_changed ) = Blog_Poster_Settings::migrate_plaintext_keys( $settings );
+        if ( $keys_changed ) {
+            update_option( 'blog_poster_settings', $settings );
+            error_log( 'Blog Poster: Migrated plaintext API keys to encrypted storage.' );
+        }
+
         $current_max = isset( $settings['max_tokens'] ) ? intval( $settings['max_tokens'] ) : 0;
         if ( 0 === $current_max || 2000 === $current_max ) {
             $settings['max_tokens'] = 8000;
