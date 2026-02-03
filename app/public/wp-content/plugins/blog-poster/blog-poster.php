@@ -195,6 +195,7 @@ class Blog_Poster {
             current_section_index int(11) DEFAULT 0,
             total_sections int(11) DEFAULT 0,
             previous_context text,
+            api_key_encrypted text,
             outline_md longtext,
             content_md longtext,
             final_markdown longtext,

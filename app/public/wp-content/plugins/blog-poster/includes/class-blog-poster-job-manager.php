@@ -116,6 +116,7 @@ class Blog_Poster_Job_Manager {
 			current_section_index int(11) DEFAULT 0,
 			total_sections int(11) DEFAULT 0,
 			previous_context text,
+			api_key_encrypted text,
 			outline_md longtext,
 			content_md longtext,
 			final_markdown longtext,
@@ -155,11 +156,23 @@ class Blog_Poster_Job_Manager {
 		global $wpdb;
 
 		// $options から ai_provider, ai_model, temperature, article_length, is_batch を取得
+		$settings = get_option( 'blog_poster_settings', array() );
 		$ai_provider = isset( $options['ai_provider'] ) ? $options['ai_provider'] : '';
+		if ( '' === $ai_provider ) {
+			$ai_provider = isset( $settings['ai_provider'] ) ? $settings['ai_provider'] : 'openai';
+		}
 		$ai_model = isset( $options['ai_model'] ) ? $options['ai_model'] : '';
 		$temperature = isset( $options['temperature'] ) ? floatval( $options['temperature'] ) : 0.7;
 		$article_length = isset( $options['article_length'] ) ? $options['article_length'] : 'standard';
 		$is_batch = ! empty( $options['is_batch'] ) ? 1 : 0;
+		$api_key_encrypted = '';
+		$key_field = $ai_provider . '_api_key';
+		if ( isset( $settings[ $key_field ] ) ) {
+			$api_key_encrypted = $settings[ $key_field ];
+			if ( ! Blog_Poster_Settings::is_encrypted( $api_key_encrypted ) ) {
+				$api_key_encrypted = Blog_Poster_Settings::encrypt( $api_key_encrypted );
+			}
+		}
 
 		$result = $wpdb->insert(
 			$this->table_name,
@@ -170,6 +183,7 @@ class Blog_Poster_Job_Manager {
 				'ai_model'                 => $ai_model,
 				'temperature'              => $temperature,
 				'article_length'           => $article_length,
+				'api_key_encrypted'        => $api_key_encrypted,
 				'is_batch'                 => $is_batch,
 				'status'                   => 'pending',
 				'current_section_index'    => 0,
@@ -959,6 +973,11 @@ class Blog_Poster_Job_Manager {
 		if ( ! empty( $job['ai_model'] ) ) {
 			$provider = ! empty( $job['ai_provider'] ) ? $job['ai_provider'] : ( $settings['ai_provider'] ?? 'gemini' );
 			$settings[ $provider . '_model' ] = $job['ai_model'];
+		}
+
+		if ( ! empty( $job['api_key_encrypted'] ) ) {
+			$provider = ! empty( $job['ai_provider'] ) ? $job['ai_provider'] : ( $settings['ai_provider'] ?? 'openai' );
+			$settings[ $provider . '_api_key' ] = $job['api_key_encrypted'];
 		}
 
 		if ( isset( $job['temperature'] ) && '' !== $job['temperature'] ) {
