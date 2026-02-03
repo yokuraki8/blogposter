@@ -183,9 +183,39 @@ class Blog_Poster_Admin {
         $gemini_key = isset( $input['gemini_api_key'] ) ? sanitize_text_field( $input['gemini_api_key'] ) : '';
         $claude_key = isset( $input['claude_api_key'] ) ? sanitize_text_field( $input['claude_api_key'] ) : '';
         $openai_key = isset( $input['openai_api_key'] ) ? sanitize_text_field( $input['openai_api_key'] ) : '';
-        $sanitized['gemini_api_key'] = $gemini_key !== '' ? $gemini_key : ( isset( $existing['gemini_api_key'] ) ? $existing['gemini_api_key'] : '' );
-        $sanitized['claude_api_key'] = $claude_key !== '' ? $claude_key : ( isset( $existing['claude_api_key'] ) ? $existing['claude_api_key'] : '' );
-        $sanitized['openai_api_key'] = $openai_key !== '' ? $openai_key : ( isset( $existing['openai_api_key'] ) ? $existing['openai_api_key'] : '' );
+        $existing_gemini = isset( $existing['gemini_api_key'] ) ? $existing['gemini_api_key'] : '';
+        $existing_claude = isset( $existing['claude_api_key'] ) ? $existing['claude_api_key'] : '';
+        $existing_openai = isset( $existing['openai_api_key'] ) ? $existing['openai_api_key'] : '';
+
+        if ( $gemini_key !== '' ) {
+            $sanitized['gemini_api_key'] = Blog_Poster_Settings::encrypt( $gemini_key );
+        } elseif ( $existing_gemini !== '' ) {
+            $sanitized['gemini_api_key'] = Blog_Poster_Settings::is_encrypted( $existing_gemini )
+                ? $existing_gemini
+                : Blog_Poster_Settings::encrypt( $existing_gemini );
+        } else {
+            $sanitized['gemini_api_key'] = '';
+        }
+
+        if ( $claude_key !== '' ) {
+            $sanitized['claude_api_key'] = Blog_Poster_Settings::encrypt( $claude_key );
+        } elseif ( $existing_claude !== '' ) {
+            $sanitized['claude_api_key'] = Blog_Poster_Settings::is_encrypted( $existing_claude )
+                ? $existing_claude
+                : Blog_Poster_Settings::encrypt( $existing_claude );
+        } else {
+            $sanitized['claude_api_key'] = '';
+        }
+
+        if ( $openai_key !== '' ) {
+            $sanitized['openai_api_key'] = Blog_Poster_Settings::encrypt( $openai_key );
+        } elseif ( $existing_openai !== '' ) {
+            $sanitized['openai_api_key'] = Blog_Poster_Settings::is_encrypted( $existing_openai )
+                ? $existing_openai
+                : Blog_Poster_Settings::encrypt( $existing_openai );
+        } else {
+            $sanitized['openai_api_key'] = '';
+        }
 
         // Parameters
         $sanitized['temperature'] = isset( $input['temperature'] ) ? floatval( $input['temperature'] ) : 0.7;
@@ -285,8 +315,8 @@ class Blog_Poster_Admin {
         $ai_provider = isset( $settings['ai_provider'] ) ? $settings['ai_provider'] : 'openai';
 
         // APIキーチェック
-        $api_key_field = $ai_provider . '_api_key';
-        if ( empty( $settings[ $api_key_field ] ) ) {
+        $api_key = Blog_Poster_Settings::get_api_key( $ai_provider, $settings );
+        if ( empty( $api_key ) ) {
             wp_send_json_error( array(
                 'message' => sprintf(
                     __( '%s のAPIキーが設定されていません。設定画面で設定してください。', 'blog-poster' ),
@@ -1102,7 +1132,7 @@ class Blog_Poster_Admin {
             ) );
         }
 
-        $api_key = $settings[ $api_key_field ];
+        $api_key = Blog_Poster_Settings::get_api_key( $provider, $settings );
         $model = isset( $settings['default_model'][ $provider ] ) ? $settings['default_model'][ $provider ] : $this->get_default_model( $provider );
 
         // APIキーを検証

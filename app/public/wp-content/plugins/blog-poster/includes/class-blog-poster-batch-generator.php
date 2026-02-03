@@ -206,8 +206,8 @@ class Blog_Poster_Batch_Generator {
     }
 
     private function provider_has_api_key( $provider, $settings ) {
-        $key_field = $provider . '_api_key';
-        return ! empty( $settings[ $key_field ] );
+        $key = Blog_Poster_Settings::get_api_key( $provider, $settings );
+        return ! empty( $key );
     }
 
     private function apply_model_settings( $provider, $model, $temperature = null ) {

@@ -50,9 +50,9 @@ $mask_key = function ( $value ) {
     }
     return substr( $value, 0, 4 ) . str_repeat( '*', max( 4, $len - 8 ) ) . substr( $value, -4 );
 };
-$masked_openai = $mask_key( isset( $settings['openai_api_key'] ) ? $settings['openai_api_key'] : '' );
-$masked_gemini = $mask_key( isset( $settings['gemini_api_key'] ) ? $settings['gemini_api_key'] : '' );
-$masked_claude = $mask_key( isset( $settings['claude_api_key'] ) ? $settings['claude_api_key'] : '' );
+$masked_openai = $mask_key( Blog_Poster_Settings::decrypt( isset( $settings['openai_api_key'] ) ? $settings['openai_api_key'] : '' ) );
+$masked_gemini = $mask_key( Blog_Poster_Settings::decrypt( isset( $settings['gemini_api_key'] ) ? $settings['gemini_api_key'] : '' ) );
+$masked_claude = $mask_key( Blog_Poster_Settings::decrypt( isset( $settings['claude_api_key'] ) ? $settings['claude_api_key'] : '' ) );
 ?>
 
 <div class="wrap blog-poster-settings">
