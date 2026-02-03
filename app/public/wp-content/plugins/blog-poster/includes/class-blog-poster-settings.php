@@ -43,35 +43,30 @@ class Blog_Poster_Settings {
             return is_string( $value ) ? $value : '';
         }
 
-        $payload = substr( $value, strlen( self::ENC_PREFIX ) );
-        $parts = explode( ':', $payload );
-        if ( count( $parts ) !== 3 ) {
-            return '';
+        $current = $value;
+        for ( $i = 0; $i < 3; $i++ ) {
+            if ( ! self::is_encrypted( $current ) ) {
+                return $current;
+            }
+            $current = self::decrypt_once( $current );
+            if ( $current === '' ) {
+                return '';
+            }
         }
 
-        list( $iv_b64, $cipher_b64, $mac ) = $parts;
-        $hmac_key = self::get_hmac_key();
-        $expected = hash_hmac( 'sha256', $iv_b64 . ':' . $cipher_b64, $hmac_key );
-        if ( ! hash_equals( $expected, $mac ) ) {
-            return '';
-        }
-
-        $iv = base64_decode( $iv_b64, true );
-        $cipher = base64_decode( $cipher_b64, true );
-        if ( false === $iv || false === $cipher ) {
-            return '';
-        }
-
-        $key = self::get_key();
-        $plain = openssl_decrypt( $cipher, self::ENC_CIPHER, $key, OPENSSL_RAW_DATA, $iv );
-        return false === $plain ? '' : $plain;
+        return self::is_encrypted( $current ) ? '' : $current;
     }
 
     public static function get_api_key( $provider, $settings = null ) {
         $settings = is_array( $settings ) ? $settings : get_option( 'blog_poster_settings', array() );
         $key_field = $provider . '_api_key';
         $raw = isset( $settings[ $key_field ] ) ? $settings[ $key_field ] : '';
-        return self::decrypt( $raw );
+        $plain = self::decrypt( $raw );
+        if ( is_string( $plain ) && strlen( $plain ) > 500 ) {
+            error_log( 'Blog Poster: API key length looks invalid for provider=' . $provider );
+            return '';
+        }
+        return $plain;
     }
 
     public static function migrate_plaintext_keys( $settings ) {
@@ -125,6 +120,35 @@ class Blog_Poster_Settings {
     private static function get_hmac_key() {
         $seed = ( defined( 'AUTH_SALT' ) ? AUTH_SALT : '' ) . ( defined( 'SECURE_AUTH_SALT' ) ? SECURE_AUTH_SALT : '' );
         return hash( 'sha256', $seed, true );
+    }
+
+    private static function decrypt_once( $value ) {
+        if ( ! self::is_encrypted( $value ) ) {
+            return is_string( $value ) ? $value : '';
+        }
+
+        $payload = substr( $value, strlen( self::ENC_PREFIX ) );
+        $parts = explode( ':', $payload );
+        if ( count( $parts ) !== 3 ) {
+            return '';
+        }
+
+        list( $iv_b64, $cipher_b64, $mac ) = $parts;
+        $hmac_key = self::get_hmac_key();
+        $expected = hash_hmac( 'sha256', $iv_b64 . ':' . $cipher_b64, $hmac_key );
+        if ( ! hash_equals( $expected, $mac ) ) {
+            return '';
+        }
+
+        $iv = base64_decode( $iv_b64, true );
+        $cipher = base64_decode( $cipher_b64, true );
+        if ( false === $iv || false === $cipher ) {
+            return '';
+        }
+
+        $key = self::get_key();
+        $plain = openssl_decrypt( $cipher, self::ENC_CIPHER, $key, OPENSSL_RAW_DATA, $iv );
+        return false === $plain ? '' : $plain;
     }
 }
 

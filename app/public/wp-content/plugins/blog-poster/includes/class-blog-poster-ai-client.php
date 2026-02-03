@@ -51,8 +51,17 @@ abstract class Blog_Poster_AI_Client {
      * @param array  $options オプション設定
      */
     public function __construct( $api_key, $model, $options = array() ) {
-        if ( is_string( $api_key ) && 0 === strpos( $api_key, 'enc::' ) && class_exists( 'Blog_Poster_Settings' ) ) {
-            $api_key = Blog_Poster_Settings::decrypt( $api_key );
+        if ( is_string( $api_key ) && 0 === strpos( $api_key, 'enc::' ) ) {
+            if ( ! class_exists( 'Blog_Poster_Settings' ) && defined( 'BLOG_POSTER_PLUGIN_DIR' ) ) {
+                require_once BLOG_POSTER_PLUGIN_DIR . 'includes/class-blog-poster-settings.php';
+            }
+            if ( class_exists( 'Blog_Poster_Settings' ) ) {
+                $api_key = Blog_Poster_Settings::decrypt( $api_key );
+            }
+        }
+        if ( is_string( $api_key ) && ( 0 === strpos( $api_key, 'enc::' ) || strlen( $api_key ) > 500 ) ) {
+            error_log( 'Blog Poster: API key appears invalid after decrypt attempt.' );
+            $api_key = '';
         }
         $this->api_key = $api_key;
         $this->model = $model;
