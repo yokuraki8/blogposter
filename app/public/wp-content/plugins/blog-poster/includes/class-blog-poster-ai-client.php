@@ -51,6 +51,9 @@ abstract class Blog_Poster_AI_Client {
      * @param array  $options オプション設定
      */
     public function __construct( $api_key, $model, $options = array() ) {
+        if ( is_string( $api_key ) && 0 === strpos( $api_key, 'enc::' ) && class_exists( 'Blog_Poster_Settings' ) ) {
+            $api_key = Blog_Poster_Settings::decrypt( $api_key );
+        }
         $this->api_key = $api_key;
         $this->model = $model;
         $this->temperature = isset( $options['temperature'] ) ? $options['temperature'] : 0.7;
