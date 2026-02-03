@@ -40,7 +40,10 @@ class Blog_Poster_Job_Manager {
 		global $wpdb;
 		$this->table_name = $wpdb->prefix . 'blog_poster_jobs';
 		$this->generator  = new Blog_Poster_Generator();
-		$this->ensure_table_exists();
+		// Avoid heavy schema checks during AJAX to prevent memory exhaustion.
+		if ( ! ( defined( 'DOING_AJAX' ) && DOING_AJAX ) ) {
+			$this->ensure_table_exists();
+		}
 	}
 
 	/**
