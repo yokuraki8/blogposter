@@ -79,6 +79,17 @@ class Blog_Poster_Job_Manager {
 	 * テーブルの存在を確認し、なければ作成、あれば更新
 	 */
 	private function ensure_table_exists() {
+		static $checked = false;
+		if ( $checked ) {
+			return;
+		}
+		$checked = true;
+
+		$cache_key = 'blog_poster_jobs_schema_checked';
+		if ( get_transient( $cache_key ) ) {
+			return;
+		}
+
 		global $wpdb;
 
 		$table_exists = $wpdb->get_var( "SHOW TABLES LIKE '{$this->table_name}'" );
@@ -90,6 +101,8 @@ class Blog_Poster_Job_Manager {
 			// 既存テーブルがある場合はスキーマ更新を確認
 			$this->upgrade_table();
 		}
+
+		set_transient( $cache_key, 1, DAY_IN_SECONDS );
 	}
 
 	/**
