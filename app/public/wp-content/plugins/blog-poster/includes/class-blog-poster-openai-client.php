@@ -53,6 +53,11 @@ class Blog_Poster_OpenAI_Client extends Blog_Poster_AI_Client {
         $last_error = null;
 
         for ( $attempt = 0; $attempt <= $max_retries; $attempt++ ) {
+            if ( $attempt === 0 ) {
+                $len = is_string( $this->api_key ) ? strlen( $this->api_key ) : 0;
+                $enc_hint = is_string( $this->api_key ) && 0 === strpos( $this->api_key, 'enc::' ) ? 'yes' : 'no';
+                error_log( 'Blog Poster: OpenAI key length=' . $len . ' encrypted_prefix=' . $enc_hint );
+            }
             if ( $is_gpt5 ) {
                 $url = self::API_BASE_URL . 'responses';
                 $body = array(
