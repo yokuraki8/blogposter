@@ -908,6 +908,7 @@ class Blog_Poster_Admin {
         $lines = explode( "\n", $markdown );
         $fixed_lines = array();
         $i = 0;
+        $in_fenced_block = false;
         $supported_languages = array(
             'python', 'javascript', 'js', 'typescript', 'ts', 'bash', 'shell', 'sh',
             'php', 'sql', 'html', 'css', 'scss', 'sass', 'less', 'json', 'xml',
@@ -922,6 +923,19 @@ class Blog_Poster_Admin {
         while ( $i < count( $lines ) ) {
             $line = $lines[ $i ];
             $trimmed = trim( $line );
+
+            // 既存のフェンス内はそのまま通す
+            if ( preg_match( '/^```/u', $trimmed ) ) {
+                $in_fenced_block = ! $in_fenced_block;
+                $fixed_lines[] = $line;
+                $i++;
+                continue;
+            }
+            if ( $in_fenced_block ) {
+                $fixed_lines[] = $line;
+                $i++;
+                continue;
+            }
 
             // 言語指定が単独行か判定（行の先頭が直接言語名である場合）
             if ( $i < count( $lines ) - 1 &&
@@ -963,19 +977,7 @@ class Blog_Poster_Admin {
                             }
                         } else {
                             $blank_line_count = 0;
-
-                            // 見出しが現れたかチェック（# heading の形式）
-                            // ファイル名コメント（# file.py）は見出しではなく、コードと見做す
-                            $is_markdown_heading = preg_match( '/^#{1,6}\s+/u', $current_trimmed ) &&
-                                                 ! preg_match( '/\.\w{1,4}$/u', $current_trimmed ); // ファイル拡張子を除外
-
-                            if ( $is_markdown_heading ) {
-                                $found_code_end = true;
-                                $code_lines[] = '```';
-                                $i--; // 一つ戻す
-                            } else {
-                                $code_lines[] = $current;
-                            }
+                            $code_lines[] = $current;
                         }
 
                         $i++;
