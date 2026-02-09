@@ -21,6 +21,22 @@ class Blog_Poster_OpenAI_Client extends Blog_Poster_AI_Client {
     const API_BASE_URL = 'https://api.openai.com/v1/';
 
     /**
+     * モデル構成
+     *
+     * @param string $model モデル名
+     * @return array
+     */
+    private function get_model_config( $model ) {
+        $is_responses_api = ( 0 === strpos( $model, 'gpt-5' ) );
+        return array(
+            'endpoint' => $is_responses_api ? 'responses' : 'chat/completions',
+            'uses_responses_api' => $is_responses_api,
+            'supports_temperature' => ! $is_responses_api,
+            'token_field' => $is_responses_api ? 'max_output_tokens' : 'max_tokens',
+        );
+    }
+
+    /**
      * テキスト生成
      *
      * @param string $prompt プロンプト
@@ -45,8 +61,8 @@ class Blog_Poster_OpenAI_Client extends Blog_Poster_AI_Client {
 
         $adjusted_prompt = $this->apply_tone_settings( $prompt );
 
-        $is_gpt5 = ( 0 === strpos( $this->model, 'gpt-5' ) );
-        $supports_temperature = ! $is_gpt5;
+        $model_config = $this->get_model_config( $this->model );
+        $supports_temperature = $model_config['supports_temperature'];
 
         // リトライロジック
         $max_retries = 2;
@@ -58,12 +74,12 @@ class Blog_Poster_OpenAI_Client extends Blog_Poster_AI_Client {
                 $enc_hint = is_string( $this->api_key ) && 0 === strpos( $this->api_key, 'enc::' ) ? 'yes' : 'no';
                 error_log( 'Blog Poster: OpenAI key length=' . $len . ' encrypted_prefix=' . $enc_hint );
             }
-            if ( $is_gpt5 ) {
-                $url = self::API_BASE_URL . 'responses';
+            if ( $model_config['uses_responses_api'] ) {
+                $url = self::API_BASE_URL . $model_config['endpoint'];
                 $body = array(
                     'model' => $this->model,
                     'input' => $adjusted_prompt,
-                    'max_output_tokens' => $max_tokens,
+                    $model_config['token_field'] => $max_tokens,
                 );
                 if ( $supports_temperature ) {
                     $body['temperature'] = $this->temperature;
@@ -83,7 +99,7 @@ class Blog_Poster_OpenAI_Client extends Blog_Poster_AI_Client {
                     'format' => $format,
                 );
             } else {
-                $url = self::API_BASE_URL . 'chat/completions';
+                $url = self::API_BASE_URL . $model_config['endpoint'];
                 $body = array(
                     'model' => $this->model,
                     'messages' => array(
@@ -93,7 +109,7 @@ class Blog_Poster_OpenAI_Client extends Blog_Poster_AI_Client {
                         )
                     ),
                     'temperature' => $this->temperature,
-                    'max_tokens' => $max_tokens,
+                    $model_config['token_field'] => $max_tokens,
                 );
                 if ( ! empty( $response_format ) ) {
                     $body['response_format'] = $response_format;
@@ -108,7 +124,7 @@ class Blog_Poster_OpenAI_Client extends Blog_Poster_AI_Client {
             $response = $this->make_request( $url, $body, $headers );
 
             if ( is_wp_error( $response ) ) {
-                return $this->error_response( $response->get_error_message() );
+                return $this->error_response( $response->get_error_message(), $response->get_error_code() );
             }
 
             // レスポンスからテキストとトークン数を抽出
@@ -179,18 +195,6 @@ class Blog_Poster_OpenAI_Client extends Blog_Poster_AI_Client {
                 return $this->error_response( __( 'OpenAIのレスポンスが空です。', 'blog-poster' ) );
             }
 
-            // UTF-8検証と修復（自動検出モード）
-            if ( ! mb_check_encoding( $text, 'UTF-8' ) ) {
-                error_log( 'Blog Poster: OpenAI invalid UTF-8 response detected, attempting to fix.' );
-                $text = mb_convert_encoding( $text, 'UTF-8', 'auto' );
-            }
-            // 不完全なマルチバイト文字シーケンスを除去
-            $text = mb_convert_encoding( $text, 'UTF-8', 'UTF-8' );
-            // 制御文字を除去
-            $text = preg_replace( '/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/u', '', $text );
-            // 不正なUTF-8置換文字（U+FFFD）が連続する場合は除去
-            $text = preg_replace( '/\x{FFFD}+/u', '', $text );
-
             if ( isset( $response['usage']['total_tokens'] ) ) {
                 $tokens = $response['usage']['total_tokens'];
             }
@@ -236,7 +240,7 @@ class Blog_Poster_OpenAI_Client extends Blog_Poster_AI_Client {
         $response = $this->make_request( $url, $body, $headers );
 
         if ( is_wp_error( $response ) ) {
-            return $this->error_response( $response->get_error_message() );
+            return $this->error_response( $response->get_error_message(), $response->get_error_code() );
         }
 
         // レスポンスから画像URLを抽出

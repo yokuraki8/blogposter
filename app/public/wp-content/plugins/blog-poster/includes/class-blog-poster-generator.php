@@ -59,7 +59,9 @@ class Blog_Poster_Generator {
      * @return array
      */
     private function get_effective_settings() {
-        $settings = get_option( 'blog_poster_settings', array() );
+        $settings = class_exists( 'Blog_Poster_Settings' )
+            ? Blog_Poster_Settings::get_settings()
+            : get_option( 'blog_poster_settings', array() );
         if ( ! empty( $this->settings_override ) ) {
             $settings = array_merge( $settings, $this->settings_override );
         }
@@ -94,6 +96,9 @@ class Blog_Poster_Generator {
         }
 
         $code = $default_code;
+        if ( is_array( $response ) && ! empty( $response['error_code'] ) ) {
+            $code = sanitize_key( $response['error_code'] );
+        }
         $lower_message = strtolower( $message );
         if ( false !== strpos( $lower_message, 'insufficient_quota' ) || false !== strpos( $lower_message, 'quota' ) ) {
             $code = 'api_insufficient_quota';
@@ -285,29 +290,8 @@ class Blog_Poster_Generator {
         $outline_model = ! empty( $forced_model ) ? $forced_model : $configured_model;
         error_log( sprintf( 'Blog Poster: Outline provider=%s model=%s', $provider, $outline_model !== '' ? $outline_model : 'default' ) );
 
-        // Geminiの場合は2段階生成
-        if ( 'gemini' === $provider ) {
-            error_log( 'Blog Poster: Using 2-step outline generation for Gemini' );
-
-            // Step1: セクションタイトルのみ生成
-            $step1_result = $this->generate_outline_step1_gemini( $topic, $additional_instructions, $forced_model );
-            if ( is_wp_error( $step1_result ) ) {
-                return $step1_result;
-            }
-
-            $section_titles = $step1_result['titles'];
-
-            // Step2: 詳細構造を生成
-            $step2_result = $this->generate_outline_step2_gemini( $topic, $section_titles, $additional_instructions, $forced_model );
-            if ( is_wp_error( $step2_result ) ) {
-                return $step2_result;
-            }
-
-            return $step2_result;
-        }
-
-        // Claude/OpenAIは既存の1段階生成を使用
-        error_log( 'Blog Poster: Using standard outline generation for ' . $provider );
+        // Sprint 2: Geminiも含めて1段階生成に統一
+        error_log( 'Blog Poster: Using unified 1-pass outline generation for ' . $provider );
 
         $config = $this->get_length_config( $this->current_article_length );
         $h2_min = $config['h2_min'];
@@ -324,7 +308,7 @@ class Blog_Poster_Generator {
 
             $current_additional_instructions = $additional_instructions;
             if ( $outline_attempt > 0 ) {
-                $current_additional_instructions .= "\n\n【重要】H2見出しは必ず{$h2_min}〜{$h2_max}個にしてください。前回の生成ではこの制約が守られていません。";
+                $current_additional_instructions .= "\n\n【再試行指示】H2見出し数は{$h2_min}〜{$h2_max}個を厳守してください。";
             }
 
             $prompt = $this->build_outline_prompt( $topic, $current_additional_instructions );
@@ -350,12 +334,7 @@ class Blog_Poster_Generator {
                     return new WP_Error( 'api_error', $error_msg );
                 }
 
-                $outline_md = '';
-                if ( isset( $response['data'] ) && is_string( $response['data'] ) ) {
-                    $outline_md = $response['data'];
-                } elseif ( isset( $response['content'] ) && is_string( $response['content'] ) ) {
-                    $outline_md = $response['content'];
-                }
+                $outline_md = method_exists( $client, 'get_text_content' ) ? $client->get_text_content( $response ) : '';
 
                 if ( empty( $outline_md ) ) {
                     error_log( 'Blog Poster: Outline response empty. Raw response: ' . print_r( $response, true ) );
@@ -402,242 +381,6 @@ class Blog_Poster_Generator {
     }
 
     /**
-     * Gemini専用: Step1 - セクションタイトルのみ生成
-     *
-     * @param string $topic トピック
-     * @param string $additional_instructions 追加指示
-     * @return array|WP_Error ['success' => true, 'titles' => array]
-     */
-    private function generate_outline_step1_gemini( $topic, $additional_instructions = '', $forced_model = '' ) {
-        $client = $this->get_ai_client();
-        if ( is_wp_error( $client ) ) {
-            return $client;
-        }
-
-        $additional_text = ! empty( $additional_instructions ) ? "\n追加指示: {$additional_instructions}" : '';
-
-        $config = $this->get_length_config( $this->current_article_length );
-        $h2_count = $config['h2_count'];
-        $h2_min = $config['h2_min'];
-        $h2_max = $config['h2_max'];
-        $total_chars = $config['total_chars'];
-        $outline_max_tokens = $config['outline_max_tokens'];
-
-        // セクション例を動的に生成
-        $section_examples = '';
-        for ( $i = 1; $i <= $h2_max; $i++ ) {
-            $optional = $i > $h2_min ? '（任意）' : '';
-            $section_examples .= "{$i}. セクション{$i}のタイトル{$optional}\n";
-        }
-
-        $prompt = "以下のトピックについて、ブログ記事のセクション見出し（H2）を{$h2_count}個考えてください。
-
-トピック: {$topic}{$additional_text}
-
-【記事の目標文字数】約{$total_chars}文字
-
-【事実性の厳守】
-1. 構成は事実に基づく内容のみを想定すること
-2. 憶測・推測・断定できない表現に基づく構成は禁止
-
-【重要な制約】
-1. セクション見出しは必ず{$h2_min}個以上{$h2_max}個以下
-2. 各見出しは読者の課題解決を意識
-3. 論理的な流れを持つ構成
-
-出力形式（番号付きリストのみ）:
-{$section_examples}
-番号付きリストのみを出力してください。説明文は不要です。";
-
-        try {
-            $options = array( 'max_tokens' => $outline_max_tokens );
-            if ( ! empty( $forced_model ) ) {
-                $options['model'] = $forced_model;
-            }
-            $response = $client->generate_text( $prompt, $options );
-
-            if ( is_wp_error( $response ) ) {
-                return $response;
-            }
-            $api_error = $this->response_to_wp_error( $response, 'step1_api_error' );
-            if ( $api_error ) {
-                return $api_error;
-            }
-
-            $content = '';
-            if ( isset( $response['data'] ) && is_string( $response['data'] ) ) {
-                $content = $response['data'];
-            } elseif ( isset( $response['content'] ) && is_string( $response['content'] ) ) {
-                $content = $response['content'];
-            }
-
-            if ( empty( $content ) ) {
-                error_log( 'Blog Poster: Step1 response empty' );
-                return new WP_Error( 'step1_empty', 'セクションタイトルの生成に失敗しました。' );
-            }
-
-            // 番号付きリストからタイトルを抽出
-            $titles = array();
-            $lines = explode( "\n", $content );
-            foreach ( $lines as $line ) {
-                $line = trim( $line );
-                // "1. タイトル" または "1) タイトル" 形式を抽出
-                if ( preg_match( '/^\d+[\.\)]\s+(.+)$/u', $line, $matches ) ) {
-                    $titles[] = trim( $matches[1] );
-                }
-            }
-
-            $count = count( $titles );
-            if ( $count < $h2_min || $count > $h2_max ) {
-                error_log( 'Blog Poster: Step1 section count out of range: ' . $count );
-                return new WP_Error( 'step1_count', 'セクション数が不足しています。実際: ' . $count . '個（必要: ' . $h2_count . '個）' );
-            }
-
-            error_log( 'Blog Poster: Step1 generated ' . $count . ' section titles' );
-
-            return array(
-                'success' => true,
-                'titles' => $titles,
-            );
-
-        } catch ( Exception $e ) {
-            error_log( 'Blog Poster: Step1 error: ' . $e->getMessage() );
-            return new WP_Error( 'step1_error', $e->getMessage() );
-        }
-    }
-
-    /**
-     * Gemini専用: Step2 - セクションタイトルから詳細構造を生成
-     *
-     * @param string $topic トピック
-     * @param array $section_titles セクションタイトル配列
-     * @param string $additional_instructions 追加指示
-     * @return array|WP_Error ['success' => true, 'outline_md' => string, ...]
-     */
-    private function generate_outline_step2_gemini( $topic, $section_titles, $additional_instructions = '', $forced_model = '' ) {
-        $client = $this->get_ai_client();
-        if ( is_wp_error( $client ) ) {
-            return $client;
-        }
-
-        $additional_text = ! empty( $additional_instructions ) ? "\n追加指示: {$additional_instructions}" : '';
-
-        $config = $this->get_length_config( $this->current_article_length );
-        $total_chars = $config['total_chars'];
-
-        // セクションタイトルをリスト化
-        $titles_list = '';
-        foreach ( $section_titles as $idx => $title ) {
-            $num = $idx + 1;
-            $titles_list .= "{$num}. {$title}\n";
-        }
-
-        $title_example_1 = isset( $section_titles[0] ) ? $section_titles[0] : 'セクション1のタイトル';
-        $title_example_2 = isset( $section_titles[1] ) ? $section_titles[1] : 'セクション2のタイトル';
-
-        $prompt = "以下のトピックとセクション構成に基づいて、詳細なアウトラインを作成してください。
-
-トピック: {$topic}{$additional_text}
-
-【記事の目標文字数】約{$total_chars}文字
-
-セクション構成:
-{$titles_list}
-
-【事実性の厳守】
-1. 事実に基づく内容のみでアウトラインを構成すること
-2. 憶測・推測・断定できない表現に基づく構成は禁止
-
-以下の形式で出力してください:
-
----
-title: \"記事タイトル（SEO最適化、30-60文字）\"
-slug: \"url-friendly-slug\"
-excerpt: \"記事の抜粋（120-160文字）\"
-keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
----
-
-## {$title_example_1}
-
-### サブセクション1-1
-
-### サブセクション1-2
-
-## {$title_example_2}
-
-### サブセクション2-1
-
-（以下同様に全セクションを展開。箇条書きは不要）
-
-要件:
-- 上記のセクション構成のタイトルをそのままH2に使用する
-- 各H2の下にH3を2-4個配置
-
-出力はMarkdown形式のみ。説明文は不要です。";
-
-        // デバッグ: プロンプト先頭500文字をログ出力
-        error_log( 'Blog Poster: Step2 prompt (first 500 chars): ' . substr( $prompt, 0, 500 ) );
-        error_log( 'Blog Poster: Step2 section titles: ' . print_r( $section_titles, true ) );
-
-        try {
-            $options = array( 'max_tokens' => $outline_max_tokens );
-            if ( ! empty( $forced_model ) ) {
-                $options['model'] = $forced_model;
-            }
-            $response = $client->generate_text( $prompt, $options );
-
-            if ( is_wp_error( $response ) ) {
-                error_log( 'Blog Poster: Step2 WP_Error: ' . $response->get_error_message() );
-                return $response;
-            }
-            $api_error = $this->response_to_wp_error( $response, 'step2_api_error' );
-            if ( $api_error ) {
-                error_log( 'Blog Poster: Step2 API error: ' . $api_error->get_error_message() );
-                return $api_error;
-            }
-
-            // デバッグ: レスポンス全体をログ出力
-            error_log( 'Blog Poster: Step2 raw response: ' . print_r( $response, true ) );
-
-            $outline_md = '';
-            if ( isset( $response['data'] ) && is_string( $response['data'] ) ) {
-                $outline_md = $response['data'];
-                error_log( 'Blog Poster: Step2 got data field, length: ' . strlen( $outline_md ) );
-            } elseif ( isset( $response['content'] ) && is_string( $response['content'] ) ) {
-                $outline_md = $response['content'];
-                error_log( 'Blog Poster: Step2 got content field, length: ' . strlen( $outline_md ) );
-            }
-
-            if ( empty( $outline_md ) ) {
-                error_log( 'Blog Poster: Step2 response empty. Response keys: ' . implode( ', ', array_keys( $response ) ) );
-                return new WP_Error( 'step2_empty', 'アウトラインの生成に失敗しました。' );
-            }
-
-            // YAML frontmatterとセクション構造を解析
-            $parsed = $this->parse_markdown_frontmatter( $outline_md );
-            $sections = isset( $parsed['sections'] ) ? $parsed['sections'] : array();
-
-            if ( empty( $sections ) ) {
-                error_log( 'Blog Poster: Step2 no sections parsed' );
-                return new WP_Error( 'step2_no_sections', 'セクションを抽出できませんでした。' );
-            }
-
-            error_log( 'Blog Poster: Step2 completed with ' . count( $sections ) . ' sections' );
-
-            return array(
-                'success' => true,
-                'outline_md' => $outline_md,
-                'meta' => $parsed['meta'],
-                'sections' => $sections,
-            );
-
-        } catch ( Exception $e ) {
-            error_log( 'Blog Poster: Step2 error: ' . $e->getMessage() );
-            return new WP_Error( 'step2_error', $e->getMessage() );
-        }
-    }
-
-    /**
      * Section単位でMarkdown本文生成
      *
      * @param array $outline_sections アウトラインのセクション配列
@@ -669,13 +412,7 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
                 return $api_error;
             }
 
-            // Claude系は data キーに本文が入るケースがあるため両方を確認
-            $section_md = '';
-            if ( isset( $response['data'] ) && is_string( $response['data'] ) ) {
-                $section_md = $response['data'];
-            } elseif ( isset( $response['content'] ) && is_string( $response['content'] ) ) {
-                $section_md = $response['content'];
-            }
+            $section_md = method_exists( $client, 'get_text_content' ) ? $client->get_text_content( $response ) : '';
 
             if ( empty( $section_md ) ) {
                 error_log( 'Blog Poster: Section response empty. Raw response: ' . print_r( $response, true ) );
@@ -754,20 +491,12 @@ keywords: ["キーワード1", "キーワード2", "キーワード3"]
 ---
 {$section_examples}
 【重要な制約】
-1. **H2見出し（##）は「必ず{$h2_min}個以上{$h2_max}個以下」作成すること** ← これが最重要です
-2. {$h2_min}個未満は絶対に禁止
-3. {$h2_max}個を超えることも禁止
-4. 各H2の下にH3見出し（###）を2-4個配置
-5. 読者の課題解決を意識した構成
-6. H3見出しは具体例・手順・チェックリスト等を示唆する短いタイトルにする
+- H2見出し（##）は{$h2_min}〜{$h2_max}個を厳守
+- 各H2の下にH3見出し（###）を2-4個配置
+- 読者の課題解決を意識した構成
+- H3見出しは具体例・手順・チェックリスト等を示唆する短いタイトルにする
 
-数値確認:
-- H2（##）の数: {$h2_count}個の範囲（絶対ルール）
-- H3（###）の数: 各H2につき2-4個
-
-【最終確認】
 出力はMarkdown形式のみ。説明文は不要です。
-H2見出し（##）を「必ず{$h2_count}個」作成してください。
 PROMPT;
     }
 
@@ -814,8 +543,8 @@ PROMPT;
 要件:
 - 各サブセクションは{$section_chars}文字で詳細に
 - 具体例や手順を含める（コード例は必要に応じて）
-- コードは必ず <CODE lang=\"言語\">... </CODE> で囲む（```は禁止）
-- <CODE>内に本文や見出しを混入させない
+- コードは```fence もしくは <CODE lang=\"言語\">... </CODE> のどちらかで囲む（混在させない）
+- コードブロック内に本文や見出しを混入させない
 - 読者が実行できる内容を提供
 - 技術的に正確な情報のみ
 
@@ -1027,6 +756,8 @@ PROMPT;
      * @return string コンテキスト要約（300文字程度）
      */
     public function extract_section_context( $section_md ) {
+        $section_md = $this->normalize_code_tag_to_fence( $section_md );
+
         // 最初の300文字を抽出（見出しやコードブロックを除外）
         $lines = explode( "\n", $section_md );
         $text_lines = array();
@@ -1071,6 +802,8 @@ PROMPT;
      * @return string 修正後のMarkdown
      */
     private function validate_section_code_blocks( $markdown ) {
+        $markdown = $this->normalize_code_tag_to_fence( $markdown );
+
         // コードブロックの開始・終了をカウント
         $open_count = preg_match_all( '/```/mu', $markdown, $matches );
 
@@ -1096,6 +829,8 @@ PROMPT;
      * @return string 修正後のMarkdown
      */
     public function postprocess_markdown( $markdown ) {
+        $markdown = $this->normalize_code_tag_to_fence( $markdown );
+
         // 1. コードブロック開始/終了の一致確認（柔軟な正規表現）
         $open_count = preg_match_all( '/```[\w]*/mu', $markdown, $open_matches );
         $close_count = preg_match_all( '/```\s*$|```\s*\n/mu', $markdown, $close_matches );
@@ -1127,6 +862,7 @@ PROMPT;
      * @return string 修正後のMarkdown
      */
     public function normalize_code_blocks_after_generation( $markdown ) {
+        $markdown = $this->normalize_code_tag_to_fence( $markdown );
         $converted = 0;
 
         $markdown = preg_replace_callback(
@@ -1174,6 +910,32 @@ PROMPT;
         }
 
         return $markdown;
+    }
+
+    /**
+     * CODEタグをMarkdownフェンスへ正規化
+     *
+     * @param string $markdown Markdown
+     * @return string
+     */
+    private function normalize_code_tag_to_fence( $markdown ) {
+        if ( ! is_string( $markdown ) || '' === $markdown ) {
+            return $markdown;
+        }
+        if ( false === stripos( $markdown, '<CODE' ) ) {
+            return $markdown;
+        }
+
+        return preg_replace_callback(
+            '/<CODE(?:\s+lang="([^"]*)")?>\s*([\s\S]*?)\s*<\/CODE>/iu',
+            function ( $matches ) {
+                $lang = isset( $matches[1] ) ? trim( $matches[1] ) : '';
+                $code = isset( $matches[2] ) ? $matches[2] : '';
+                $fence = '```' . $lang;
+                return "\n{$fence}\n{$code}\n```\n";
+            },
+            $markdown
+        );
     }
 
     /**
@@ -1377,29 +1139,4 @@ PROMPT;
         }
     }
 
-    /**
-     * 記事のJSON表現を検証（後方互換性）
-     *
-     * @param array $article_json 記事JSON
-     * @return array 検証結果
-     */
-    public function validate_article_json( $article_json ) {
-        return array(
-            'valid' => false,
-            'message' => __( 'JSON形式は非推奨です。Markdown形式を使用してください。', 'blog-poster' ),
-        );
-    }
-
-    /**
-     * 記事JSONをHTMLにレンダリング（後方互換性）
-     *
-     * @param array $article_json 記事JSON
-     * @return string|WP_Error HTML
-     */
-    public function render_article_json_to_html( $article_json ) {
-        return new WP_Error(
-            'deprecated',
-            __( 'この機能は廃止されました。Markdown形式を使用してください。', 'blog-poster' )
-        );
-    }
 }

@@ -377,11 +377,11 @@ class Blog_Poster_Rewriter {
     }
 
     private function get_effective_settings() {
-        return get_option( 'blog_poster_settings', array() );
+        return Blog_Poster_Settings::get_settings();
     }
 
     private function is_yoast_enabled() {
-        $settings = get_option( 'blog_poster_settings', array() );
+        $settings = Blog_Poster_Settings::get_settings();
         $enabled = ! empty( $settings['enable_yoast_integration'] );
         if ( ! $enabled ) {
             return false;

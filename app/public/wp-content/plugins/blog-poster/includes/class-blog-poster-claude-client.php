@@ -67,7 +67,7 @@ class Blog_Poster_Claude_Client extends Blog_Poster_AI_Client {
         $response = $this->make_request( $url, $body, $headers );
 
         if ( is_wp_error( $response ) ) {
-            return $this->error_response( $response->get_error_message() );
+            return $this->error_response( $response->get_error_message(), $response->get_error_code() );
         }
 
         // レスポンスからテキストとトークン数を抽出

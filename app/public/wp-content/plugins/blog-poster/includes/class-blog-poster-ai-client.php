@@ -14,6 +14,7 @@ if ( ! defined( 'ABSPATH' ) ) {
  * Blog_Poster_AI_Client 抽象クラス
  */
 abstract class Blog_Poster_AI_Client {
+    const MAX_RETRY_ATTEMPTS = 3;
 
     /**
      * APIキー
@@ -107,15 +108,32 @@ abstract class Blog_Poster_AI_Client {
             'cookies' => array(),
         );
 
-        $response = wp_remote_post( $url, $args );
+        $response = null;
+        $status_code = 0;
+        $response_body = '';
 
-        if ( is_wp_error( $response ) ) {
-            error_log( 'Blog Poster API Error: ' . $response->get_error_message() );
-            return $response;
+        for ( $attempt = 1; $attempt <= self::MAX_RETRY_ATTEMPTS; $attempt++ ) {
+            if ( $attempt > 1 ) {
+                $delay_ms = (int) ( 250 * pow( 2, $attempt - 2 ) );
+                usleep( $delay_ms * 1000 );
+            }
+
+            $response = wp_remote_post( $url, $args );
+            if ( is_wp_error( $response ) ) {
+                if ( $attempt < self::MAX_RETRY_ATTEMPTS ) {
+                    continue;
+                }
+                error_log( 'Blog Poster API Error: ' . $response->get_error_message() );
+                return $response;
+            }
+
+            $status_code = wp_remote_retrieve_response_code( $response );
+            $response_body = wp_remote_retrieve_body( $response );
+            if ( $this->is_retryable_http_status( $status_code ) && $attempt < self::MAX_RETRY_ATTEMPTS ) {
+                continue;
+            }
+            break;
         }
-
-        $status_code = wp_remote_retrieve_response_code( $response );
-        $response_body = wp_remote_retrieve_body( $response );
 
         // UTF-8検証と修復
         if ( ! mb_check_encoding( $response_body, 'UTF-8' ) ) {
@@ -172,8 +190,9 @@ abstract class Blog_Poster_AI_Client {
                 $error_message = $specific_error . "\n（詳細: " . $error_message . "）";
             }
 
+            $error_code = $this->map_error_code( $status_code, $error_detail, $response_body );
             return new WP_Error(
-                'api_error',
+                $error_code,
                 $error_message,
                 $data
             );
@@ -199,7 +218,9 @@ abstract class Blog_Poster_AI_Client {
      * @return string 調整されたプロンプト
      */
     protected function apply_tone_settings( $base_prompt ) {
-        $settings = get_option( 'blog_poster_settings', array() );
+        $settings = class_exists( 'Blog_Poster_Settings' )
+            ? Blog_Poster_Settings::get_settings()
+            : get_option( 'blog_poster_settings', array() );
 
         $formality = isset( $settings['formality'] ) ? intval( $settings['formality'] ) : 50;
         $expertise = isset( $settings['expertise'] ) ? intval( $settings['expertise'] ) : 50;
@@ -243,9 +264,10 @@ abstract class Blog_Poster_AI_Client {
      * @param string $message エラーメッセージ
      * @return array エラーレスポンス
      */
-    protected function error_response( $message ) {
+    protected function error_response( $message, $code = 'api_error' ) {
         return array(
             'success' => false,
+            'error_code' => $code,
             'error'   => $message,
         );
     }
@@ -273,5 +295,43 @@ abstract class Blog_Poster_AI_Client {
      */
     public function get_model() {
         return $this->model;
+    }
+
+    public function get_text_content( $response ) {
+        if ( ! is_array( $response ) ) {
+            return '';
+        }
+        if ( isset( $response['success'] ) && false === $response['success'] ) {
+            return '';
+        }
+        return ( isset( $response['data'] ) && is_string( $response['data'] ) ) ? $response['data'] : '';
+    }
+
+    private function is_retryable_http_status( $status_code ) {
+        $status_code = (int) $status_code;
+        return in_array( $status_code, array( 408, 409, 425, 429, 500, 502, 503, 504 ), true );
+    }
+
+    private function map_error_code( $status_code, $error_detail, $response_body ) {
+        $status_code = (int) $status_code;
+        $error_detail = is_string( $error_detail ) ? strtolower( $error_detail ) : '';
+        $response_body = is_string( $response_body ) ? strtolower( $response_body ) : '';
+
+        if ( 401 === $status_code ) {
+            return 'api_auth_error';
+        }
+        if ( 403 === $status_code ) {
+            if ( false !== strpos( $error_detail, 'credit' ) || false !== strpos( $response_body, 'credit' ) || false !== strpos( $error_detail, 'quota' ) || false !== strpos( $response_body, 'quota' ) ) {
+                return 'api_insufficient_quota';
+            }
+            return 'api_forbidden';
+        }
+        if ( 429 === $status_code ) {
+            return 'api_rate_limit';
+        }
+        if ( $status_code >= 500 ) {
+            return 'api_server_error';
+        }
+        return 'api_error';
     }
 }

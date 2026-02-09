@@ -12,6 +12,25 @@ if ( ! defined( 'ABSPATH' ) ) {
 class Blog_Poster_Settings {
     const ENC_PREFIX = 'enc::';
     const ENC_CIPHER = 'aes-256-cbc';
+    private static $settings_cache = null;
+    private static $settings_loaded = false;
+
+    public static function get_settings() {
+        if ( self::$settings_loaded ) {
+            return is_array( self::$settings_cache ) ? self::$settings_cache : array();
+        }
+
+        $settings = get_option( 'blog_poster_settings', array() );
+        self::$settings_cache = is_array( $settings ) ? $settings : array();
+        self::$settings_loaded = true;
+
+        return self::$settings_cache;
+    }
+
+    public static function invalidate_cache() {
+        self::$settings_cache = null;
+        self::$settings_loaded = false;
+    }
 
     public static function is_encrypted( $value ) {
         return is_string( $value ) && 0 === strpos( $value, self::ENC_PREFIX );
@@ -58,7 +77,7 @@ class Blog_Poster_Settings {
     }
 
     public static function get_api_key( $provider, $settings = null ) {
-        $settings = is_array( $settings ) ? $settings : get_option( 'blog_poster_settings', array() );
+        $settings = is_array( $settings ) ? $settings : self::get_settings();
         $key_field = $provider . '_api_key';
         $raw = isset( $settings[ $key_field ] ) ? $settings[ $key_field ] : '';
         $plain = self::decrypt( $raw );
@@ -86,7 +105,7 @@ class Blog_Poster_Settings {
     }
 
     public static function rotate_api_keys() {
-        $settings = get_option( 'blog_poster_settings', array() );
+        $settings = self::get_settings();
         if ( empty( $settings ) || ! is_array( $settings ) ) {
             return array( 'changed' => 0 );
         }
@@ -107,6 +126,7 @@ class Blog_Poster_Settings {
 
         if ( $changed > 0 ) {
             update_option( 'blog_poster_settings', $settings );
+            self::invalidate_cache();
         }
 
         return array( 'changed' => $changed );
@@ -118,7 +138,7 @@ class Blog_Poster_Settings {
      * @return array {cleaned: number, total_before: number, total_after: number}
      */
     public static function sanitize_oversized_api_keys() {
-        $settings = get_option( 'blog_poster_settings', array() );
+        $settings = self::get_settings();
         if ( empty( $settings ) || ! is_array( $settings ) ) {
             return array( 'cleaned' => 0, 'total_before' => 0, 'total_after' => 0 );
         }
@@ -143,6 +163,7 @@ class Blog_Poster_Settings {
 
         if ( $cleaned > 0 ) {
             update_option( 'blog_poster_settings', $settings );
+            self::invalidate_cache();
         }
 
         $total_after = strlen( wp_json_encode( $settings ) );
@@ -191,6 +212,33 @@ class Blog_Poster_Settings {
         $plain = openssl_decrypt( $cipher, self::ENC_CIPHER, $key, OPENSSL_RAW_DATA, $iv );
         return false === $plain ? '' : $plain;
     }
+}
+
+if ( function_exists( 'add_action' ) ) {
+    add_action(
+        'update_option_blog_poster_settings',
+        function() {
+            Blog_Poster_Settings::invalidate_cache();
+        },
+        10,
+        0
+    );
+    add_action(
+        'add_option_blog_poster_settings',
+        function() {
+            Blog_Poster_Settings::invalidate_cache();
+        },
+        10,
+        0
+    );
+    add_action(
+        'delete_option_blog_poster_settings',
+        function() {
+            Blog_Poster_Settings::invalidate_cache();
+        },
+        10,
+        0
+    );
 }
 
 if ( defined( 'WP_CLI' ) && WP_CLI ) {

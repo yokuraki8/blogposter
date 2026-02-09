@@ -155,7 +155,10 @@ class Blog_Poster_Job_Manager {
 			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 			PRIMARY KEY  (id),
 			KEY status (status),
-			KEY created_at (created_at)
+			KEY created_at (created_at),
+			KEY status_created (status, created_at),
+			KEY status_step (status, current_step),
+			KEY status_updated (status, updated_at)
 		) $charset_collate;";
 
 		dbDelta( $sql );
@@ -181,7 +184,7 @@ class Blog_Poster_Job_Manager {
 		global $wpdb;
 
 		// $options から ai_provider, ai_model, temperature, article_length, is_batch を取得
-		$settings = get_option( 'blog_poster_settings', array() );
+		$settings = Blog_Poster_Settings::get_settings();
 		$ai_provider = isset( $options['ai_provider'] ) ? $options['ai_provider'] : '';
 		if ( '' === $ai_provider ) {
 			$ai_provider = isset( $settings['ai_provider'] ) ? $settings['ai_provider'] : 'openai';
@@ -895,56 +898,6 @@ class Blog_Poster_Job_Manager {
 	}
 
 	/**
-	 * Markdownアウトラインからセクション情報を抽出
-	 *
-	 * @param string $outline_md Markdownアウトライン
-	 * @return array セクション情報配列
-	 */
-	private function extract_sections_from_outline_markdown( $outline_md ) {
-		// TODO: Markdown形式のアウトラインをパースしてセクション配列に変換
-		// 実装例: h2ヘッダーごとにセクションを分割
-		$sections = array();
-
-		// プレースホルダー実装
-		preg_match_all( '/^## (.+)$/m', $outline_md, $matches );
-
-		foreach ( $matches[1] as $title ) {
-			$sections[] = array(
-				'title' => $title,
-				'content' => '',
-			);
-		}
-
-		return ! empty( $sections ) ? $sections : array();
-	}
-
-	/**
-	 * Markdownアウトラインからメタデータを抽出
-	 *
-	 * @param string $outline_md Markdownアウトライン
-	 * @return array メタデータ配列
-	 */
-	private function extract_metadata_from_outline_markdown( $outline_md ) {
-		$metadata = array(
-			'title'            => 'Untitled',
-			'slug'             => '',
-			'meta_description' => '',
-			'excerpt'          => '',
-			'keywords'         => array(),
-		);
-
-		// TODO: Markdown形式のアウトラインからメタデータをパース
-		// 実装例: YAML Front Matterまたはコメント形式から抽出
-
-		// プレースホルダー実装
-		if ( preg_match( '/^# (.+)$/m', $outline_md, $matches ) ) {
-			$metadata['title'] = trim( $matches[1] );
-		}
-
-		return $metadata;
-	}
-
-	/**
 	 * 内容MarkdownをH2見出しで分割
 	 *
 	 * @param string $content_md Markdown本文
@@ -1033,7 +986,7 @@ class Blog_Poster_Job_Manager {
 			return null;
 		}
 
-		$settings = get_option( 'blog_poster_settings', array() );
+		$settings = Blog_Poster_Settings::get_settings();
 		$override = array();
 
 		if ( ! empty( $job['ai_provider'] ) ) {

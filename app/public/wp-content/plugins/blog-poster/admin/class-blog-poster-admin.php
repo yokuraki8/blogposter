@@ -24,9 +24,6 @@ class Blog_Poster_Admin {
         add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_scripts' ) );
         add_action( 'admin_init', array( $this, 'register_settings' ) );
 
-        // AJAXハンドラー
-        add_action( 'wp_ajax_blog_poster_generate_article', array( $this, 'ajax_generate_article' ) );
-
         // v0.2.5-alpha: 非同期ジョブ方式のAJAXハンドラー
         add_action( 'wp_ajax_blog_poster_create_job', array( $this, 'ajax_create_job' ) );
         add_action( 'wp_ajax_blog_poster_process_step', array( $this, 'ajax_process_step' ) );
@@ -368,9 +365,6 @@ class Blog_Poster_Admin {
      * 設定を登録
      */
     public function register_settings() {
-        // 自動クリーンアップ: 巨大なAPIキーを削除
-        Blog_Poster_Settings::sanitize_oversized_api_keys();
-
         register_setting(
             'blog_poster_settings_group',
             'blog_poster_settings',
@@ -383,7 +377,7 @@ class Blog_Poster_Admin {
      */
     public function sanitize_settings( $input ) {
         $sanitized = array();
-        $existing = get_option( 'blog_poster_settings', array() );
+        $existing = Blog_Poster_Settings::get_settings();
 
         // AI Provider
         if ( isset( $input['ai_provider'] ) ) {
@@ -463,7 +457,7 @@ class Blog_Poster_Admin {
         $sanitized['default_category_id'] = isset( $input['default_category_id'] ) ? intval( $input['default_category_id'] ) : 0;
 
         // 既存の設定を維持
-        $current_settings = get_option( 'blog_poster_settings', array() );
+        $current_settings = Blog_Poster_Settings::get_settings();
         $sanitized = array_merge( $current_settings, $sanitized );
 
         return $sanitized;
@@ -495,141 +489,6 @@ class Blog_Poster_Admin {
      */
     public function display_history_page() {
         require_once BLOG_POSTER_PLUGIN_DIR . 'admin/views/history.php';
-    }
-
-    /**
-     * AJAX: 記事生成
-     */
-    public function ajax_generate_article() {
-        // nonceチェック
-        check_ajax_referer( 'blog_poster_nonce', 'nonce' );
-
-        // 権限チェック
-        if ( ! current_user_can( 'manage_options' ) ) {
-            wp_send_json_error( array(
-                'message' => __( '権限がありません。', 'blog-poster' )
-            ) );
-        }
-
-        // パラメータ取得
-        $topic = isset( $_POST['topic'] ) ? sanitize_text_field( $_POST['topic'] ) : '';
-        $additional_instructions = isset( $_POST['additional_instructions'] ) ? sanitize_textarea_field( $_POST['additional_instructions'] ) : '';
-
-        if ( empty( $topic ) ) {
-            wp_send_json_error( array(
-                'message' => __( 'トピックを入力してください。', 'blog-poster' )
-            ) );
-        }
-
-        // 設定チェック
-        $settings = get_option( 'blog_poster_settings', array() );
-        $ai_provider = isset( $settings['ai_provider'] ) ? $settings['ai_provider'] : 'openai';
-
-        // APIキーチェック
-        $api_key = Blog_Poster_Settings::get_api_key( $ai_provider, $settings );
-        if ( empty( $api_key ) ) {
-            wp_send_json_error( array(
-                'message' => sprintf(
-                    __( '%s のAPIキーが設定されていません。設定画面で設定してください。', 'blog-poster' ),
-                    $this->get_provider_name( $ai_provider )
-                )
-            ) );
-        }
-
-        // 無料プラン制限チェック
-        $subscription_plan = isset( $settings['subscription_plan'] ) ? $settings['subscription_plan'] : 'free';
-        $articles_generated = isset( $settings['articles_generated'] ) ? intval( $settings['articles_generated'] ) : 0;
-        $articles_limit = isset( $settings['articles_limit_free'] ) ? intval( $settings['articles_limit_free'] ) : 5;
-
-        if ( $subscription_plan === 'free' && $articles_generated >= $articles_limit ) {
-            wp_send_json_error( array(
-                'message' => sprintf(
-                    __( '無料プランの制限（%d記事）に達しました。有料プランにアップグレードしてください。', 'blog-poster' ),
-                    $articles_limit
-                )
-            ) );
-        }
-
-        // 記事生成
-        $generator = new Blog_Poster_Generator();
-        $result = $generator->generate_article( $topic, $additional_instructions );
-
-        if ( is_wp_error( $result ) ) {
-            wp_send_json_error( array(
-                'message' => $result->get_error_message()
-            ) );
-        }
-
-        if ( ! $result['success'] ) {
-            wp_send_json_error( array(
-                'message' => __( '記事の生成に失敗しました。', 'blog-poster' )
-            ) );
-        }
-
-        // WordPress投稿を作成
-        $article = $result['article'];
-        $post_id = wp_insert_post( array(
-            'post_title'   => $article['title'],
-            'post_content' => $article['content'],
-            'post_excerpt' => $article['excerpt'],
-            'post_status'  => 'draft',
-            'post_type'    => 'post',
-        ) );
-
-        if ( is_wp_error( $post_id ) ) {
-            wp_send_json_error( array(
-                'message' => __( '投稿の作成に失敗しました。', 'blog-poster' )
-            ) );
-        }
-
-        // Slug設定
-        if ( ! empty( $article['slug'] ) ) {
-            wp_update_post( array(
-                'ID'        => $post_id,
-                'post_name' => sanitize_title( $article['slug'] )
-            ) );
-        }
-
-        // メタディスクリプション設定
-        if ( ! empty( $article['meta_description'] ) ) {
-            update_post_meta( $post_id, '_blog_poster_meta_description', $article['meta_description'] );
-        }
-
-        // 関連キーワード設定
-        if ( ! empty( $article['keywords'] ) ) {
-            update_post_meta( $post_id, '_blog_poster_keywords', implode( ', ', $article['keywords'] ) );
-        }
-
-        // 生成履歴をデータベースに記録
-        global $wpdb;
-        $table_name = $wpdb->prefix . 'blog_poster_history';
-        $wpdb->insert(
-            $table_name,
-            array(
-                'post_id'      => $post_id,
-                'ai_provider'  => $ai_provider,
-                'ai_model'     => $result['model'],
-                'prompt'       => $topic,
-                'tokens_used'  => $result['tokens'],
-                'status'       => 'draft',
-                'created_at'   => current_time( 'mysql' ),
-            ),
-            array( '%d', '%s', '%s', '%s', '%d', '%s', '%s' )
-        );
-
-        // 記事生成数をカウントアップ
-        $settings['articles_generated'] = $articles_generated + 1;
-        update_option( 'blog_poster_settings', $settings );
-
-        // 成功レスポンス
-        wp_send_json_success( array(
-            'message'  => __( '記事が正常に生成されました！', 'blog-poster' ),
-            'post_id'  => $post_id,
-            'post_url' => get_edit_post_link( $post_id, 'raw' ),
-            'article'  => $article,
-            'tokens'   => $result['tokens'],
-            'remaining' => max( 0, $articles_limit - ( $articles_generated + 1 ) ),
-        ) );
     }
 
     /**
@@ -665,7 +524,7 @@ class Blog_Poster_Admin {
         }
 
         // 現在の設定からai_provider、ai_modelを取得
-        $settings = get_option( 'blog_poster_settings', array() );
+        $settings = Blog_Poster_Settings::get_settings();
         $ai_provider = isset( $settings['ai_provider'] ) ? $settings['ai_provider'] : 'gemini';
         $ai_model = isset( $settings[ $ai_provider . '_model' ] ) ? $settings[ $ai_provider . '_model' ] : '';
         $temperature = isset( $settings['temperature'] ) ? floatval( $settings['temperature'] ) : 0.7;
@@ -955,7 +814,7 @@ class Blog_Poster_Admin {
         }
 
         // Yoast SEO連携（設定ON + Yoast有効時のみ）
-        $settings = get_option( 'blog_poster_settings', array() );
+        $settings = Blog_Poster_Settings::get_settings();
         $yoast_enabled = ! empty( $settings['enable_yoast_integration'] ) && $this->is_yoast_active();
 
         if ( $yoast_enabled ) {
@@ -965,7 +824,7 @@ class Blog_Poster_Admin {
         }
 
         // カテゴリ設定
-        $settings = get_option( 'blog_poster_settings', array() );
+        $settings = Blog_Poster_Settings::get_settings();
         $category_ids = isset( $settings['category_ids'] ) && is_array( $settings['category_ids'] )
             ? array_values( array_filter( array_map( 'intval', $settings['category_ids'] ) ) )
             : array();
@@ -1056,7 +915,7 @@ class Blog_Poster_Admin {
             return;
         }
 
-        $settings = get_option( 'blog_poster_settings', array() );
+        $settings = Blog_Poster_Settings::get_settings();
         $yoast_enabled = ! empty( $settings['enable_yoast_integration'] ) && $this->is_yoast_active();
         if ( ! $yoast_enabled ) {
             return;
@@ -1475,7 +1334,7 @@ class Blog_Poster_Admin {
         }
 
         // 現在の設定からAPIキーを取得
-        $settings = get_option( 'blog_poster_settings', array() );
+        $settings = Blog_Poster_Settings::get_settings();
         $api_key_field = $provider . '_api_key';
 
         if ( empty( $settings[ $api_key_field ] ) ) {

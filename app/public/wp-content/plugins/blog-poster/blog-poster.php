@@ -103,9 +103,6 @@ class Blog_Poster {
             $admin = new Blog_Poster_Admin();
         }
 
-        // 設定の軽微な移行
-        add_action( 'init', array( $this, 'maybe_upgrade_settings' ) );
-
         // 国際化対応
         add_action( 'plugins_loaded', array( $this, 'load_textdomain' ) );
 
@@ -144,6 +141,10 @@ class Blog_Poster {
 
         // デフォルト設定の作成
         $this->create_default_settings();
+
+        // 設定移行・クリーンアップ（有効化時のみ）
+        $this->maybe_upgrade_settings();
+        Blog_Poster_Settings::sanitize_oversized_api_keys();
     }
 
     /**
@@ -211,7 +212,10 @@ class Blog_Poster {
             updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             PRIMARY KEY  (id),
             KEY status (status),
-            KEY created_at (created_at)
+            KEY created_at (created_at),
+            KEY status_created (status, created_at),
+            KEY status_step (status, current_step),
+            KEY status_updated (status, updated_at)
         ) $charset_collate;";
 
         dbDelta( $sql_jobs );
@@ -239,6 +243,7 @@ class Blog_Poster {
             'enable_rag' => false,  // RAG機能（有料プラン）
             'enable_image_generation' => false, // 画像生成（有料プラン）
             'enable_yoast_integration' => false, // Yoast SEO連携
+            'cron_step_limit' => 3, // Cron1回あたりの処理ステップ数
             'subscription_plan' => 'free', // free, paid_with_api, paid_without_api
             'articles_generated' => 0,
             'articles_limit_free' => 5
@@ -253,7 +258,7 @@ class Blog_Poster {
      * 旧デフォルト設定の軽微な移行
      */
     public function maybe_upgrade_settings() {
-        $settings = get_option( 'blog_poster_settings', array() );
+        $settings = Blog_Poster_Settings::get_settings();
         if ( empty( $settings ) || ! is_array( $settings ) ) {
             return;
         }
@@ -287,8 +292,11 @@ class Blog_Poster {
      * Cron: キュー処理
      */
     public function process_queue_cron() {
+        $settings = Blog_Poster_Settings::get_settings();
+        $step_limit = isset( $settings['cron_step_limit'] ) ? intval( $settings['cron_step_limit'] ) : 3;
+        $step_limit = max( 1, min( 10, $step_limit ) );
         $runner = new Blog_Poster_Queue_Runner();
-        $runner->process_queue( 1 );
+        $runner->process_queue( $step_limit );
     }
 
     /**
