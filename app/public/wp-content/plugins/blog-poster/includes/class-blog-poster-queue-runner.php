@@ -31,47 +31,33 @@ class Blog_Poster_Queue_Runner {
 
         $step_limit = max( 1, intval( $step_limit ) );
 
-        if ( $this->is_locked() ) {
-            return array(
-                'processed' => 0,
-                'completed' => 0,
-                'errors' => array( 'Queue is locked.' ),
-            );
-        }
+        for ( $i = 0; $i < $step_limit; $i++ ) {
+            if ( ! method_exists( $this->job_manager, 'get_next_runnable_job' ) ) {
+                $message = 'Job manager missing get_next_runnable_job().';
+                error_log( 'Blog Poster: ' . $message );
+                $results['errors'][] = $message;
+                break;
+            }
 
-        $this->set_lock();
+            $job = $this->job_manager->get_next_runnable_job();
+            if ( ! $job ) {
+                break;
+            }
 
-        try {
-            for ( $i = 0; $i < $step_limit; $i++ ) {
-                if ( ! method_exists( $this->job_manager, 'get_next_runnable_job' ) ) {
-                    $message = 'Job manager missing get_next_runnable_job().';
-                    error_log( 'Blog Poster: ' . $message );
-                    $results['errors'][] = $message;
-                    break;
-                }
+            $step_result = $this->process_job_step( $job );
+            $results['processed']++;
 
-                $job = $this->job_manager->get_next_runnable_job();
-                if ( ! $job ) {
-                    break;
-                }
-
-                $step_result = $this->process_job_step( $job );
-                $results['processed']++;
-
-                if ( ! $step_result['success'] ) {
-                    if ( ! empty( $step_result['retry'] ) ) {
-                        continue;
-                    }
-                    $results['errors'][] = $step_result['message'];
+            if ( ! $step_result['success'] ) {
+                if ( ! empty( $step_result['retry'] ) ) {
                     continue;
                 }
-
-                if ( ! empty( $step_result['completed'] ) ) {
-                    $results['completed']++;
-                }
+                $results['errors'][] = $step_result['message'];
+                continue;
             }
-        } finally {
-            $this->clear_lock();
+
+            if ( ! empty( $step_result['completed'] ) ) {
+                $results['completed']++;
+            }
         }
 
         return $results;
@@ -99,43 +85,32 @@ class Blog_Poster_Queue_Runner {
             return $results;
         }
 
-        if ( $this->is_locked() ) {
-            $results['errors'][] = 'Queue is locked.';
-            return $results;
-        }
-
-        $this->set_lock();
-
-        try {
-            for ( $i = 0; $i < $step_limit; $i++ ) {
-                $job = $this->job_manager->get_job( $job_id );
-                if ( ! $job ) {
-                    $results['errors'][] = 'Job not found.';
-                    break;
-                }
-
-                if ( in_array( $job['status'], array( 'completed', 'failed', 'cancelled' ), true ) ) {
-                    break;
-                }
-
-                $step_result = $this->process_job_step( $job );
-                $results['processed']++;
-
-                if ( empty( $step_result['success'] ) ) {
-                    if ( ! empty( $step_result['retry'] ) ) {
-                        continue;
-                    }
-                    $results['errors'][] = $step_result['message'];
-                    break;
-                }
-
-                if ( ! empty( $step_result['completed'] ) ) {
-                    $results['completed']++;
-                    break;
-                }
+        for ( $i = 0; $i < $step_limit; $i++ ) {
+            $job = $this->job_manager->get_job( $job_id );
+            if ( ! $job ) {
+                $results['errors'][] = 'Job not found.';
+                break;
             }
-        } finally {
-            $this->clear_lock();
+
+            if ( in_array( $job['status'], array( 'completed', 'failed', 'cancelled' ), true ) ) {
+                break;
+            }
+
+            $step_result = $this->process_job_step( $job );
+            $results['processed']++;
+
+            if ( empty( $step_result['success'] ) ) {
+                if ( ! empty( $step_result['retry'] ) ) {
+                    continue;
+                }
+                $results['errors'][] = $step_result['message'];
+                break;
+            }
+
+            if ( ! empty( $step_result['completed'] ) ) {
+                $results['completed']++;
+                break;
+            }
         }
 
         return $results;
@@ -206,63 +181,74 @@ class Blog_Poster_Queue_Runner {
     }
 
     private function create_post_from_review( $job, $review_result ) {
-        if ( ! empty( $job['post_id'] ) ) {
-            // 既に投稿作成済みの場合、statusをcompletedに更新して返す
-            $this->job_manager->update_job(
-                intval( $job['id'] ),
-                array( 'status' => 'completed' )
-            );
-            return intval( $job['post_id'] );
+        $job_id = intval( $job['id'] );
+        $lock_name = 'blog_poster_create_post_' . $job_id;
+        $lock_acquired = $this->acquire_db_lock( $lock_name, 10 );
+        if ( ! $lock_acquired ) {
+            return new WP_Error( 'post_create_locked', '投稿作成ロックの取得に失敗しました。' );
         }
 
-        $model = isset( $job['ai_model'] ) ? $job['ai_model'] : '';
-        $title = isset( $review_result['title'] ) ? $review_result['title'] : 'Untitled';
-        $is_batch = ! empty( $job['is_batch'] );
-        // バッチ生成時のみモデル名をプレフィックスとして追加
-        $prefixed_title = ( $is_batch && $model !== '' ) ? '[' . $model . '] ' . $title : $title;
+        try {
+            $fresh_job = $this->job_manager->get_job( $job_id );
+            if ( ! empty( $fresh_job['post_id'] ) ) {
+                $this->job_manager->update_job(
+                    $job_id,
+                    array( 'status' => 'completed' )
+                );
+                return intval( $fresh_job['post_id'] );
+            }
 
-        $post_id = wp_insert_post( array(
-            'post_title'   => $prefixed_title,
-            'post_name'    => ! empty( $review_result['slug'] ) ? sanitize_title( $review_result['slug'] ) : '',
-            'post_content' => isset( $review_result['html'] ) ? $review_result['html'] : '',
-            'post_excerpt' => isset( $review_result['excerpt'] ) ? $review_result['excerpt'] : '',
-            'post_status'  => 'draft',
-            'post_author'  => $this->resolve_post_author(),
-            'post_type'    => 'post',
-        ) );
+            $model = isset( $job['ai_model'] ) ? $job['ai_model'] : '';
+            $title = isset( $review_result['title'] ) ? $review_result['title'] : 'Untitled';
+            $is_batch = ! empty( $job['is_batch'] );
+            // バッチ生成時のみモデル名をプレフィックスとして追加
+            $prefixed_title = ( $is_batch && $model !== '' ) ? '[' . $model . '] ' . $title : $title;
 
-        if ( is_wp_error( $post_id ) ) {
+            $post_id = wp_insert_post( array(
+                'post_title'   => $prefixed_title,
+                'post_name'    => ! empty( $review_result['slug'] ) ? sanitize_title( $review_result['slug'] ) : '',
+                'post_content' => isset( $review_result['html'] ) ? $review_result['html'] : '',
+                'post_excerpt' => isset( $review_result['excerpt'] ) ? $review_result['excerpt'] : '',
+                'post_status'  => 'draft',
+                'post_author'  => $this->resolve_post_author(),
+                'post_type'    => 'post',
+            ) );
+
+            if ( is_wp_error( $post_id ) ) {
+                $this->job_manager->update_job(
+                    $job_id,
+                    array(
+                        'status' => 'failed',
+                        'error_message' => $post_id->get_error_message(),
+                    )
+                );
+                return $post_id;
+            }
+
             $this->job_manager->update_job(
-                intval( $job['id'] ),
+                $job_id,
                 array(
-                    'status' => 'failed',
-                    'error_message' => $post_id->get_error_message(),
+                    'post_id' => $post_id,
+                    'final_title' => $prefixed_title,
+                    'status' => 'completed',
                 )
             );
+
+            // post_metaにモデル情報を保存
+            if ( ! empty( $job['ai_provider'] ) ) {
+                update_post_meta( $post_id, '_blog_poster_provider', $job['ai_provider'] );
+            }
+            if ( ! empty( $job['ai_model'] ) ) {
+                update_post_meta( $post_id, '_blog_poster_model', $job['ai_model'] );
+            }
+            if ( isset( $job['temperature'] ) ) {
+                update_post_meta( $post_id, '_blog_poster_temperature', $job['temperature'] );
+            }
+
             return $post_id;
+        } finally {
+            $this->release_db_lock( $lock_name );
         }
-
-        $this->job_manager->update_job(
-            intval( $job['id'] ),
-            array(
-                'post_id' => $post_id,
-                'final_title' => $prefixed_title,
-                'status' => 'completed',
-            )
-        );
-
-        // post_metaにモデル情報を保存
-        if ( ! empty( $job['ai_provider'] ) ) {
-            update_post_meta( $post_id, '_blog_poster_provider', $job['ai_provider'] );
-        }
-        if ( ! empty( $job['ai_model'] ) ) {
-            update_post_meta( $post_id, '_blog_poster_model', $job['ai_model'] );
-        }
-        if ( isset( $job['temperature'] ) ) {
-            update_post_meta( $post_id, '_blog_poster_temperature', $job['temperature'] );
-        }
-
-        return $post_id;
     }
 
     private function resolve_post_author() {
@@ -270,17 +256,26 @@ class Blog_Poster_Queue_Runner {
         return $author_id > 0 ? $author_id : 1;
     }
 
-
-    private function is_locked() {
-        return (bool) get_transient( 'blog_poster_queue_lock' );
+    private function acquire_db_lock( $lock_name, $timeout = 10 ) {
+        global $wpdb;
+        $result = $wpdb->get_var(
+            $wpdb->prepare(
+                'SELECT GET_LOCK(%s, %d)',
+                $lock_name,
+                intval( $timeout )
+            )
+        );
+        return '1' === (string) $result;
     }
 
-    private function set_lock() {
-        set_transient( 'blog_poster_queue_lock', time(), 300 );
-    }
-
-    private function clear_lock() {
-        delete_transient( 'blog_poster_queue_lock' );
+    private function release_db_lock( $lock_name ) {
+        global $wpdb;
+        $wpdb->query(
+            $wpdb->prepare(
+                'SELECT RELEASE_LOCK(%s)',
+                $lock_name
+            )
+        );
     }
 }
 

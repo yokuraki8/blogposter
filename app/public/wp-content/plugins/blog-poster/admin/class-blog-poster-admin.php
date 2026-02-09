@@ -788,8 +788,15 @@ class Blog_Poster_Admin {
     public function ajax_create_post() {
         check_ajax_referer( 'blog_poster_nonce', 'nonce' );
 
+        $job_lock_name     = '';
+        $job_lock_acquired = false;
+
         ob_start();
-        $send_json = function ( $success, $payload ) {
+        $send_json = function ( $success, $payload ) use ( &$job_lock_name, &$job_lock_acquired ) {
+            if ( $job_lock_acquired && '' !== $job_lock_name ) {
+                $this->release_db_lock( $job_lock_name );
+                $job_lock_acquired = false;
+            }
             if ( ob_get_length() ) {
                 $buffer = ob_get_contents();
                 ob_end_clean();
@@ -820,11 +827,29 @@ class Blog_Poster_Admin {
         $html_content = '';
         $job = null;
         if ( $job_id > 0 ) {
+            $job_lock_name = 'blog_poster_create_post_' . $job_id;
+            $job_lock_acquired = $this->acquire_db_lock( $job_lock_name, 10 );
+            if ( ! $job_lock_acquired ) {
+                $send_json( false, array( 'message' => '投稿作成ロックの取得に失敗しました。再試行してください。' ) );
+            }
+
             global $wpdb;
             $job = $wpdb->get_row( $wpdb->prepare(
-                "SELECT final_html, final_markdown, final_title, ai_provider, ai_model, temperature FROM {$wpdb->prefix}blog_poster_jobs WHERE id = %d",
+                "SELECT post_id, final_html, final_markdown, final_title, ai_provider, ai_model, temperature FROM {$wpdb->prefix}blog_poster_jobs WHERE id = %d",
                 $job_id
             ), ARRAY_A );
+
+            if ( $job && ! empty( $job['post_id'] ) ) {
+                $existing_post_id = intval( $job['post_id'] );
+                $send_json(
+                    true,
+                    array(
+                        'post_id'  => $existing_post_id,
+                        'edit_url' => admin_url( 'post.php?post=' . $existing_post_id . '&action=edit' ),
+                        'message'  => '投稿は既に作成済みです',
+                    )
+                );
+            }
         }
 
         if ( empty( $title ) && $job && ! empty( $job['final_title'] ) ) {
@@ -844,57 +869,81 @@ class Blog_Poster_Admin {
             $send_json( false, array( 'message' => 'ジョブが未完了の可能性があります。完了後に再試行してください。' ) );
         }
 
-        // 投稿を作成
-        $post_data = array(
-            'post_title'   => $title,
-            'post_name'    => $slug,
-            'post_content' => $html_content,
-            'post_excerpt' => $excerpt,
-            'post_status'  => 'draft',
-            'post_author'  => get_current_user_id(),
-            'post_type'    => 'post',
-        );
-
-        error_log( 'Blog Poster: Creating post with data: ' . print_r( $post_data, true ) );
-
-        $post_id = wp_insert_post( $post_data );
-
-        error_log( 'Blog Poster: Post ID: ' . $post_id );
-
-        if ( is_wp_error( $post_id ) ) {
-            error_log( 'Blog Poster: wp_insert_post error: ' . $post_id->get_error_message() );
-            $send_json( false, array( 'message' => $post_id->get_error_message() ) );
-        }
-
-        // ジョブからモデル情報を取得して post_meta に保存
-        if ( $job_id > 0 ) {
-            if ( ! $job ) {
-                global $wpdb;
-                $job = $wpdb->get_row( $wpdb->prepare(
-                    "SELECT ai_provider, ai_model, temperature FROM {$wpdb->prefix}blog_poster_jobs WHERE id = %d",
-                    $job_id
-                ), ARRAY_A );
-            }
-
-            if ( $job ) {
-                update_post_meta( $post_id, '_blog_poster_provider', $job['ai_provider'] );
-                update_post_meta( $post_id, '_blog_poster_model', $job['ai_model'] );
-                update_post_meta( $post_id, '_blog_poster_temperature', $job['temperature'] );
-                error_log( 'Blog Poster: Job metadata saved. Provider: ' . $job['ai_provider'] . ', Model: ' . $job['ai_model'] . ', Temperature: ' . $job['temperature'] );
-            }
-        }
-
-        // ジョブに post_id を紐付け
-        if ( $job_id > 0 ) {
-            global $wpdb;
-            $wpdb->update(
-                "{$wpdb->prefix}blog_poster_jobs",
-                array( 'post_id' => $post_id ),
-                array( 'id' => $job_id ),
-                array( '%d' ),
-                array( '%d' )
+        try {
+            // 投稿を作成
+            $post_data = array(
+                'post_title'   => $title,
+                'post_name'    => $slug,
+                'post_content' => $html_content,
+                'post_excerpt' => $excerpt,
+                'post_status'  => 'draft',
+                'post_author'  => get_current_user_id(),
+                'post_type'    => 'post',
             );
-        }
+
+            error_log( 'Blog Poster: Creating post with data: ' . print_r( $post_data, true ) );
+
+            $post_id = wp_insert_post( $post_data );
+
+            error_log( 'Blog Poster: Post ID: ' . $post_id );
+
+            if ( is_wp_error( $post_id ) ) {
+                error_log( 'Blog Poster: wp_insert_post error: ' . $post_id->get_error_message() );
+                $send_json( false, array( 'message' => $post_id->get_error_message() ) );
+            }
+
+            // ジョブからモデル情報を取得して post_meta に保存
+            if ( $job_id > 0 ) {
+                if ( ! $job ) {
+                    global $wpdb;
+                    $job = $wpdb->get_row( $wpdb->prepare(
+                        "SELECT post_id, ai_provider, ai_model, temperature FROM {$wpdb->prefix}blog_poster_jobs WHERE id = %d",
+                        $job_id
+                    ), ARRAY_A );
+                }
+
+                if ( $job ) {
+                    update_post_meta( $post_id, '_blog_poster_provider', $job['ai_provider'] );
+                    update_post_meta( $post_id, '_blog_poster_model', $job['ai_model'] );
+                    update_post_meta( $post_id, '_blog_poster_temperature', $job['temperature'] );
+                    error_log( 'Blog Poster: Job metadata saved. Provider: ' . $job['ai_provider'] . ', Model: ' . $job['ai_model'] . ', Temperature: ' . $job['temperature'] );
+                }
+            }
+
+            // ジョブに post_id を紐付け（post_id=0のときのみ）
+            if ( $job_id > 0 ) {
+                global $wpdb;
+                $rows = $wpdb->update(
+                    "{$wpdb->prefix}blog_poster_jobs",
+                    array( 'post_id' => $post_id ),
+                    array(
+                        'id'      => $job_id,
+                        'post_id' => 0,
+                    ),
+                    array( '%d' ),
+                    array( '%d', '%d' )
+                );
+
+                if ( false === $rows ) {
+                    $send_json( false, array( 'message' => 'ジョブへの投稿紐付けに失敗しました。' ) );
+                }
+
+                if ( 0 === $rows ) {
+                    $existing_post_id = intval(
+                        $wpdb->get_var(
+                            $wpdb->prepare(
+                                "SELECT post_id FROM {$wpdb->prefix}blog_poster_jobs WHERE id = %d",
+                                $job_id
+                            )
+                        )
+                    );
+
+                    if ( $existing_post_id > 0 && $existing_post_id !== intval( $post_id ) ) {
+                        wp_delete_post( $post_id, true );
+                        $post_id = $existing_post_id;
+                    }
+                }
+            }
 
         // メタディスクリプションを確定（空なら本文から生成）
         if ( empty( $meta_description ) ) {
@@ -944,16 +993,21 @@ class Blog_Poster_Admin {
             $analyzer->save_analysis( $post_id, $analysis );
         }
 
-        error_log( 'Blog Poster: Post created successfully with ID: ' . $post_id );
+            error_log( 'Blog Poster: Post created successfully with ID: ' . $post_id );
 
-        $send_json(
-            true,
-            array(
-                'post_id'  => $post_id,
-                'edit_url' => admin_url( 'post.php?post=' . $post_id . '&action=edit' ),
-                'message'  => '投稿を作成しました',
-            )
-        );
+            $send_json(
+                true,
+                array(
+                    'post_id'  => $post_id,
+                    'edit_url' => admin_url( 'post.php?post=' . $post_id . '&action=edit' ),
+                    'message'  => '投稿を作成しました',
+                )
+            );
+        } finally {
+            if ( $job_lock_acquired && '' !== $job_lock_name ) {
+                $this->release_db_lock( $job_lock_name );
+            }
+        }
     }
 
     /**
@@ -967,6 +1021,28 @@ class Blog_Poster_Admin {
         }
 
         return function_exists( 'is_plugin_active' ) && is_plugin_active( 'wordpress-seo/wp-seo.php' );
+    }
+
+    private function acquire_db_lock( $lock_name, $timeout = 10 ) {
+        global $wpdb;
+        $result = $wpdb->get_var(
+            $wpdb->prepare(
+                'SELECT GET_LOCK(%s, %d)',
+                $lock_name,
+                intval( $timeout )
+            )
+        );
+        return '1' === (string) $result;
+    }
+
+    private function release_db_lock( $lock_name ) {
+        global $wpdb;
+        $wpdb->query(
+            $wpdb->prepare(
+                'SELECT RELEASE_LOCK(%s)',
+                $lock_name
+            )
+        );
     }
 
     public function sync_yoast_meta_on_save( $post_id, $post ) {

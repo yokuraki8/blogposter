@@ -312,16 +312,38 @@ class Blog_Poster_Job_Manager {
 	}
 
 	private function acquire_job_lock( $job_id, $ttl = 600 ) {
-		$key = $this->get_job_lock_key( $job_id );
-		if ( get_transient( $key ) ) {
-			return false;
+		$key       = $this->get_job_lock_key( $job_id );
+		$ttl       = max( 1, intval( $ttl ) );
+		$expires_at = time() + $ttl;
+		$added     = false;
+
+		if ( function_exists( 'wp_cache_add' ) && wp_using_ext_object_cache() ) {
+			$added = wp_cache_add( $key, $expires_at, '', $ttl );
 		}
-		set_transient( $key, time(), intval( $ttl ) );
-		return true;
+
+		if ( ! $added ) {
+			$added = add_option( $key, $expires_at, '', false );
+		}
+
+		if ( $added ) {
+			return true;
+		}
+
+		$current = intval( get_option( $key, 0 ) );
+		if ( $current > 0 && $current < time() ) {
+			delete_option( $key );
+			return (bool) add_option( $key, $expires_at, '', false );
+		}
+
+		return false;
 	}
 
 	private function release_job_lock( $job_id ) {
-		delete_transient( $this->get_job_lock_key( $job_id ) );
+		$key = $this->get_job_lock_key( $job_id );
+		if ( function_exists( 'wp_cache_delete' ) && wp_using_ext_object_cache() ) {
+			wp_cache_delete( $key, '' );
+		}
+		delete_option( $key );
 	}
 
 	/**
@@ -622,15 +644,33 @@ class Blog_Poster_Job_Manager {
 			$new_context    = $section_result['context'];
 			$next_index     = $current_section_index + 1;
 
-			// DB更新（UTF-8正規化を適用）
-			$this->update_job(
-				$job_id,
+			// DB更新（UTF-8正規化を適用 + current_section_indexはCASで更新）
+			global $wpdb;
+			$rows_updated = $wpdb->update(
+				$this->table_name,
 				array(
 					'content_md'            => $this->sanitize_utf8( $new_content_md ),
 					'previous_context'      => $this->sanitize_utf8( $new_context ),
 					'current_section_index' => $next_index,
-				)
+				),
+				array(
+					'id'                    => $job_id,
+					'current_section_index' => $current_section_index,
+				),
+				array( '%s', '%s', '%d' ),
+				array( '%d', '%d' )
 			);
+			if ( false === $rows_updated ) {
+				throw new Exception( 'セクション進行状態の更新に失敗しました。' );
+			}
+			if ( 0 === $rows_updated ) {
+				return array(
+					'success' => false,
+					'message' => '別プロセスが同じジョブを更新しました。再試行してください。',
+					'retry'   => true,
+					'code'    => 'section_index_conflict',
+				);
+			}
 
 			// 完了判定
 			$is_done = ( $next_index >= $total_sections );
