@@ -337,7 +337,12 @@ class Blog_Poster_Generator {
                 $outline_md = method_exists( $client, 'get_text_content' ) ? $client->get_text_content( $response ) : '';
 
                 if ( empty( $outline_md ) ) {
-                    error_log( 'Blog Poster: Outline response empty. Raw response: ' . print_r( $response, true ) );
+                    error_log(
+                        'Blog Poster: Outline response empty. Response keys: '
+                        . wp_json_encode( array_keys( $response ), JSON_UNESCAPED_UNICODE )
+                        . ' | data type: '
+                        . gettype( isset( $response['data'] ) ? $response['data'] : null )
+                    );
                     return new WP_Error( 'outline_empty', 'アウトラインが空です。' );
                 }
 
@@ -1079,16 +1084,18 @@ PROMPT;
      * @return array 検証結果
      */
     public function validate_code_blocks( $content ) {
-        $open_count = preg_match_all( '/```\w*/mu', $content, $open_matches );
-        $close_count = preg_match_all( '/```\s*$/mu', $content, $close_matches );
+        // すべての ``` フェンス（言語タグ有無問わず）をカウント
+        $fence_count = preg_match_all( '/^`{3,}/mu', $content, $matches );
 
-        if ( $open_count !== $close_count ) {
+        error_log( 'Blog Poster: Code block check - Fence count: ' . $fence_count );
+
+        // 奇数個 = 閉じられていないコードブロックがある
+        if ( $fence_count % 2 !== 0 ) {
             return array(
                 'valid' => false,
                 'message' => sprintf(
-                    __( 'コードブロックの開始と終了が一致しません（開始: %d, 終了: %d）。', 'blog-poster' ),
-                    $open_count,
-                    $close_count
+                    __( 'コードブロックが閉じられていません（フェンス数: %d）。', 'blog-poster' ),
+                    $fence_count
                 ),
             );
         }
