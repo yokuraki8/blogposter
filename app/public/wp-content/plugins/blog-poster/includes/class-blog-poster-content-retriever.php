@@ -32,42 +32,19 @@ class Blog_Poster_Content_Retriever {
             return array();
         }
 
-        // Extract search keywords from topic
-        $indexer  = new Blog_Poster_Content_Indexer();
-        $keywords = $indexer->extract_keywords( $topic, 10 );
+        // Build search terms from topic using multiple strategies
+        $search_terms = $this->extract_search_terms( $topic );
 
-        if ( empty( $keywords ) ) {
+        if ( empty( $search_terms ) ) {
             return array();
         }
 
-        // Build LIKE conditions
-        $title_conditions   = array();
-        $content_conditions = array();
-        $keyword_conditions = array();
-        $params             = array();
-
-        foreach ( $keywords as $kw ) {
-            $like                 = '%' . $wpdb->esc_like( $kw ) . '%';
-            $title_conditions[]   = 'title LIKE %s';
-            $content_conditions[] = 'content_text LIKE %s';
-            $keyword_conditions[] = 'keywords LIKE %s';
-            $params[]             = $like;
-            $params[]             = $like;
-            $params[]             = $like;
-        }
-
-        $title_sql    = implode( ' OR ', $title_conditions );
-        $content_sql  = implode( ' OR ', $content_conditions );
-        $keyword_sql  = implode( ' OR ', $keyword_conditions );
-
-        // Build scoring query: title match = 2, keyword match = 1.5, content match = 1
-        $all_params = array_merge( $params, $params, $params );
-        
-        // Simpler approach: get candidates, then score in PHP
-        $where_params = array();
+        // Build LIKE conditions for each search term
         $where_parts  = array();
-        foreach ( $keywords as $kw ) {
-            $like           = '%' . $wpdb->esc_like( $kw ) . '%';
+        $where_params = array();
+
+        foreach ( $search_terms as $term ) {
+            $like           = '%' . $wpdb->esc_like( $term ) . '%';
             $where_parts[]  = '(title LIKE %s OR content_text LIKE %s OR keywords LIKE %s)';
             $where_params[] = $like;
             $where_params[] = $like;
@@ -76,7 +53,6 @@ class Blog_Poster_Content_Retriever {
 
         $where_sql = implode( ' OR ', $where_parts );
 
-        // Limit to 50 candidates for scoring
         $sql = $wpdb->prepare(
             "SELECT post_id, post_type, title, url, content_text, keywords FROM {$this->table_name} WHERE ($where_sql) LIMIT 50",
             $where_params
@@ -91,13 +67,13 @@ class Blog_Poster_Content_Retriever {
         // Score each row
         $scored = array();
         foreach ( $rows as $row ) {
-            $score = $this->calculate_score( $row, $keywords );
+            $score = $this->calculate_score( $row, $search_terms );
             if ( $score > 0 ) {
                 $scored[] = array(
                     'post_id' => (int) $row->post_id,
                     'title'   => $row->title,
                     'url'     => $row->url,
-                    'snippet' => $this->make_snippet( $row->content_text, $keywords ),
+                    'snippet' => $this->make_snippet( $row->content_text, $search_terms ),
                     'score'   => $score,
                 );
             }
@@ -110,6 +86,54 @@ class Blog_Poster_Content_Retriever {
 
         return array_slice( $scored, 0, $limit );
     }
+
+    /**
+     * Extract search terms from a Japanese topic using multiple strategies
+     *
+     * @param string $topic
+     * @return array
+     */
+    private function extract_search_terms( $topic ) {
+        $terms = array();
+
+        // Strategy 1: full topic (trimmed)
+        $topic_clean = trim( $topic );
+        if ( mb_strlen( $topic_clean, 'UTF-8' ) >= 4 ) {
+            $terms[] = $topic_clean;
+        }
+
+        // Strategy 2: split on Japanese particles and punctuation
+        $particles = array( 'の', 'で', 'に', 'が', 'は', 'を', 'と', 'から', 'まで', 'へ', 'より', 'によって', 'において', 'における', 'について', 'ために', 'による', '・', '｜', '【', '】', '（', '）', '「', '」', '、', '。', '：', ':', '!', '！', '?', '？', '/', '／' );
+
+        $pattern = '/(' . implode( '|', array_map( function( $p ) { return preg_quote( $p, '/' ); }, $particles ) ) . ')/u';
+        $parts   = preg_split( $pattern, $topic, -1, PREG_SPLIT_NO_EMPTY );
+
+        foreach ( $parts as $part ) {
+            $part = trim( $part );
+            if ( mb_strlen( $part, 'UTF-8' ) >= 2 ) {
+                $terms[] = $part;
+            }
+        }
+
+        // Strategy 3: extract substrings of 4-8 chars from topic
+        $topic_len = mb_strlen( $topic_clean, 'UTF-8' );
+        for ( $len = 8; $len >= 3; $len-- ) {
+            for ( $start = 0; $start + $len <= $topic_len; $start++ ) {
+                $substr = mb_substr( $topic_clean, $start, $len, 'UTF-8' );
+                // Only add non-particle-heavy substrings
+                if ( preg_match( '/\p{Han}|\p{Katakana}|\p{Hiragana}[^\x{3041}-\x{309F}]/u', $substr ) ) {
+                    $terms[] = $substr;
+                }
+                // Limit to avoid too many terms
+                if ( count( $terms ) > 30 ) {
+                    break 2;
+                }
+            }
+        }
+
+        return array_unique( $terms );
+    }
+
 
     /**
      * Calculate relevance score for a row
