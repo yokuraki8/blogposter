@@ -193,6 +193,17 @@ class Blog_Poster_Admin {
                 )
             );
         }
+
+        // Settings page JS
+        if ( strpos( $hook, 'blog-poster-settings' ) !== false ) {
+            wp_enqueue_script(
+                'blog-poster-settings',
+                BLOG_POSTER_PLUGIN_URL . 'admin/js/admin-settings.js',
+                array( 'jquery' ),
+                BLOG_POSTER_VERSION,
+                true
+            );
+        }
     }
 
     public function add_seo_metabox() {
@@ -456,6 +467,10 @@ class Blog_Poster_Admin {
         }
         $sanitized['default_category_id'] = isset( $input['default_category_id'] ) ? intval( $input['default_category_id'] ) : 0;
 
+
+        // RAG settings
+        $sanitized['rag_enabled']       = ! empty( $input['rag_enabled'] ) ? '1' : '0';
+        $sanitized['max_internal_links'] = isset( $input['max_internal_links'] ) ? min( 5, max( 1, (int) $input['max_internal_links'] ) ) : 3;
         // 既存の設定を維持
         $current_settings = Blog_Poster_Settings::get_settings();
         $sanitized = array_merge( $current_settings, $sanitized );
@@ -526,7 +541,7 @@ class Blog_Poster_Admin {
         // 現在の設定からai_provider、ai_modelを取得
         $settings = Blog_Poster_Settings::get_settings();
         $ai_provider = isset( $settings['ai_provider'] ) ? $settings['ai_provider'] : 'gemini';
-        $ai_model = isset( $settings[ $ai_provider . '_model' ] ) ? $settings[ $ai_provider . '_model' ] : '';
+        $ai_model = isset( $settings['default_model'][ $ai_provider ] ) ? $settings['default_model'][ $ai_provider ] : '';
         $temperature = isset( $settings['temperature'] ) ? floatval( $settings['temperature'] ) : 0.7;
 
         $options = array(
@@ -1557,7 +1572,7 @@ class Blog_Poster_Admin {
     private function get_default_model( $provider ) {
         switch ( $provider ) {
             case 'claude':
-                return 'claude-3-5-sonnet-20241022';
+                return 'claude-sonnet-4-5-20250929';
             case 'openai':
                 return 'gpt-5-mini';
             case 'gemini':

@@ -11,7 +11,7 @@
  * Plugin Name:       Blog Poster
  * Plugin URI:        https://bridgesystem.me/blog-poster
  * Description:       AI駆動型ブログ記事自動生成プラグイン。Google Gemini、Anthropic Claude、OpenAIの3つのAIモデルに対応し、高品質な日本語記事を自動生成します。
- * Version:           0.3.0-alpha
+ * Version:           0.4.0-alpha
  * Requires at least: 6.0
  * Requires PHP:      8.0
  * Author:            Bridge System
@@ -28,7 +28,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 // プラグインのバージョン定義
-define( 'BLOG_POSTER_VERSION', '0.3.0-alpha' );
+define( 'BLOG_POSTER_VERSION', '0.4.0-alpha' );
 define( 'BLOG_POSTER_PLUGIN_DIR', plugin_dir_path( __FILE__ ) );
 define( 'BLOG_POSTER_PLUGIN_URL', plugin_dir_url( __FILE__ ) );
 define( 'BLOG_POSTER_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
@@ -88,6 +88,12 @@ class Blog_Poster {
         require_once BLOG_POSTER_PLUGIN_DIR . 'includes/class-blog-poster-seo-analyzer.php';
         require_once BLOG_POSTER_PLUGIN_DIR . 'includes/class-blog-poster-task-manager.php';
         require_once BLOG_POSTER_PLUGIN_DIR . 'includes/class-blog-poster-rewriter.php';
+
+        // RAG コンテンツインデクサー
+        require_once BLOG_POSTER_PLUGIN_DIR . 'includes/class-blog-poster-content-indexer.php';
+        require_once BLOG_POSTER_PLUGIN_DIR . 'includes/class-blog-poster-content-retriever.php';
+        require_once BLOG_POSTER_PLUGIN_DIR . 'includes/class-blog-poster-internal-linker.php';
+        require_once BLOG_POSTER_PLUGIN_DIR . 'migrate-v040.php';
     }
 
     /**
@@ -112,6 +118,10 @@ class Blog_Poster {
         // ジョブキュー処理
         add_action( 'blog_poster_process_queue', array( $this, 'process_queue_cron' ) );
         add_filter( 'cron_schedules', array( $this, 'add_cron_schedules' ) );
+
+        // RAG コンテンツインデクサーの初期化
+        $content_indexer = new Blog_Poster_Content_Indexer();
+        $content_indexer->register_hooks();
     }
 
     /**
@@ -219,6 +229,9 @@ class Blog_Poster {
         ) $charset_collate;";
 
         dbDelta( $sql_jobs );
+
+        // RAG コンテンツインデックステーブルの作成
+        blog_poster_migrate_v040();
     }
 
     /**

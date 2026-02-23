@@ -18,7 +18,7 @@ class Blog_Poster_Gemini_Client extends Blog_Poster_AI_Client {
     /**
      * API Base URL
      */
-    const API_BASE_URL = 'https://generativelanguage.googleapis.com/v1/models/';
+    const API_BASE_URL = 'https://generativelanguage.googleapis.com/v1beta/models/';
 
     /**
      * モデル名を正規化
@@ -75,6 +75,23 @@ class Blog_Poster_Gemini_Client extends Blog_Poster_AI_Client {
 
         $adjusted_prompt = $this->apply_tone_settings( $prompt );
 
+        // Gemini 2.5系モデルの判定（thinking mode対応が必要）
+        $is_thinking_model = ( strpos( $model, 'gemini-2.5' ) !== false );
+
+        $generation_config = array(
+            'temperature' => $this->temperature,
+            'maxOutputTokens' => $max_tokens,
+        );
+
+        // Gemini 2.5系: thinkingBudgetを最小値(128)に制限
+        // （思考トークンがmaxOutputTokensを消費して回答が空になる問題の防止）
+        // 注: 2.5 Proは思考を完全無効化(0)できない。最小値は128。
+        if ( $is_thinking_model ) {
+            $generation_config['thinkingConfig'] = array(
+                'thinkingBudget' => 128,
+            );
+        }
+
         $body = array(
             'contents' => array(
                 array(
@@ -85,10 +102,7 @@ class Blog_Poster_Gemini_Client extends Blog_Poster_AI_Client {
                     )
                 )
             ),
-            'generationConfig' => array(
-                'temperature' => $this->temperature,
-                'maxOutputTokens' => $max_tokens,
-            )
+            'generationConfig' => $generation_config,
         );
 
         $headers = array(
@@ -116,12 +130,39 @@ class Blog_Poster_Gemini_Client extends Blog_Poster_AI_Client {
         $text = '';
         $tokens = 0;
 
-        if ( isset( $response['candidates'][0]['content']['parts'][0]['text'] ) ) {
-            $text = $response['candidates'][0]['content']['parts'][0]['text'];
+        // SAFETY / RECITATION等のブロック応答を明示的にエラー化
+        if ( isset( $response['candidates'][0]['finishReason'] ) ) {
+            $finish_reason = $response['candidates'][0]['finishReason'];
+            if ( in_array( $finish_reason, array( 'SAFETY', 'RECITATION', 'BLOCKLIST', 'PROHIBITED_CONTENT' ), true ) ) {
+                error_log( 'Blog Poster Gemini: Response blocked. finishReason=' . $finish_reason );
+                return $this->error_response(
+                    sprintf( __( 'Geminiがコンテンツをブロックしました（理由: %s）', 'blog-poster' ), $finish_reason )
+                );
+            }
+        }
+
+        // Thinking Mode対応: thought以外のテキストパートを全て連結
+        if ( isset( $response['candidates'][0]['content']['parts'] ) && is_array( $response['candidates'][0]['content']['parts'] ) ) {
+            $parts = $response['candidates'][0]['content']['parts'];
+            $text_parts = array();
+            foreach ( $parts as $part ) {
+                if ( ! empty( $part['thought'] ) ) {
+                    continue;
+                }
+                if ( isset( $part['text'] ) && '' !== $part['text'] ) {
+                    $text_parts[] = $part['text'];
+                }
+            }
+            $text = implode( '', $text_parts );
         }
 
         if ( isset( $response['usageMetadata']['totalTokenCount'] ) ) {
             $tokens = $response['usageMetadata']['totalTokenCount'];
+        }
+
+        if ( empty( trim( $text ) ) ) {
+            error_log( 'Blog Poster Gemini: Empty text after parsing. Raw response: ' . wp_json_encode( $response, JSON_UNESCAPED_UNICODE ) );
+            return $this->error_response( __( 'Geminiからの応答テキストが空です。', 'blog-poster' ) );
         }
 
         return $this->success_response( $text, $tokens );

@@ -256,19 +256,6 @@ class Blog_Poster_Generator {
         $final_md = $this->postprocess_markdown( $final_md );
         $final_md = $this->normalize_code_blocks_after_generation( $final_md );
 
-        // RAG: insert internal links
-        $rag_article_settings = Blog_Poster_Settings::get_settings();
-        $rag_article_enabled  = ! empty( $rag_article_settings['rag_enabled'] );
-        if ( $rag_article_enabled ) {
-            $retriever_art = new Blog_Poster_Content_Retriever();
-            $related_art   = $retriever_art->search_related( $topic, 5 );
-            if ( ! empty( $related_art ) ) {
-                $max_links = isset( $rag_article_settings['max_internal_links'] ) ? (int) $rag_article_settings['max_internal_links'] : 3;
-                $linker    = new Blog_Poster_Internal_Linker();
-                $final_md  = $linker->process( $final_md, $related_art, $max_links );
-            }
-        }
-
         // 5. HTML変換
         $html = Blog_Poster_Admin::markdown_to_html( $final_md );
 
@@ -325,18 +312,6 @@ class Blog_Poster_Generator {
             }
 
             $prompt = $this->build_outline_prompt( $topic, $current_additional_instructions );
-
-            // RAG: inject related content context
-            $eff_settings = Blog_Poster_Settings::get_settings();
-            $rag_enabled  = ! empty( $eff_settings['rag_enabled'] );
-            if ( $rag_enabled ) {
-                $retriever = new Blog_Poster_Content_Retriever();
-                $related   = $retriever->search_related( $topic, 5 );
-                if ( ! empty( $related ) ) {
-                    $prompt .= "\n\n" . $retriever->format_as_context( $related );
-                    $prompt .= "\n\n上記の既存コンテンツに適切な内部リンクを2〜3件、本文中に自然に挿入してください。リンク形式: [アンカーテキスト](URL)";
-                }
-            }
             $model_override = '';
             if ( isset( $settings['ai_provider'] ) && 'gemini' === $settings['ai_provider'] && ! empty( $forced_model ) ) {
                 $model_override = $forced_model;

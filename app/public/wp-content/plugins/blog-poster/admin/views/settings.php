@@ -36,6 +36,7 @@ $gemini_models = array(
     'gemini-2.5-flash',
 );
 $claude_models = array(
+    'claude-sonnet-4-5-20250929',  // Claude Sonnet 4.5（推奨）
     'claude-opus-4-5-20251101',    // Claude Opus 4.5
 );
 
@@ -480,6 +481,51 @@ $masked_claude = $mask_key( Blog_Poster_Settings::decrypt( isset( $settings['cla
 
         </div>
 
+
+        <!-- RAG機能設定 -->
+        <div class="blog-poster-section">
+            <h2><?php _e( 'RAG機能（関連コンテンツ参照）', 'blog-poster' ); ?></h2>
+            <p class="description"><?php _e( '既存の投稿・固定ページを参照して、内部リンクを自動挿入します。', 'blog-poster' ); ?></p>
+
+            <table class="form-table">
+                <tr>
+                    <th scope="row"><?php _e( 'RAG機能を有効化', 'blog-poster' ); ?></th>
+                    <td>
+                        <label>
+                            <input type="checkbox" name="blog_poster_settings[rag_enabled]" value="1"
+                                <?php checked( '1', $settings['rag_enabled'] ?? '0' ); ?>>
+                            <?php _e( '記事生成時に既存コンテンツを参照する', 'blog-poster' ); ?>
+                        </label>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php _e( '内部リンク最大挿入数', 'blog-poster' ); ?></th>
+                    <td>
+                        <select name="blog_poster_settings[max_internal_links]">
+                            <?php for ( $i = 1; $i <= 5; $i++ ) : ?>
+                                <option value="<?php echo $i; ?>"
+                                    <?php selected( $i, (int) ( $settings['max_internal_links'] ?? 3 ) ); ?>>
+                                    <?php echo $i; ?> 件
+                                </option>
+                            <?php endfor; ?>
+                        </select>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php _e( 'コンテンツインデックス', 'blog-poster' ); ?></th>
+                    <td>
+                        <div id="rag-index-status">
+                            <span class="rag-index-count">--</span> 件のコンテンツがインデックス済み
+                            （最終更新: <span class="rag-last-indexed">--</span>）
+                        </div>
+                        <button type="button" id="rag-reindex-btn" class="button button-secondary" style="margin-top: 8px;">
+                            <?php _e( '今すぐインデックス更新', 'blog-poster' ); ?>
+                        </button>
+                        <span id="rag-reindex-status" style="margin-left: 10px; display: none;"></span>
+                    </td>
+                </tr>
+            </table>
+        </div>
         <?php submit_button( __( '設定を保存', 'blog-poster' ) ); ?>
     </form>
 </div>
