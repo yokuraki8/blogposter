@@ -833,7 +833,7 @@ class Blog_Poster_Admin {
                     $quality_report['auto_fix_attempts'] = $attempt;
                     $quality_report['auto_fix_applied'] = true;
 
-                    if ( isset( $validator ) && $validator instanceof Blog_Poster_Primary_Research_Validator && $validator->is_enabled() ) {
+                    if ( $validator && $validator->is_enabled() ) {
                         $validation_result = $validator->filter_markdown_external_links( $markdown_for_validation );
                         $markdown_for_validation = isset( $validation_result['markdown'] ) ? $validation_result['markdown'] : $markdown_for_validation;
                         $external_link_audit = isset( $validation_result['reports'] ) && is_array( $validation_result['reports'] )

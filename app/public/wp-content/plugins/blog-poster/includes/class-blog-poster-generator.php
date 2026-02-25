@@ -1689,7 +1689,8 @@ PROMPT;
         }
 
         $has_h2 = (bool) preg_match( '/^(##\s+|<h2\b)/imu', (string) $fixed_markdown );
-        if ( $orig_len >= 800 && ! $has_h2 ) {
+        $orig_has_h2 = (bool) preg_match( '/^(##\s+|<h2\b)/imu', (string) $original_markdown );
+        if ( $orig_len >= 800 && $orig_has_h2 && ! $has_h2 ) {
             return true;
         }
 

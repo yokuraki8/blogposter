@@ -183,7 +183,8 @@ class Blog_Poster_Primary_Research_Validator {
 
         $text_for_scan = is_string( $filtered ) ? $filtered : $markdown;
         foreach ( $this->extract_external_urls( $text_for_scan ) as $url ) {
-            if ( isset( $reports[ $url ] ) ) {
+            $url = esc_url_raw( $url );
+            if ( '' === $url || isset( $reports[ $url ] ) ) {
                 continue;
             }
             $reports[ $url ] = $this->validate_external_url( $url );
@@ -210,6 +211,7 @@ class Blog_Poster_Primary_Research_Validator {
 
         if ( preg_match_all( '/\bhttps?:\/\/[^\s<>"\)\]]+/u', $text, $matches ) ) {
             foreach ( $matches[0] as $candidate ) {
+                $candidate = rtrim( $candidate, '.,;:!?。、）】」』' );
                 $candidate = esc_url_raw( (string) $candidate );
                 if ( '' === $candidate ) {
                     continue;

@@ -93,7 +93,10 @@ class Blog_Poster_Content_Quality_Gate {
 		}
 
 		$quality_score = max( 0, 100 - $severity_score );
-		$passes = empty( $issues );
+		$high_issues = array_filter( $issues, function( $issue ) {
+			return isset( $issue['severity'] ) && 'high' === $issue['severity'];
+		});
+		$passes = empty( $high_issues );
 
 		return array(
 			'passes' => $passes,
@@ -204,7 +207,7 @@ class Blog_Poster_Content_Quality_Gate {
 				'type' => 'unmarked_heading_candidate',
 				'severity' => 'high',
 				'line' => $i + 1,
-				'message' => '見出し候補に見出し記法（## など）がありません: ' . $line,
+				'message' => '見出し候補に見出し記法（## など）がありません: ' . esc_html( $line ),
 			);
 		}
 
@@ -339,7 +342,7 @@ class Blog_Poster_Content_Quality_Gate {
 					'type' => 'reference_missing_url',
 					'severity' => 'medium',
 					'line' => $idx + 1,
-					'message' => '参考情報にURLがありません: ' . $line,
+					'message' => '参考情報にURLがありません: ' . esc_html( $line ),
 				);
 			}
 		}
@@ -370,7 +373,7 @@ class Blog_Poster_Content_Quality_Gate {
 					'type' => 'tone_noise_uncertain_joke',
 					'severity' => 'medium',
 					'line' => $line_no + 1,
-					'message' => '業務記事に不向きな文体ノイズを検知しました: ' . $line,
+					'message' => '業務記事に不向きな文体ノイズを検知しました: ' . esc_html( $line ),
 				);
 			}
 		}
@@ -396,16 +399,12 @@ class Blog_Poster_Content_Quality_Gate {
 			if ( '' === $line ) {
 				continue;
 			}
-			if ( ! preg_match( '/^#{1,3}\s+/u', $line ) ) {
-				continue;
-			}
-
 			if ( preg_match( '/(ブラウザ|アクセス|確認してみよう|以下のURL|クリック)/u', $line ) ) {
 				$issues[] = array(
 					'type' => 'editorial_instruction_noise',
 					'severity' => 'high',
 					'line' => $line_no + 1,
-					'message' => '記事本文に編集指示が混入している可能性があります: ' . $line,
+					'message' => '記事本文に編集指示が混入している可能性があります: ' . esc_html( $line ),
 				);
 			}
 		}
@@ -442,7 +441,8 @@ class Blog_Poster_Content_Quality_Gate {
 			if ( '' === $line ) {
 				continue;
 			}
-			if ( false === mb_strpos( $line, 'http', 0, 'UTF-8' ) && 0 !== mb_strpos( $line, '参考', 0, 'UTF-8' ) ) {
+			$is_ref_line = ( 0 === mb_strpos( $line, '参考', 0, 'UTF-8' ) || 0 === mb_strpos( $line, '参照', 0, 'UTF-8' ) || 0 === mb_strpos( $line, '出典', 0, 'UTF-8' ) || 0 === mb_strpos( $line, '- ', 0, 'UTF-8' ) || 0 === mb_strpos( $line, '* ', 0, 'UTF-8' ) );
+			if ( ! $is_ref_line || false === mb_strpos( $line, 'http', 0, 'UTF-8' ) ) {
 				continue;
 			}
 			if ( preg_match_all( '/(20\d{2})(?:年度|年)?/u', $line, $ref_matches ) ) {
@@ -500,7 +500,7 @@ class Blog_Poster_Content_Quality_Gate {
 				$issues[] = array(
 					'type' => 'external_link_not_found',
 					'severity' => 'high',
-					'message' => '外部リンクの実在確認に失敗しました: ' . $url,
+					'message' => '外部リンクの実在確認に失敗しました: ' . esc_html( $url ),
 				);
 				continue;
 			}
@@ -509,7 +509,7 @@ class Blog_Poster_Content_Quality_Gate {
 				$issues[] = array(
 					'type' => 'external_link_untrusted',
 					'severity' => 'high',
-					'message' => '一次情報基準を満たさない外部リンクがあります: ' . $url,
+					'message' => '一次情報基準を満たさない外部リンクがあります: ' . esc_html( $url ),
 				);
 				continue;
 			}
@@ -518,7 +518,7 @@ class Blog_Poster_Content_Quality_Gate {
 				$issues[] = array(
 					'type' => 'external_link_low_score',
 					'severity' => 'medium',
-					'message' => '外部リンクの信頼性スコアが低めです: ' . $url . ' (score=' . $score . ')',
+					'message' => '外部リンクの信頼性スコアが低めです: ' . esc_html( $url ) . ' (score=' . $score . ')',
 				);
 			}
 		}
