@@ -801,6 +801,7 @@ class Blog_Poster_Admin {
                     $markdown_for_validation,
                     array(
                         'title' => $title,
+                        'external_link_audit' => $external_link_audit,
                     )
                 );
                 $quality_report['enabled'] = true;
@@ -846,6 +847,7 @@ class Blog_Poster_Admin {
                             $markdown_for_validation,
                             array(
                                 'title' => $title,
+                                'external_link_audit' => $external_link_audit,
                             )
                         )
                     );

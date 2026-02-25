@@ -846,6 +846,7 @@ class Blog_Poster_Job_Manager {
 							$final_markdown,
 							array(
 								'topic' => $topic,
+								'external_link_audit' => $external_link_audit,
 							)
 						)
 					);
@@ -891,6 +892,7 @@ class Blog_Poster_Job_Manager {
 								$final_markdown,
 								array(
 									'topic' => $topic,
+									'external_link_audit' => $external_link_audit,
 								)
 							)
 						);

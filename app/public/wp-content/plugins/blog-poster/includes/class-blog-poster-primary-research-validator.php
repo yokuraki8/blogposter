@@ -181,10 +181,64 @@ class Blog_Poster_Primary_Research_Validator {
             $markdown
         );
 
+        $text_for_scan = is_string( $filtered ) ? $filtered : $markdown;
+        foreach ( $this->extract_external_urls( $text_for_scan ) as $url ) {
+            if ( isset( $reports[ $url ] ) ) {
+                continue;
+            }
+            $reports[ $url ] = $this->validate_external_url( $url );
+        }
+
         return array(
             'markdown' => is_string( $filtered ) ? $filtered : $markdown,
             'reports' => $reports,
         );
+    }
+
+    /**
+     * Extract external URLs from markdown/html text.
+     *
+     * @param string $text Input text.
+     * @return array
+     */
+    private function extract_external_urls( $text ) {
+        $urls = array();
+        $text = (string) $text;
+        if ( '' === $text ) {
+            return $urls;
+        }
+
+        if ( preg_match_all( '/\bhttps?:\/\/[^\s<>"\)\]]+/u', $text, $matches ) ) {
+            foreach ( $matches[0] as $candidate ) {
+                $candidate = esc_url_raw( (string) $candidate );
+                if ( '' === $candidate ) {
+                    continue;
+                }
+                $host = (string) wp_parse_url( $candidate, PHP_URL_HOST );
+                $site_host = (string) wp_parse_url( home_url(), PHP_URL_HOST );
+                if ( '' !== $site_host && $host === $site_host ) {
+                    continue;
+                }
+                $urls[] = $candidate;
+            }
+        }
+
+        if ( preg_match_all( '/<a[^>]+href=["\'](https?:\/\/[^"\']+)["\']/iu', $text, $anchor_matches ) ) {
+            foreach ( $anchor_matches[1] as $candidate ) {
+                $candidate = esc_url_raw( (string) $candidate );
+                if ( '' === $candidate ) {
+                    continue;
+                }
+                $host = (string) wp_parse_url( $candidate, PHP_URL_HOST );
+                $site_host = (string) wp_parse_url( home_url(), PHP_URL_HOST );
+                if ( '' !== $site_host && $host === $site_host ) {
+                    continue;
+                }
+                $urls[] = $candidate;
+            }
+        }
+
+        return array_values( array_unique( $urls ) );
     }
 
     /**

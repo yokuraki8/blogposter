@@ -69,8 +69,15 @@ class Blog_Poster_Content_Quality_Gate {
 		$markdown = (string) $markdown;
 
 		$issues = array_merge( $issues, $this->check_heading_integrity( $markdown ) );
+		$issues = array_merge( $issues, $this->check_heading_length_constraints( $markdown ) );
+		$issues = array_merge( $issues, $this->check_unmarked_heading_candidates( $markdown ) );
 		$issues = array_merge( $issues, $this->check_garbled_text( $markdown ) );
+		$issues = array_merge( $issues, $this->check_typo_variants( $markdown ) );
+		$issues = array_merge( $issues, $this->check_editorial_instruction_noise( $markdown ) );
+		$issues = array_merge( $issues, $this->check_tone_noise( $markdown ) );
 		$issues = array_merge( $issues, $this->check_reference_url_consistency( $markdown ) );
+		$issues = array_merge( $issues, $this->check_reference_data_freshness( $markdown ) );
+		$issues = array_merge( $issues, $this->check_external_link_audit( $context ) );
 		$issues = array_merge( $issues, $this->check_year_consistency( $markdown, $context ) );
 
 		$severity_score = 0;
@@ -148,6 +155,105 @@ class Blog_Poster_Content_Quality_Gate {
 	}
 
 	/**
+	 * 見出しらしい行にMarkdown見出し記法がないケースを検知
+	 *
+	 * @param string $markdown Markdown.
+	 * @return array
+	 */
+	private function check_unmarked_heading_candidates( $markdown ) {
+		$issues = array();
+		$lines = preg_split( "/\R/u", $markdown );
+		if ( ! is_array( $lines ) ) {
+			return $issues;
+		}
+
+		$total = count( $lines );
+		for ( $i = 0; $i < $total; $i++ ) {
+			$line = trim( (string) $lines[ $i ] );
+			if ( '' === $line ) {
+				continue;
+			}
+
+			if ( preg_match( '/^(#{1,6}\s+|<h[1-6]\b|[-*+]\s+|\d+[\.)]\s+|```|参考[:：]|https?:\/\/)/iu', $line ) ) {
+				continue;
+			}
+
+			$len = mb_strlen( $line, 'UTF-8' );
+			if ( $len < 8 || $len > 48 ) {
+				continue;
+			}
+
+			$prev = $i > 0 ? trim( (string) $lines[ $i - 1 ] ) : '';
+			$next = $i + 1 < $total ? trim( (string) $lines[ $i + 1 ] ) : '';
+			if ( '' !== $prev || '' === $next ) {
+				continue;
+			}
+
+			if ( preg_match( '/[。．]$/u', $line ) ) {
+				continue;
+			}
+
+			$is_heading_like = (bool) preg_match( '/[？?!！:：]/u', $line )
+				|| (bool) preg_match( '/(とは|ポイント|リスト|まとめ|方法|手順|コツ)$/u', $line );
+
+			if ( ! $is_heading_like ) {
+				continue;
+			}
+
+			$issues[] = array(
+				'type' => 'unmarked_heading_candidate',
+				'severity' => 'high',
+				'line' => $i + 1,
+				'message' => '見出し候補に見出し記法（## など）がありません: ' . $line,
+			);
+		}
+
+		return $issues;
+	}
+
+	/**
+	 * H見出しの長さ制約を検証
+	 *
+	 * @param string $markdown Markdown.
+	 * @return array
+	 */
+	private function check_heading_length_constraints( $markdown ) {
+		$issues = array();
+		$lines = preg_split( "/\R/u", $markdown );
+		if ( ! is_array( $lines ) ) {
+			return $issues;
+		}
+
+		foreach ( $lines as $line_no => $line ) {
+			$line = trim( (string) $line );
+			$level = 0;
+			$text = '';
+			if ( preg_match( '/^(#{2,3})\s+(.+)$/u', $line, $m ) ) {
+				$level = strlen( $m[1] );
+				$text = trim( (string) $m[2] );
+			} elseif ( preg_match( '/^<h([23])[^>]*>(.*?)<\/h\1>$/iu', $line, $m ) ) {
+				$level = (int) $m[1];
+				$text = trim( wp_strip_all_tags( (string) $m[2] ) );
+			} else {
+				continue;
+			}
+
+			$len = mb_strlen( $text, 'UTF-8' );
+
+			if ( 3 === $level && $len > 40 ) {
+				$issues[] = array(
+					'type' => 'heading_too_long_h3',
+					'severity' => 'high',
+					'line' => $line_no + 1,
+					'message' => 'H3見出しが長すぎます（40文字超）: ' . $text,
+				);
+			}
+		}
+
+		return $issues;
+	}
+
+	/**
 	 * @param string $markdown Markdown.
 	 * @return array
 	 */
@@ -173,6 +279,34 @@ class Blog_Poster_Content_Quality_Gate {
 	}
 
 	/**
+	 * 誤記バリアント（例: 省エ-ネ / 省エEネ）を検知
+	 *
+	 * @param string $markdown Markdown.
+	 * @return array
+	 */
+	private function check_typo_variants( $markdown ) {
+		$issues = array();
+		$patterns = array(
+			'/省エ[-‐‑–—ー]ネ/u' => 'typo_shoene_hyphen',
+			'/省エ[A-Za-z]ネ/u' => 'typo_shoene_ascii',
+		);
+
+		foreach ( $patterns as $pattern => $type ) {
+			if ( preg_match_all( $pattern, $markdown, $matches ) ) {
+				foreach ( array_slice( array_unique( $matches[0] ), 0, 5 ) as $hit ) {
+					$issues[] = array(
+						'type' => $type,
+						'severity' => 'high',
+						'message' => '誤記の疑いがあります: ' . $hit,
+					);
+				}
+			}
+		}
+
+		return $issues;
+	}
+
+	/**
 	 * @param string $markdown Markdown.
 	 * @return array
 	 */
@@ -188,7 +322,8 @@ class Blog_Poster_Content_Quality_Gate {
 			if ( '' === $line ) {
 				continue;
 			}
-			if ( 0 !== mb_strpos( $line, '参考', 0, 'UTF-8' ) ) {
+			$plain_line = trim( wp_strip_all_tags( $line ) );
+			if ( ! preg_match( '/^(?:[-*+]\s*)?(参考|参照|出典)\s*[:：]?/u', $plain_line ) ) {
 				continue;
 			}
 
@@ -205,6 +340,185 @@ class Blog_Poster_Content_Quality_Gate {
 					'severity' => 'medium',
 					'line' => $idx + 1,
 					'message' => '参考情報にURLがありません: ' . $line,
+				);
+			}
+		}
+
+		return $issues;
+	}
+
+	/**
+	 * 業務記事に不向きな文体ノイズを検知
+	 *
+	 * @param string $markdown Markdown.
+	 * @return array
+	 */
+	private function check_tone_noise( $markdown ) {
+		$issues = array();
+		$lines = preg_split( "/\R/u", $markdown );
+		if ( ! is_array( $lines ) ) {
+			return $issues;
+		}
+
+		foreach ( $lines as $line_no => $line ) {
+			$line = trim( (string) $line );
+			if ( '' === $line ) {
+				continue;
+			}
+			if ( preg_match( '/（\s*？\s*）|\(\s*\?\s*\)/u', $line ) ) {
+				$issues[] = array(
+					'type' => 'tone_noise_uncertain_joke',
+					'severity' => 'medium',
+					'line' => $line_no + 1,
+					'message' => '業務記事に不向きな文体ノイズを検知しました: ' . $line,
+				);
+			}
+		}
+
+		return $issues;
+	}
+
+	/**
+	 * 記事本文に混入した操作指示文を検知
+	 *
+	 * @param string $markdown Markdown.
+	 * @return array
+	 */
+	private function check_editorial_instruction_noise( $markdown ) {
+		$issues = array();
+		$lines = preg_split( "/\R/u", $markdown );
+		if ( ! is_array( $lines ) ) {
+			return $issues;
+		}
+
+		foreach ( $lines as $line_no => $line ) {
+			$line = trim( (string) $line );
+			if ( '' === $line ) {
+				continue;
+			}
+			if ( ! preg_match( '/^#{1,3}\s+/u', $line ) ) {
+				continue;
+			}
+
+			if ( preg_match( '/(ブラウザ|アクセス|確認してみよう|以下のURL|クリック)/u', $line ) ) {
+				$issues[] = array(
+					'type' => 'editorial_instruction_noise',
+					'severity' => 'high',
+					'line' => $line_no + 1,
+					'message' => '記事本文に編集指示が混入している可能性があります: ' . $line,
+				);
+			}
+		}
+
+		return $issues;
+	}
+
+	/**
+	 * 本文主張年と参考URL年の乖離を検知
+	 *
+	 * @param string $markdown Markdown.
+	 * @return array
+	 */
+	private function check_reference_data_freshness( $markdown ) {
+		$issues = array();
+		$body_years = array();
+		$ref_years = array();
+
+		if ( preg_match_all( '/(20\d{2})(?:年度|年)/u', $markdown, $body_matches ) ) {
+			foreach ( $body_matches[1] as $year ) {
+				$body_years[] = (int) $year;
+			}
+		}
+		if ( empty( $body_years ) ) {
+			return $issues;
+		}
+
+		$lines = preg_split( "/\R/u", $markdown );
+		if ( ! is_array( $lines ) ) {
+			return $issues;
+		}
+		foreach ( $lines as $line ) {
+			$line = trim( (string) $line );
+			if ( '' === $line ) {
+				continue;
+			}
+			if ( false === mb_strpos( $line, 'http', 0, 'UTF-8' ) && 0 !== mb_strpos( $line, '参考', 0, 'UTF-8' ) ) {
+				continue;
+			}
+			if ( preg_match_all( '/(20\d{2})(?:年度|年)?/u', $line, $ref_matches ) ) {
+				foreach ( $ref_matches[1] as $year ) {
+					$ref_years[] = (int) $year;
+				}
+			}
+		}
+
+		if ( empty( $ref_years ) ) {
+			return $issues;
+		}
+
+		$max_body_year = max( $body_years );
+		$max_ref_year = max( $ref_years );
+		if ( $max_body_year - $max_ref_year >= 1 ) {
+			$issues[] = array(
+				'type' => 'reference_data_stale',
+				'severity' => 'high',
+				'message' => sprintf(
+					'本文年(%d)に対し参考情報年(%d)が古い可能性があります。',
+					$max_body_year,
+					$max_ref_year
+				),
+			);
+		}
+
+		return $issues;
+	}
+
+	/**
+	 * 一次情報監査結果を品質ゲートに反映
+	 *
+	 * @param array $context Context.
+	 * @return array
+	 */
+	private function check_external_link_audit( $context ) {
+		$issues = array();
+		$score_threshold = isset( $this->settings['primary_research_credibility_threshold'] )
+			? max( 0, min( 100, (int) $this->settings['primary_research_credibility_threshold'] ) )
+			: 70;
+		$audit = isset( $context['external_link_audit'] ) && is_array( $context['external_link_audit'] )
+			? $context['external_link_audit']
+			: array();
+		if ( empty( $audit ) ) {
+			return $issues;
+		}
+
+		foreach ( $audit as $url => $report ) {
+			$valid = ! empty( $report['valid'] );
+			$exists = ! isset( $report['exists'] ) || ! empty( $report['exists'] );
+			$score = isset( $report['credibility_score'] ) ? (int) $report['credibility_score'] : 0;
+
+			if ( ! $exists ) {
+				$issues[] = array(
+					'type' => 'external_link_not_found',
+					'severity' => 'high',
+					'message' => '外部リンクの実在確認に失敗しました: ' . $url,
+				);
+				continue;
+			}
+
+			if ( ! $valid ) {
+				$issues[] = array(
+					'type' => 'external_link_untrusted',
+					'severity' => 'high',
+					'message' => '一次情報基準を満たさない外部リンクがあります: ' . $url,
+				);
+				continue;
+			}
+
+			if ( $score > 0 && $score < $score_threshold ) {
+				$issues[] = array(
+					'type' => 'external_link_low_score',
+					'severity' => 'medium',
+					'message' => '外部リンクの信頼性スコアが低めです: ' . $url . ' (score=' . $score . ')',
 				);
 			}
 		}
@@ -256,4 +570,3 @@ class Blog_Poster_Content_Quality_Gate {
 		return $issues;
 	}
 }
-

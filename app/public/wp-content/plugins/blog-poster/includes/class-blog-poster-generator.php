@@ -312,6 +312,7 @@ class Blog_Poster_Generator {
                         array(
                             'topic' => $topic,
                             'title' => isset( $meta['title'] ) ? $meta['title'] : '',
+                            'external_link_audit' => $external_link_audit,
                         )
                     )
                 );
@@ -353,6 +354,7 @@ class Blog_Poster_Generator {
                             array(
                                 'topic' => $topic,
                                 'title' => isset( $meta['title'] ) ? $meta['title'] : '',
+                                'external_link_audit' => $external_link_audit,
                             )
                         )
                     );
@@ -1581,6 +1583,12 @@ PROMPT;
             $fixed_markdown = $this->extract_markdown_block( $fixed_markdown );
             $fixed_markdown = $this->postprocess_markdown( $fixed_markdown );
             $fixed_markdown = $this->normalize_code_blocks_after_generation( $fixed_markdown );
+            if ( $this->looks_like_broken_quality_fix_result( $markdown, $fixed_markdown ) ) {
+                return new WP_Error(
+                    'quality_fix_broken_output',
+                    '品質自動修正の出力が不完全です。元本文を維持します。'
+                );
+            }
 
             return array(
                 'success' => true,
@@ -1653,10 +1661,39 @@ PROMPT;
      */
     private function extract_markdown_block( $text ) {
         $text = trim( (string) $text );
-        if ( preg_match( '/```(?:markdown|md)?\s*([\s\S]*?)```/iu', $text, $matches ) ) {
+        // Unwrap only when the whole response is wrapped as markdown/md fence.
+        if ( preg_match( '/^\s*```(?:markdown|md)\s*([\s\S]*?)```\s*$/iu', $text, $matches ) ) {
             return trim( $matches[1] );
         }
         return $text;
+    }
+
+    /**
+     * Detect catastrophic shrink / malformed result from auto-fix.
+     *
+     * @param string $original_markdown Original markdown.
+     * @param string $fixed_markdown    Fixed markdown.
+     * @return bool
+     */
+    private function looks_like_broken_quality_fix_result( $original_markdown, $fixed_markdown ) {
+        $orig_text = trim( wp_strip_all_tags( (string) $original_markdown ) );
+        $fixed_text = trim( wp_strip_all_tags( (string) $fixed_markdown ) );
+        $orig_len = mb_strlen( $orig_text, 'UTF-8' );
+        $fixed_len = mb_strlen( $fixed_text, 'UTF-8' );
+
+        if ( $orig_len >= 1200 && $fixed_len < 400 ) {
+            return true;
+        }
+        if ( $orig_len >= 1200 && $fixed_len > 0 && $fixed_len < (int) floor( $orig_len * 0.35 ) ) {
+            return true;
+        }
+
+        $has_h2 = (bool) preg_match( '/^(##\s+|<h2\b)/imu', (string) $fixed_markdown );
+        if ( $orig_len >= 800 && ! $has_h2 ) {
+            return true;
+        }
+
+        return false;
     }
 
     /**
