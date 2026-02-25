@@ -72,3 +72,6 @@ composer.lock
 # 一時ファイル
 *.tmp
 *.temp
+
+# Database dump (sensitive data)
+app/sql/local.sql
