@@ -399,13 +399,27 @@ class Blog_Poster_Content_Quality_Gate {
 			if ( '' === $line ) {
 				continue;
 			}
-			if ( preg_match( '/(ブラウザ|アクセス|確認してみよう|以下のURL|クリック)/u', $line ) ) {
-				$issues[] = array(
-					'type' => 'editorial_instruction_noise',
-					'severity' => 'high',
-					'line' => $line_no + 1,
-					'message' => '記事本文に編集指示が混入している可能性があります: ' . esc_html( $line ),
-				);
+			$editorial_patterns = array(
+				// Combined patterns - high confidence editorial instructions
+				'/(?:ブラウザ|ブラウザー)で.{0,20}(?:アクセス|開[いくけ]|確認)/u',
+				'/以下の(?:URL|リンク|サイト)/u',
+				// AI meta-instructions that leaked into text
+				'/(?:この|次の|以下の)(?:セクション|記事|段落)(?:で|では|を|に).{0,20}(?:書[いくけ]|追加|修正|説明|記載)/u',
+				'/(?:\d+文字|○+文字).{0,10}(?:で|以[内上下]に).{0,10}(?:書|まとめ|要約)/u',
+				// Explicit editing commands
+				'/(?:書き直し|リライト|加筆|修正)(?:して|を)(?:ください|下さい)/u',
+			);
+
+			foreach ( $editorial_patterns as $pattern ) {
+				if ( preg_match( $pattern, $line ) ) {
+					$issues[] = array(
+						'type'     => 'editorial_instruction_noise',
+						'severity' => 'medium',
+						'line'     => $line_no + 1,
+						'message'  => '記事本文に編集指示が混入している可能性があります: ' . esc_html( $line ),
+					);
+					break;
+				}
 			}
 		}
 
