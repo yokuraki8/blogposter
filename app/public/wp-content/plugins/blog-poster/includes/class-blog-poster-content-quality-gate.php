@@ -263,55 +263,19 @@ class Blog_Poster_Content_Quality_Gate {
 	private function check_garbled_text( $markdown ) {
 		$issues = array();
 
-		// Detect garbled ruby-like text where furigana fragments are mixed into kanji.
-		// Example: ひっ逼迫ぱく / はん販促そく (reading fragments surrounding kanji).
-		// Require 2+ hiragana on BOTH sides to avoid matching normal Japanese
-		// like は本当に (particle + kanji + particle), which is perfectly valid.
-		if ( preg_match_all( '/[ぁ-ん]{2,4}[一-龯]{1,4}[ぁ-ん]{2,4}/u', $markdown, $matches ) ) {
-			// Common hiragana sequences that appear naturally around kanji.
-			$natural_prefixes = array( 'して', 'した', 'から', 'まで', 'など', 'ので', 'のは', 'では', 'には', 'とは', 'ては', 'って', 'った', 'ある', 'いる', 'おり', 'され', 'する', 'なる', 'れた', 'れる', 'せる', 'める', 'ける', 'げる', 'ねる', 'べる', 'てる', 'でる' );
-			$natural_suffixes = array( 'して', 'した', 'する', 'から', 'まで', 'など', 'ので', 'のは', 'では', 'には', 'とは', 'ては', 'って', 'った', 'ある', 'いる', 'おり', 'され', 'なる', 'れた', 'れる', 'せる', 'める', 'ける', 'げる', 'ねる', 'べる', 'てる', 'でる' );
+		// NOTE: Generic hiragana-kanji-hiragana pattern detection was removed because
+		// the pattern /[ぁ-ん]+[一-龯]+[ぁ-ん]+/ matches the fundamental structure
+		// of normal Japanese text (e.g. そんな不安はあり, ご存知ですか, どう変わる).
+		// No regex tuning can reliably distinguish garbled ruby text from natural prose.
+		// Specific typo patterns (e.g. 省エ-ネ) are handled by check_typo_variants().
 
-			$suspects = array_slice( array_unique( $matches[0] ), 0, 10 );
-			foreach ( $suspects as $suspect ) {
-				// Require minimum 6 characters total for garbled text detection.
-				if ( mb_strlen( $suspect, 'UTF-8' ) < 6 ) {
-					continue;
-				}
-
-				// Extract hiragana prefix and suffix to check if they look natural.
-				if ( preg_match( '/^([ぁ-ん]+)[一-龯]+([ぁ-ん]+)$/u', $suspect, $parts ) ) {
-					$prefix = $parts[1];
-					$suffix = $parts[2];
-					$is_natural = false;
-
-					// Check if prefix or suffix matches known natural patterns.
-					foreach ( $natural_prefixes as $np ) {
-						if ( mb_substr( $prefix, -mb_strlen( $np, 'UTF-8' ), null, 'UTF-8' ) === $np ) {
-							$is_natural = true;
-							break;
-						}
-					}
-					if ( ! $is_natural ) {
-						foreach ( $natural_suffixes as $ns ) {
-							if ( mb_substr( $suffix, 0, mb_strlen( $ns, 'UTF-8' ), 'UTF-8' ) === $ns ) {
-								$is_natural = true;
-								break;
-							}
-						}
-					}
-
-					if ( $is_natural ) {
-						continue;
-					}
-				}
-
-				$issues[] = array(
-					'type' => 'garbled_text',
-					'severity' => 'high',
-					'message' => '文字化け/誤記の疑い: ' . $suspect,
-				);
-			}
+		// Detect control characters and replacement characters (actual garbled bytes).
+		if ( preg_match_all( '/[\x{FFFD}\x{0000}-\x{0008}\x{000E}-\x{001F}]/u', $markdown, $matches ) ) {
+			$issues[] = array(
+				'type'     => 'garbled_text',
+				'severity' => 'high',
+				'message'  => '制御文字または置換文字（U+FFFD）が検出されました',
+			);
 		}
 
 		return $issues;
