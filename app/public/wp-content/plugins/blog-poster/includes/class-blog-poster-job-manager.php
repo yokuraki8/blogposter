@@ -17,6 +17,7 @@ if ( ! defined( 'ABSPATH' ) ) {
  * ジョブ管理クラス
  */
 class Blog_Poster_Job_Manager {
+	const JOBS_SCHEMA_VERSION = '0.3.3-alpha-1';
 
 	/**
 	 * テーブル名
@@ -33,19 +34,68 @@ class Blog_Poster_Job_Manager {
 	private $generator;
 
 	/**
+	 * ジョブ実行中の一時設定オーバーライド（DBに保存しない）
+	 *
+	 * @var array|null
+	 */
+	private $job_settings_override = null;
+
+	/**
 	 * コンストラクタ
 	 */
 	public function __construct() {
 		global $wpdb;
 		$this->table_name = $wpdb->prefix . 'blog_poster_jobs';
 		$this->generator  = new Blog_Poster_Generator();
-		$this->ensure_table_exists();
+		// Avoid heavy schema checks during AJAX to prevent memory exhaustion.
+		if ( ! ( defined( 'DOING_AJAX' ) && DOING_AJAX ) ) {
+			$this->ensure_table_exists();
+		}
+	}
+
+	/**
+	 * Exponential Backoff遅延を計算
+	 *
+	 * @param int   $attempt 試行回数（0ベース）
+	 * @param int   $base ベース値（デフォルト2）
+	 * @param int   $max_delay 最大遅延時間（秒）
+	 * @return float 遅延時間（秒）
+	 */
+	private function calculate_backoff_delay( $attempt, $base = 2, $max_delay = 30 ) {
+		$delay = min( pow( $base, $attempt ) + ( rand( 0, 1000 ) / 1000 ), $max_delay );
+		return $delay;
+	}
+
+	/**
+	 * UTF-8文字列を正規化
+	 *
+	 * @param string $text 正規化対象の文字列
+	 * @return string 正規化済み文字列
+	 */
+	private function sanitize_utf8( $text ) {
+		if ( empty( $text ) || ! is_string( $text ) ) {
+			return $text;
+		}
+		if ( ! mb_check_encoding( $text, 'UTF-8' ) ) {
+			$text = mb_convert_encoding( $text, 'UTF-8', 'auto' );
+		}
+		// 不完全なマルチバイトシーケンスを除去
+		$text = mb_convert_encoding( $text, 'UTF-8', 'UTF-8' );
+		// 不正な置換文字を除去
+		$text = preg_replace( '/\x{FFFD}+/u', '', $text );
+		return $text;
 	}
 
 	/**
 	 * テーブルの存在を確認し、なければ作成、あれば更新
 	 */
 	private function ensure_table_exists() {
+		static $checked = false;
+		if ( $checked ) {
+			return;
+		}
+		$checked = true;
+
 		global $wpdb;
 
 		$table_exists = $wpdb->get_var( "SHOW TABLES LIKE '{$this->table_name}'" );
@@ -53,10 +103,20 @@ class Blog_Poster_Job_Manager {
 		if ( $table_exists !== $this->table_name ) {
 			error_log( 'Blog Poster: Jobs table does not exist. Creating...' );
 			$this->create_table();
-		} else {
-			// 既存テーブルがある場合はスキーマ更新を確認
-			$this->upgrade_table();
+			return;
 		}
+
+		$has_column = $wpdb->get_var(
+			$wpdb->prepare(
+				"SHOW COLUMNS FROM {$this->table_name} LIKE %s",
+				'api_key_encrypted'
+			)
+		);
+		if ( $has_column ) {
+			return;
+		}
+
+		$wpdb->query( "ALTER TABLE {$this->table_name} ADD COLUMN api_key_encrypted text" );
 	}
 
 	/**
@@ -72,27 +132,36 @@ class Blog_Poster_Job_Manager {
 			id bigint(20) UNSIGNED NOT NULL AUTO_INCREMENT,
 			topic varchar(500) NOT NULL,
 			additional_instructions text,
+			ai_provider varchar(100),
+			ai_model varchar(100),
+			temperature float DEFAULT 0.7,
+			article_length varchar(20) DEFAULT 'standard',
+			is_batch tinyint(1) DEFAULT 0,
 			status varchar(20) DEFAULT 'pending',
 			current_step int(11) DEFAULT 0,
 			total_steps int(11) DEFAULT 3,
 			current_section_index int(11) DEFAULT 0,
 			total_sections int(11) DEFAULT 0,
 			previous_context text,
+			api_key_encrypted text,
 			outline_md longtext,
 			content_md longtext,
 			final_markdown longtext,
 			final_html longtext,
+			post_id bigint(20) UNSIGNED DEFAULT 0,
+			final_title text,
 			error_message text,
 			created_at datetime DEFAULT CURRENT_TIMESTAMP,
 			updated_at datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 			PRIMARY KEY  (id),
 			KEY status (status),
-			KEY created_at (created_at)
+			KEY created_at (created_at),
+			KEY status_created (status, created_at),
+			KEY status_step (status, current_step),
+			KEY status_updated (status, updated_at)
 		) $charset_collate;";
 
 		dbDelta( $sql );
-
-		error_log( 'Blog Poster: Jobs table schema updated.' );
 	}
 
 	/**
@@ -108,16 +177,47 @@ class Blog_Poster_Job_Manager {
 	 *
 	 * @param string $topic トピック
 	 * @param string $additional_instructions 追加指示
+	 * @param array  $options オプション配列 (ai_provider, ai_model, temperature, article_length)
 	 * @return int ジョブID
 	 */
-	public function create_job( $topic, $additional_instructions = '' ) {
+	public function create_job( $topic, $additional_instructions = '', $options = array() ) {
 		global $wpdb;
+
+		// $options から ai_provider, ai_model, temperature, article_length, is_batch を取得
+		$settings = Blog_Poster_Settings::get_settings();
+		$ai_provider = isset( $options['ai_provider'] ) ? $options['ai_provider'] : '';
+		if ( '' === $ai_provider ) {
+			$ai_provider = isset( $settings['ai_provider'] ) ? $settings['ai_provider'] : 'openai';
+		}
+		$ai_model = isset( $options['ai_model'] ) ? $options['ai_model'] : '';
+		$temperature = isset( $options['temperature'] ) ? floatval( $options['temperature'] ) : 0.7;
+		$article_length = isset( $options['article_length'] ) ? $options['article_length'] : 'standard';
+		$is_batch = ! empty( $options['is_batch'] ) ? 1 : 0;
+		$api_key_encrypted = '';
+		$key_field = $ai_provider . '_api_key';
+		if ( isset( $settings[ $key_field ] ) ) {
+			$api_key_encrypted = $settings[ $key_field ];
+			if ( ! Blog_Poster_Settings::is_encrypted( $api_key_encrypted ) ) {
+				$api_key_encrypted = Blog_Poster_Settings::encrypt( $api_key_encrypted );
+			}
+			// Validate encrypted API key size
+			if ( strlen( $api_key_encrypted ) > 1000 ) {
+				error_log( 'Blog Poster: Encrypted API key is too large, ignoring' );
+				$api_key_encrypted = '';
+			}
+		}
 
 		$result = $wpdb->insert(
 			$this->table_name,
 			array(
 				'topic'                    => $topic,
 				'additional_instructions'  => $additional_instructions,
+				'ai_provider'              => $ai_provider,
+				'ai_model'                 => $ai_model,
+				'temperature'              => $temperature,
+				'article_length'           => $article_length,
+				'api_key_encrypted'        => $api_key_encrypted,
+				'is_batch'                 => $is_batch,
 				'status'                   => 'pending',
 				'current_section_index'    => 0,
 				'total_sections'           => 0,
@@ -191,51 +291,130 @@ class Blog_Poster_Job_Manager {
 	}
 
 	/**
+	 * 次に実行可能なジョブを取得
+	 *
+	 * @return array|null ジョブデータまたはnull
+	 */
+	public function get_next_runnable_job() {
+		global $wpdb;
+
+		// pending, outline, content, review のいずれかのステータスのジョブを取得
+		$job = $wpdb->get_row(
+			"SELECT * FROM {$this->table_name}
+			 WHERE status IN ('pending', 'outline', 'content', 'review')
+			 ORDER BY created_at ASC
+			 LIMIT 1",
+			ARRAY_A
+		);
+
+		return $job;
+	}
+
+	private function get_job_lock_key( $job_id ) {
+		return 'blog_poster_job_lock_' . intval( $job_id );
+	}
+
+	private function acquire_job_lock( $job_id, $ttl = 600 ) {
+		$key       = $this->get_job_lock_key( $job_id );
+		$ttl       = max( 1, intval( $ttl ) );
+		$expires_at = time() + $ttl;
+		$added     = false;
+
+		if ( function_exists( 'wp_cache_add' ) && wp_using_ext_object_cache() ) {
+			$added = wp_cache_add( $key, $expires_at, '', $ttl );
+		}
+
+		if ( ! $added ) {
+			$added = add_option( $key, $expires_at, '', false );
+		}
+
+		if ( $added ) {
+			return true;
+		}
+
+		$current = intval( get_option( $key, 0 ) );
+		if ( $current > 0 && $current < time() ) {
+			delete_option( $key );
+			return (bool) add_option( $key, $expires_at, '', false );
+		}
+
+		return false;
+	}
+
+	private function release_job_lock( $job_id ) {
+		$key = $this->get_job_lock_key( $job_id );
+		if ( function_exists( 'wp_cache_delete' ) && wp_using_ext_object_cache() ) {
+			wp_cache_delete( $key, '' );
+		}
+		delete_option( $key );
+	}
+
+	/**
 	 * Step 1: アウトライン生成
 	 *
 	 * @param int $job_id ジョブID
 	 * @return array 実行結果
 	 */
 	public function process_step_outline( $job_id ) {
+		$step_start = microtime( true );
 		$job = $this->get_job( $job_id );
+		$original_settings = $this->apply_job_settings( $job );
+		$attempt_count = 0;
+		$used_fallback = false;
+		$lock_acquired = false;
 
 		if ( ! $job || 'pending' !== $job['status'] ) {
+			$this->restore_job_settings( $original_settings );
 			return array(
 				'success' => false,
 				'message' => 'Invalid job state',
 			);
 		}
 
-		$this->update_job(
-			$job_id,
-			array(
-				'status'       => 'outline',
-				'current_step' => 1,
-			)
-		);
-
 		try {
+			$lock_acquired = $this->acquire_job_lock( $job_id, 900 );
+			if ( ! $lock_acquired ) {
+				return array(
+					'success' => false,
+					'message' => '処理中のため再試行してください。',
+					'retry'   => true,
+					'code'    => 'job_locked',
+				);
+			}
+
 			error_log( 'Blog Poster: Starting Markdown outline flow (claude default).' );
 			$additional_instructions = $job['additional_instructions'] ?? '';
 
+			// article_lengthをジョブから取得してジェネレーターに設定
+			$article_length = $job['article_length'] ?? 'standard';
+			$this->generator->set_article_length( $article_length );
+
 			$outline_result = null;
 			$last_error     = '';
-			$max_attempt    = 5;
-			$used_fallback  = false;
+			$max_attempt    = 3;
 
 			for ( $attempt = 0; $attempt < $max_attempt; $attempt++ ) {
-				if ( $attempt >= 2 ) {
-					$outline_result = $this->generator->generate_outline_markdown( $job['topic'], $additional_instructions, 'gemini-2.5-flash' );
-					$used_fallback = true;
-				} else {
-					$outline_result = $this->generator->generate_outline_markdown( $job['topic'], $additional_instructions );
+				$attempt_count++;
+				if ( $attempt > 0 ) {
+					$backoff_delay = $this->calculate_backoff_delay( $attempt - 1 );
+					sleep( (int) $backoff_delay );
+					if ( isset( $outline_result ) && is_wp_error( $outline_result ) && 'api_rate_limit' === $outline_result->get_error_code() ) {
+						sleep( 5 );
+					}
 				}
+
+				$outline_result = $this->generator->generate_outline_markdown( $job['topic'], $additional_instructions );
+				$used_fallback = false;
 
 				if ( ! is_wp_error( $outline_result ) ) {
 					break;
 				}
 
 				$last_error = $outline_result->get_error_message();
+				$error_code = $outline_result->get_error_code();
+				if ( 'api_insufficient_quota' === $error_code ) {
+					break;
+				}
 				error_log( 'Blog Poster: Outline generation retry ' . ( $attempt + 1 ) . ' failed: ' . $last_error );
 			}
 
@@ -260,8 +439,9 @@ class Blog_Poster_Job_Manager {
 			$this->update_job(
 				$job_id,
 				array(
-					'outline_md'      => $outline_md,
+					'outline_md'      => $this->sanitize_utf8( $outline_md ),
 					'current_step'    => 1,
+					'status'          => 'outline',
 					'total_sections'  => $total_sections,
 					'current_section_index' => 0,
 					'previous_context' => '',
@@ -272,6 +452,7 @@ class Blog_Poster_Job_Manager {
 				'success' => true,
 				'message' => 'アウトライン生成完了',
 				'outline' => $outline_md,
+				'total_sections' => $total_sections,
 			);
 
 		} catch ( Exception $e ) {
@@ -279,13 +460,30 @@ class Blog_Poster_Job_Manager {
 				$job_id,
 				array(
 					'status'        => 'failed',
-					'error_message' => $e->getMessage(),
+					'error_message' => $this->sanitize_utf8( $e->getMessage() ),
 				)
 			);
 			return array(
 				'success' => false,
 				'message' => $e->getMessage(),
 			);
+		} finally {
+			if ( $lock_acquired ) {
+				$elapsed = microtime( true ) - $step_start;
+				error_log(
+					sprintf(
+						'Blog Poster Timing: step=outline job_id=%d elapsed=%.3fs attempts=%d fallback=%s',
+						(int) $job_id,
+						$elapsed,
+						$attempt_count,
+						$used_fallback ? 'yes' : 'no'
+					)
+				);
+			}
+			if ( $lock_acquired ) {
+				$this->release_job_lock( $job_id );
+			}
+			$this->restore_job_settings( $original_settings );
 		}
 	}
 
@@ -296,25 +494,34 @@ class Blog_Poster_Job_Manager {
 	 * @return array 実行結果
 	 */
 	public function process_step_content( $job_id ) {
+		$step_start = microtime( true );
 		$job = $this->get_job( $job_id );
+		$original_settings = $this->apply_job_settings( $job );
+		$lock_acquired = false;
 
 		if ( ! $job || ! in_array( $job['status'], array( 'outline', 'content' ), true ) ) {
+			$this->restore_job_settings( $original_settings );
 			return array(
 				'success' => false,
 				'message' => 'Invalid job state',
 			);
 		}
 
-		// 初回または継続のステータス更新
-		$this->update_job(
-			$job_id,
-			array(
-				'status'       => 'content',
-				'current_step' => 2,
-			)
-		);
-
 		try {
+			$lock_acquired = $this->acquire_job_lock( $job_id, 900 );
+			if ( ! $lock_acquired ) {
+				return array(
+					'success' => false,
+					'message' => '処理中のため再試行してください。',
+					'retry'   => true,
+					'code'    => 'job_locked',
+				);
+			}
+
+			// article_lengthをジョブから取得してジェネレーターに設定
+			$article_length = $job['article_length'] ?? 'standard';
+			$this->generator->set_article_length( $article_length );
+
 			$outline_md = $job['outline_md'] ?? '';
 			$additional_instructions = $job['additional_instructions'] ?? '';
 			$current_section_index = intval( $job['current_section_index'] ?? 0 );
@@ -322,8 +529,29 @@ class Blog_Poster_Job_Manager {
 			$current_content_md = $job['content_md'] ?? '';
 
 			if ( empty( $outline_md ) ) {
-				throw new Exception( 'アウトラインが見つかりません。' );
+				// 直前の更新反映待ち（非同期実行の競合回避）
+				for ( $retry = 0; $retry < 2 && empty( $outline_md ); $retry++ ) {
+					sleep( 1 );
+					$job_retry = $this->get_job( $job_id );
+					$outline_md = $job_retry['outline_md'] ?? '';
+				}
 			}
+
+			if ( empty( $outline_md ) ) {
+				return array(
+					'success' => false,
+					'message' => 'アウトライン生成中です。しばらく待ってから再試行してください。',
+				);
+			}
+
+			// 初回または継続のステータス更新（アウトライン確認後）
+			$this->update_job(
+				$job_id,
+				array(
+					'status'       => 'content',
+					'current_step' => 2,
+				)
+			);
 
 			// Markdownアウトラインからセクション情報を取得
 			$parsed_outline = $this->generator->parse_markdown_frontmatter( $outline_md );
@@ -341,6 +569,13 @@ class Blog_Poster_Job_Manager {
 
 			// すべて完了しているかチェック
 			if ( $current_section_index >= $total_sections ) {
+				$this->update_job(
+					$job_id,
+					array(
+						'status'       => 'review',
+						'current_step' => 3,
+					)
+				);
 				return array(
 					'success'         => true,
 					'done'            => true,
@@ -359,13 +594,35 @@ class Blog_Poster_Job_Manager {
 			$max_retries = 3;
 			$section_result = null;
 			$last_error_msg = '';
+			$section_attempts = 0;
 
 			for ( $attempt = 1; $attempt <= $max_retries; $attempt++ ) {
+				$section_attempts++;
+				if ( $attempt > 1 ) {
+					$backoff_delay = $this->calculate_backoff_delay( $attempt - 2 );
+					sleep( (int) $backoff_delay );
+					if ( isset( $section_result ) && is_wp_error( $section_result ) && 'api_rate_limit' === $section_result->get_error_code() ) {
+						sleep( 5 );
+					}
+				}
+
+				$section_start = microtime( true );
 				$section_result = $this->generator->generate_section_markdown(
 					$sections,
 					$current_section_index,
 					$previous_context,
 					$additional_instructions
+				);
+				$section_elapsed = microtime( true ) - $section_start;
+				error_log(
+					sprintf(
+						'Blog Poster Timing: step=content job_id=%d section=%d/%d elapsed=%.3fs attempt=%d',
+						(int) $job_id,
+						(int) ( $current_section_index + 1 ),
+						(int) $total_sections,
+						$section_elapsed,
+						$attempt
+					)
 				);
 
 				if ( ! is_wp_error( $section_result ) ) {
@@ -373,10 +630,11 @@ class Blog_Poster_Job_Manager {
 				}
 
 				$last_error_msg = $section_result->get_error_message();
+				$error_code = $section_result->get_error_code();
 				error_log( "Blog Poster: Section generation retry {$attempt} failed: {$last_error_msg}" );
 
-				if ( $attempt < $max_retries ) {
-					sleep( 2 ); // 少し待ってからリトライ
+				if ( 'api_insufficient_quota' === $error_code ) {
+					break;
 				}
 			}
 
@@ -389,18 +647,45 @@ class Blog_Poster_Job_Manager {
 			$new_context    = $section_result['context'];
 			$next_index     = $current_section_index + 1;
 
-			// DB更新
-			$this->update_job(
-				$job_id,
+			// DB更新（UTF-8正規化を適用 + current_section_indexはCASで更新）
+			global $wpdb;
+			$rows_updated = $wpdb->update(
+				$this->table_name,
 				array(
-					'content_md'            => $new_content_md,
-					'previous_context'      => $new_context,
+					'content_md'            => $this->sanitize_utf8( $new_content_md ),
+					'previous_context'      => $this->sanitize_utf8( $new_context ),
 					'current_section_index' => $next_index,
-				)
+				),
+				array(
+					'id'                    => $job_id,
+					'current_section_index' => $current_section_index,
+				),
+				array( '%s', '%s', '%d' ),
+				array( '%d', '%d' )
 			);
+			if ( false === $rows_updated ) {
+				throw new Exception( 'セクション進行状態の更新に失敗しました。' );
+			}
+			if ( 0 === $rows_updated ) {
+				return array(
+					'success' => false,
+					'message' => '別プロセスが同じジョブを更新しました。再試行してください。',
+					'retry'   => true,
+					'code'    => 'section_index_conflict',
+				);
+			}
 
 			// 完了判定
 			$is_done = ( $next_index >= $total_sections );
+			if ( $is_done ) {
+				$this->update_job(
+					$job_id,
+					array(
+						'status'       => 'review',
+						'current_step' => 3,
+					)
+				);
+			}
 
 			return array(
 				'success'          => true,
@@ -416,13 +701,28 @@ class Blog_Poster_Job_Manager {
 				$job_id,
 				array(
 					'status'        => 'failed',
-					'error_message' => $e->getMessage(),
+					'error_message' => $this->sanitize_utf8( $e->getMessage() ),
 				)
 			);
 			return array(
 				'success' => false,
 				'message' => $e->getMessage(),
 			);
+		} finally {
+			if ( $lock_acquired ) {
+				$elapsed = microtime( true ) - $step_start;
+				error_log(
+					sprintf(
+						'Blog Poster Timing: step=content job_id=%d elapsed=%.3fs',
+						(int) $job_id,
+						$elapsed
+					)
+				);
+			}
+			if ( $lock_acquired ) {
+				$this->release_job_lock( $job_id );
+			}
+			$this->restore_job_settings( $original_settings );
 		}
 	}
 
@@ -433,9 +733,13 @@ class Blog_Poster_Job_Manager {
 	 * @return array 実行結果
 	 */
 	public function process_step_review( $job_id ) {
+		$step_start = microtime( true );
 		$job = $this->get_job( $job_id );
+		$original_settings = $this->apply_job_settings( $job );
+		$lock_acquired = false;
 
-		if ( ! $job || 'content' !== $job['status'] ) {
+		if ( ! $job || ! in_array( $job['status'], array( 'content', 'review' ), true ) ) {
+			$this->restore_job_settings( $original_settings );
 			return array(
 				'success' => false,
 				'message' => 'Invalid job state',
@@ -451,10 +755,30 @@ class Blog_Poster_Job_Manager {
 		);
 
 		try {
+			$lock_acquired = $this->acquire_job_lock( $job_id, 900 );
+			if ( ! $lock_acquired ) {
+				return array(
+					'success' => false,
+					'message' => '処理中のため再試行してください。',
+					'retry'   => true,
+					'code'    => 'job_locked',
+				);
+			}
+
+			// article_lengthをジョブから取得してジェネレーターに設定
+			$article_length = $job['article_length'] ?? 'standard';
+			$this->generator->set_article_length( $article_length );
+
 			$content_md = $job['content_md'] ?? '';
 			$topic      = $job['topic'];
 			$outline_md = $job['outline_md'] ?? '';
 			$additional_instructions = $job['additional_instructions'] ?? '';
+			$code_tag_total = preg_match_all( '/<CODE(?:\\s+lang="[^"]*")?>/i', $content_md, $tmp_matches );
+			$code_tag_closed = preg_match_all( '/<\\/CODE>/i', $content_md, $tmp_matches_close );
+			if ( $code_tag_total !== $code_tag_closed ) {
+				error_log( 'Blog Poster: CODE tag mismatch in content_md: open=' . $code_tag_total . ' close=' . $code_tag_closed );
+			}
+			error_log( 'Blog Poster: CODE tag count in content_md: ' . $code_tag_total );
 
 			if ( empty( $content_md ) ) {
 				throw new Exception( '本文が見つかりません。' );
@@ -463,6 +787,12 @@ class Blog_Poster_Job_Manager {
 			// Markdown後処理
 			$final_markdown = $this->generator->postprocess_markdown( $content_md );
 			$final_markdown = $this->generator->normalize_code_blocks_after_generation( $final_markdown );
+			$code_tag_final = preg_match_all( '/<CODE(?:\\s+lang="[^"]*")?>/i', $final_markdown, $tmp_matches2 );
+			$code_tag_final_closed = preg_match_all( '/<\\/CODE>/i', $final_markdown, $tmp_matches3 );
+			if ( $code_tag_final !== $code_tag_final_closed ) {
+				error_log( 'Blog Poster: CODE tag mismatch in final_markdown: open=' . $code_tag_final . ' close=' . $code_tag_final_closed );
+			}
+			error_log( 'Blog Poster: CODE tag count in final_markdown: ' . $code_tag_final );
 
 			// 末尾切れの保険処理（最終セクションを再生成）
 			if ( $this->generator->is_truncated_markdown( $final_markdown ) ) {
@@ -476,7 +806,7 @@ class Blog_Poster_Job_Manager {
 				$final_markdown = $this->generator->normalize_code_blocks_after_generation( $final_markdown );
 
 				if ( $this->generator->is_truncated_markdown( $final_markdown ) ) {
-					throw new Exception( '生成結果が途中で終了しました。再試行してください。' );
+					error_log( 'Blog Poster: Truncation still suspected after regeneration. Proceeding with warning.' );
 				}
 			}
 
@@ -484,8 +814,114 @@ class Blog_Poster_Job_Manager {
 				throw new Exception( $final_markdown->get_error_message() );
 			}
 
+			$external_link_audit = array();
+			$primary_validator = null;
+			if ( class_exists( 'Blog_Poster_Primary_Research_Validator' ) ) {
+				$primary_validator = new Blog_Poster_Primary_Research_Validator( Blog_Poster_Settings::get_settings() );
+				if ( $primary_validator->is_enabled() ) {
+					$validation_result = $primary_validator->filter_markdown_external_links( $final_markdown );
+					$final_markdown = isset( $validation_result['markdown'] ) ? $validation_result['markdown'] : $final_markdown;
+					$external_link_audit = isset( $validation_result['reports'] ) && is_array( $validation_result['reports'] )
+						? $validation_result['reports']
+						: array();
+				}
+			}
+
+			$quality_report = array(
+				'enabled' => false,
+				'mode' => 'strict',
+				'passes' => true,
+				'quality_score' => 100,
+				'issues' => array(),
+				'auto_fix_attempts' => 0,
+				'auto_fix_applied' => false,
+			);
+			if ( class_exists( 'Blog_Poster_Content_Quality_Gate' ) ) {
+				$quality_gate = new Blog_Poster_Content_Quality_Gate( Blog_Poster_Settings::get_settings() );
+				if ( $quality_gate->is_enabled() ) {
+					$quality_report['enabled'] = true;
+					$quality_report = array_merge(
+						$quality_report,
+						$quality_gate->validate_markdown(
+							$final_markdown,
+							array(
+								'topic' => $topic,
+								'external_link_audit' => $external_link_audit,
+							)
+						)
+					);
+
+					$max_fixes = $quality_gate->get_max_auto_fixes();
+					$auto_fix_attempts = 0;
+					$auto_fix_applied = false;
+
+					while ( empty( $quality_report['passes'] ) && $auto_fix_attempts < $max_fixes ) {
+						$auto_fix_attempts++;
+						$fixed_result = $this->generator->auto_fix_quality_markdown(
+							$final_markdown,
+							$quality_report,
+							array(
+								'topic' => $topic,
+							)
+						);
+						if ( is_wp_error( $fixed_result ) ) {
+							error_log( 'Blog Poster: Quality auto-fix failed: ' . $fixed_result->get_error_message() );
+							break;
+						}
+
+						$fixed_markdown = isset( $fixed_result['markdown'] ) ? (string) $fixed_result['markdown'] : '';
+						if ( '' === trim( $fixed_markdown ) || trim( $fixed_markdown ) === trim( $final_markdown ) ) {
+							error_log( 'Blog Poster: Quality auto-fix skipped because output was empty or unchanged.' );
+							break;
+						}
+
+						$auto_fix_applied = true;
+						$final_markdown = $fixed_markdown;
+
+						if ( $primary_validator && $primary_validator->is_enabled() ) {
+							$validation_result = $primary_validator->filter_markdown_external_links( $final_markdown );
+							$final_markdown = isset( $validation_result['markdown'] ) ? $validation_result['markdown'] : $final_markdown;
+							$external_link_audit = isset( $validation_result['reports'] ) && is_array( $validation_result['reports'] )
+								? $validation_result['reports']
+								: array();
+						}
+
+						$quality_report = array_merge(
+							$quality_report,
+							$quality_gate->validate_markdown(
+								$final_markdown,
+								array(
+									'topic' => $topic,
+									'external_link_audit' => $external_link_audit,
+								)
+							)
+						);
+					}
+
+					$quality_report['auto_fix_attempts'] = $auto_fix_attempts;
+					$quality_report['auto_fix_applied'] = $auto_fix_applied;
+
+					if ( empty( $quality_report['passes'] ) && 'strict' === ( $quality_report['mode'] ?? 'strict' ) ) {
+						$first_issue_message = '品質基準を満たしていません。';
+						if ( ! empty( $quality_report['issues'][0]['message'] ) ) {
+							$first_issue_message = (string) $quality_report['issues'][0]['message'];
+						}
+						throw new Exception(
+							sprintf(
+								'自動品質ゲート（strict）で停止しました: %s',
+								$first_issue_message
+							)
+						);
+					}
+				}
+			}
+
 			// MarkdownからHTMLへ変換
 			$final_html = Blog_Poster_Admin::markdown_to_html( $final_markdown );
+			$code_tag_html = preg_match_all( '/<CODE(?:\\s+lang="[^"]*")?>/i', $final_html, $tmp_matches4 );
+			if ( $code_tag_html > 0 ) {
+				error_log( 'Blog Poster: CODE tag leaked into final_html: ' . $code_tag_html );
+			}
 
 			if ( is_wp_error( $final_html ) ) {
 				throw new Exception( $final_html->get_error_message() );
@@ -498,16 +934,6 @@ class Blog_Poster_Job_Manager {
 				$outline_meta   = isset( $parsed_outline['meta'] ) ? $parsed_outline['meta'] : array();
 			}
 
-			$this->update_job(
-				$job_id,
-				array(
-					'status'          => 'completed',
-					'final_markdown'  => $final_markdown,
-					'final_html'      => $final_html,
-					'current_step'    => 3,
-				)
-			);
-
 			// Markdownからタイトルを抽出
 			$title = $outline_meta['title'] ?? '';
 			if ( empty( $title ) && ! empty( $final_markdown ) ) {
@@ -516,8 +942,20 @@ class Blog_Poster_Job_Manager {
 				}
 			}
 			if ( empty( $title ) ) {
-				$title = 'Untitled';
+				// ユーザー入力のトピックをフォールバックとして使用
+				$title = ! empty( $topic ) ? $topic : 'Untitled';
+				error_log( 'Blog Poster: Using topic as title fallback: ' . $title );
 			}
+
+			$this->update_job(
+				$job_id,
+				array(
+					'final_markdown'  => $this->sanitize_utf8( $final_markdown ),
+					'final_html'      => $this->sanitize_utf8( $final_html ),
+					'current_step'    => 3,
+					'final_title'     => $this->sanitize_utf8( $title ),
+				)
+			);
 
 			return array(
 				'success'          => true,
@@ -526,9 +964,11 @@ class Blog_Poster_Job_Manager {
 				'slug'             => $outline_meta['slug'] ?? '',
 				'meta_description' => $outline_meta['meta_description'] ?? '',
 				'excerpt'          => $outline_meta['excerpt'] ?? '',
-				'markdown'         => $final_markdown,
-				'html'             => $final_html,
+				'markdown'         => $this->sanitize_utf8( $final_markdown ),
+				'html'             => $this->sanitize_utf8( $final_html ),
 				'keywords'         => $outline_meta['keywords'] ?? array(),
+				'external_link_audit' => $external_link_audit,
+				'quality_report'   => $quality_report,
 			);
 
 		} catch ( Exception $e ) {
@@ -536,64 +976,29 @@ class Blog_Poster_Job_Manager {
 				$job_id,
 				array(
 					'status'        => 'failed',
-					'error_message' => $e->getMessage(),
+					'error_message' => $this->sanitize_utf8( $e->getMessage() ),
 				)
 			);
 			return array(
 				'success' => false,
 				'message' => $e->getMessage(),
 			);
+		} finally {
+			if ( $lock_acquired ) {
+				$elapsed = microtime( true ) - $step_start;
+				error_log(
+					sprintf(
+						'Blog Poster Timing: step=review job_id=%d elapsed=%.3fs',
+						(int) $job_id,
+						$elapsed
+					)
+				);
+			}
+			if ( $lock_acquired ) {
+				$this->release_job_lock( $job_id );
+			}
+			$this->restore_job_settings( $original_settings );
 		}
-	}
-
-	/**
-	 * Markdownアウトラインからセクション情報を抽出
-	 *
-	 * @param string $outline_md Markdownアウトライン
-	 * @return array セクション情報配列
-	 */
-	private function extract_sections_from_outline_markdown( $outline_md ) {
-		// TODO: Markdown形式のアウトラインをパースしてセクション配列に変換
-		// 実装例: h2ヘッダーごとにセクションを分割
-		$sections = array();
-
-		// プレースホルダー実装
-		preg_match_all( '/^## (.+)$/m', $outline_md, $matches );
-
-		foreach ( $matches[1] as $title ) {
-			$sections[] = array(
-				'title' => $title,
-				'content' => '',
-			);
-		}
-
-		return ! empty( $sections ) ? $sections : array();
-	}
-
-	/**
-	 * Markdownアウトラインからメタデータを抽出
-	 *
-	 * @param string $outline_md Markdownアウトライン
-	 * @return array メタデータ配列
-	 */
-	private function extract_metadata_from_outline_markdown( $outline_md ) {
-		$metadata = array(
-			'title'            => 'Untitled',
-			'slug'             => '',
-			'meta_description' => '',
-			'excerpt'          => '',
-			'keywords'         => array(),
-		);
-
-		// TODO: Markdown形式のアウトラインからメタデータをパース
-		// 実装例: YAML Front Matterまたはコメント形式から抽出
-
-		// プレースホルダー実装
-		if ( preg_match( '/^# (.+)$/m', $outline_md, $matches ) ) {
-			$metadata['title'] = trim( $matches[1] );
-		}
-
-		return $metadata;
 	}
 
 	/**
@@ -672,5 +1077,60 @@ class Blog_Poster_Job_Manager {
 		$content_sections[ count( $content_sections ) - 1 ] = $section_result['section_md'];
 
 		return rtrim( implode( "\n\n", $content_sections ) ) . "\n";
+	}
+
+	/**
+	 * ジョブの設定を適用
+	 *
+	 * @param array $job ジョブデータ
+	 * @return array|null 以前の設定
+	 */
+	private function apply_job_settings( $job ) {
+		if ( empty( $job ) || ( empty( $job['ai_provider'] ) && empty( $job['ai_model'] ) ) ) {
+			return null;
+		}
+
+		$settings = Blog_Poster_Settings::get_settings();
+		$override = array();
+
+		if ( ! empty( $job['ai_provider'] ) ) {
+			$override['ai_provider'] = $job['ai_provider'];
+		}
+
+		if ( ! empty( $job['ai_model'] ) ) {
+			$provider = ! empty( $job['ai_provider'] ) ? $job['ai_provider'] : ( $settings['ai_provider'] ?? 'gemini' );
+			$override[ $provider . '_model' ] = $job['ai_model'];
+		}
+
+		if ( ! empty( $job['api_key_encrypted'] ) ) {
+			$provider = ! empty( $job['ai_provider'] ) ? $job['ai_provider'] : ( $settings['ai_provider'] ?? 'openai' );
+			$override[ $provider . '_api_key' ] = $job['api_key_encrypted'];
+		}
+
+		if ( isset( $job['temperature'] ) && '' !== $job['temperature'] ) {
+			$override['temperature'] = floatval( $job['temperature'] );
+		}
+
+		// DBに保存せず、メモリ上でオーバーライドを保持
+		$this->job_settings_override = $override;
+
+		// Generatorにオーバーライド設定を渡す
+		if ( ! empty( $override ) ) {
+			$this->generator->set_settings_override( $override );
+		}
+
+		return $settings; // 元の設定を返す（復元用ではなくログ目的）
+	}
+
+	/**
+	 * 設定を元に戻す（メモリ上のオーバーライドをクリア）
+	 *
+	 * @param array|null $original_settings 以前の設定（互換性のため引数を残す）
+	 * @return void
+	 */
+	private function restore_job_settings( $original_settings ) {
+		// メモリ上のオーバーライドをクリアするだけ（DBへのupdate_optionは行わない）
+		$this->job_settings_override = null;
+		$this->generator->clear_settings_override();
 	}
 }

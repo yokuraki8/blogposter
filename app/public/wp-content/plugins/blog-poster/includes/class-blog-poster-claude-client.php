@@ -23,7 +23,7 @@ class Blog_Poster_Claude_Client extends Blog_Poster_AI_Client {
     /**
      * API Version
      */
-    const API_VERSION = '2023-06-01';
+    const API_VERSION = '2023-06-01'; // Anthropic推奨の安定バージョン
 
     /**
      * テキスト生成
@@ -31,9 +31,15 @@ class Blog_Poster_Claude_Client extends Blog_Poster_AI_Client {
      * @param string $prompt プロンプト
      * @return array レスポンス
      */
-    public function generate_text( $prompt, $response_format = null ) {
+    public function generate_text( $prompt, $options = null ) {
         if ( empty( $this->api_key ) ) {
             return $this->error_response( __( 'Claude APIキーが設定されていません。', 'blog-poster' ) );
+        }
+
+        // オプションからmax_tokensを取得（指定があれば上書き）
+        $max_tokens = $this->max_tokens;
+        if ( is_array( $options ) && isset( $options['max_tokens'] ) ) {
+            $max_tokens = (int) $options['max_tokens'];
         }
 
         $url = self::API_BASE_URL . 'messages';
@@ -42,7 +48,7 @@ class Blog_Poster_Claude_Client extends Blog_Poster_AI_Client {
 
         $body = array(
             'model' => $this->model,
-            'max_tokens' => $this->max_tokens,
+            'max_tokens' => $max_tokens,
             'temperature' => $this->temperature,
             'messages' => array(
                 array(
@@ -61,7 +67,7 @@ class Blog_Poster_Claude_Client extends Blog_Poster_AI_Client {
         $response = $this->make_request( $url, $body, $headers );
 
         if ( is_wp_error( $response ) ) {
-            return $this->error_response( $response->get_error_message() );
+            return $this->error_response( $response->get_error_message(), $response->get_error_code() );
         }
 
         // レスポンスからテキストとトークン数を抽出
@@ -83,9 +89,10 @@ class Blog_Poster_Claude_Client extends Blog_Poster_AI_Client {
      * 画像生成
      *
      * @param string $prompt プロンプト
+     * @param array  $options オプション
      * @return array レスポンス
      */
-    public function generate_image( $prompt ) {
+    public function generate_image( $prompt, $options = array() ) {
         // TODO: Claude Image Generation実装（将来対応検討）
         return $this->error_response( __( 'Claude画像生成機能は現在サポートされていません。', 'blog-poster' ) );
     }

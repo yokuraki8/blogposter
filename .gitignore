@@ -58,6 +58,9 @@ yarn-error.log
 # Composer関連（PHPの依存関係管理）
 /vendor/
 composer.lock
+**/vendor/
+*.phar
+.phpunit.result.cache
 
 # 環境変数ファイル
 .env
@@ -69,3 +72,6 @@ composer.lock
 # 一時ファイル
 *.tmp
 *.temp
+
+# Database dump (sensitive data)
+app/sql/local.sql

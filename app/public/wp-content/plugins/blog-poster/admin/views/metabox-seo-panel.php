@@ -1,0 +1,164 @@
+<?php
+if ( ! defined( 'ABSPATH' ) ) {
+    exit;
+}
+$analysis = get_post_meta( $post->ID, '_blog_poster_seo_analysis', true );
+$tasks = get_post_meta( $post->ID, '_blog_poster_seo_tasks', true );
+$external_link_audit_summary = get_post_meta( $post->ID, '_blog_poster_external_link_audit_summary', true );
+$external_link_audit_raw = get_post_meta( $post->ID, '_blog_poster_external_link_audit', true );
+$external_link_audit = array();
+$quality_report_summary = get_post_meta( $post->ID, '_blog_poster_quality_report_summary', true );
+$quality_report_raw = get_post_meta( $post->ID, '_blog_poster_quality_report', true );
+$quality_report = array();
+if ( is_string( $external_link_audit_raw ) && '' !== $external_link_audit_raw ) {
+    $decoded = json_decode( $external_link_audit_raw, true );
+    if ( is_array( $decoded ) ) {
+        $external_link_audit = $decoded;
+    }
+}
+if ( is_string( $quality_report_raw ) && '' !== $quality_report_raw ) {
+    $decoded_quality = json_decode( $quality_report_raw, true );
+    if ( is_array( $decoded_quality ) ) {
+        $quality_report = $decoded_quality;
+    }
+}
+?>
+<div class="blog-poster-seo-panel" data-post-id="<?php echo esc_attr( $post->ID ); ?>">
+    <div class="blog-poster-seo-header">
+        <button type="button" class="button button-primary blog-poster-analyze"><?php esc_html_e( '再分析', 'blog-poster' ); ?></button>
+        <span class="blog-poster-seo-status"></span>
+    </div>
+
+    <div class="blog-poster-seo-summary">
+        <?php if ( ! empty( $analysis ) ) : ?>
+            <div class="score">
+                <strong><?php esc_html_e( '総合スコア', 'blog-poster' ); ?>:</strong>
+                <?php echo esc_html( $analysis['overall']['composite_score'] ); ?>/100
+                (<?php echo esc_html( $analysis['overall']['grade'] ); ?>)
+            </div>
+        <?php else : ?>
+            <div class="score"><?php esc_html_e( '未分析', 'blog-poster' ); ?></div>
+        <?php endif; ?>
+        <div class="score-bar" aria-hidden="true">
+            <div class="score-bar-fill" style="width:<?php echo ! empty( $analysis['overall']['composite_score'] ) ? esc_attr( $analysis['overall']['composite_score'] ) : 0; ?>%"></div>
+        </div>
+    </div>
+
+    <div class="blog-poster-seo-sections">
+        <div class="section">
+            <h4><?php esc_html_e( '構造', 'blog-poster' ); ?></h4>
+            <div class="content"></div>
+        </div>
+        <div class="section">
+            <h4><?php esc_html_e( 'SEO', 'blog-poster' ); ?></h4>
+            <div class="content"></div>
+        </div>
+        <div class="section">
+            <h4><?php esc_html_e( 'エンゲージメント', 'blog-poster' ); ?></h4>
+            <div class="content"></div>
+        </div>
+        <div class="section">
+            <h4><?php esc_html_e( '信頼性', 'blog-poster' ); ?></h4>
+            <div class="content"></div>
+        </div>
+    </div>
+
+    <div class="blog-poster-seo-recommendations">
+        <div class="recommendations-header">
+            <strong><?php esc_html_e( '改善提案', 'blog-poster' ); ?></strong>
+        </div>
+        <ul class="recommendations-list"></ul>
+    </div>
+
+    <div class="blog-poster-seo-recommendations">
+        <div class="recommendations-header">
+            <strong><?php esc_html_e( '自動品質ゲート', 'blog-poster' ); ?></strong>
+        </div>
+        <?php if ( ! empty( $quality_report_summary ) ) : ?>
+            <p><?php echo esc_html( $quality_report_summary ); ?></p>
+        <?php else : ?>
+            <p><?php esc_html_e( '品質ゲートデータはまだありません。', 'blog-poster' ); ?></p>
+        <?php endif; ?>
+        <?php if ( ! empty( $quality_report['issues'] ) && is_array( $quality_report['issues'] ) ) : ?>
+            <ul class="recommendations-list">
+                <?php foreach ( array_slice( $quality_report['issues'], 0, 8 ) as $issue ) : ?>
+                    <?php
+                    $severity = isset( $issue['severity'] ) ? strtoupper( (string) $issue['severity'] ) : 'INFO';
+                    $message = isset( $issue['message'] ) ? (string) $issue['message'] : '';
+                    ?>
+                    <?php if ( '' !== $message ) : ?>
+                        <li>
+                            <span class="rec-priority"><?php echo esc_html( $severity ); ?></span>
+                            <?php echo esc_html( $message ); ?>
+                        </li>
+                    <?php endif; ?>
+                <?php endforeach; ?>
+            </ul>
+        <?php endif; ?>
+    </div>
+
+    <div class="blog-poster-seo-recommendations">
+        <div class="recommendations-header">
+            <strong><?php esc_html_e( '外部リンク監査（一次情報リサーチ）', 'blog-poster' ); ?></strong>
+        </div>
+        <?php if ( ! empty( $external_link_audit_summary ) ) : ?>
+            <p><?php echo esc_html( $external_link_audit_summary ); ?></p>
+        <?php else : ?>
+            <p><?php esc_html_e( '監査データはまだありません。', 'blog-poster' ); ?></p>
+        <?php endif; ?>
+
+        <?php if ( ! empty( $external_link_audit ) ) : ?>
+            <ul class="recommendations-list">
+                <?php foreach ( $external_link_audit as $audit_url => $audit_entry ) : ?>
+                    <?php
+                    $is_valid = ! empty( $audit_entry['valid'] );
+                    $score = isset( $audit_entry['credibility_score'] ) ? (int) $audit_entry['credibility_score'] : 0;
+                    $reasons = isset( $audit_entry['reasons'] ) && is_array( $audit_entry['reasons'] ) ? implode( ' / ', $audit_entry['reasons'] ) : '';
+                    ?>
+                    <li>
+                        <span class="rec-priority"><?php echo $is_valid ? 'OK' : 'NG'; ?></span>
+                        <strong><?php echo esc_html( $audit_url ); ?></strong>
+                        <?php echo esc_html( ' - score: ' . $score ); ?>
+                        <?php if ( '' !== $reasons ) : ?>
+                            <br><small><?php echo esc_html( $reasons ); ?></small>
+                        <?php endif; ?>
+                    </li>
+                <?php endforeach; ?>
+            </ul>
+        <?php endif; ?>
+    </div>
+
+    <div class="blog-poster-seo-tasks">
+        <div class="tasks-header">
+            <strong><?php esc_html_e( '改善タスク', 'blog-poster' ); ?></strong>
+            <div class="tasks-actions">
+                <select class="blog-poster-task-filter">
+                    <option value="all"><?php esc_html_e( 'すべて', 'blog-poster' ); ?></option>
+                    <option value="1"><?php esc_html_e( 'Critical', 'blog-poster' ); ?></option>
+                    <option value="2"><?php esc_html_e( 'High', 'blog-poster' ); ?></option>
+                    <option value="3"><?php esc_html_e( 'Medium', 'blog-poster' ); ?></option>
+                    <option value="4"><?php esc_html_e( 'Low', 'blog-poster' ); ?></option>
+                </select>
+                <button type="button" class="button blog-poster-generate-tasks"><?php esc_html_e( 'タスク生成', 'blog-poster' ); ?></button>
+            </div>
+        </div>
+        <ul class="tasks-list"></ul>
+    </div>
+
+    <div class="blog-poster-rewrite-modal" style="display:none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <strong><?php esc_html_e( 'リライトプレビュー', 'blog-poster' ); ?></strong>
+                <button type="button" class="button-link blog-poster-modal-close">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="preview-text"></div>
+                <div class="diff-text" style="display:none;"></div>
+            </div>
+            <div class="modal-actions">
+                <button type="button" class="button button-primary blog-poster-apply-rewrite"><?php esc_html_e( '適用', 'blog-poster' ); ?></button>
+                <button type="button" class="button blog-poster-modal-close"><?php esc_html_e( 'キャンセル', 'blog-poster' ); ?></button>
+            </div>
+        </div>
+    </div>
+</div>

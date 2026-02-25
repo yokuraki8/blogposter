@@ -21,12 +21,150 @@ if ( ! defined( 'ABSPATH' ) ) {
 class Blog_Poster_Generator {
 
     /**
+     * 現在の記事長設定
+     *
+     * @var string
+     */
+    private $current_article_length = 'standard';
+
+    /**
+     * 設定オーバーライド（ジョブ実行時の一時設定、DBに保存しない）
+     *
+     * @var array|null
+     */
+    private $settings_override = null;
+
+    /**
+     * 設定オーバーライドを設定
+     *
+     * @param array $override オーバーライドする設定
+     * @return void
+     */
+    public function set_settings_override( $override ) {
+        $this->settings_override = $override;
+    }
+
+    /**
+     * 設定オーバーライドをクリア
+     *
+     * @return void
+     */
+    public function clear_settings_override() {
+        $this->settings_override = null;
+    }
+
+    /**
+     * 設定を取得（オーバーライドがあればマージ）
+     *
+     * @return array
+     */
+    private function get_effective_settings() {
+        $settings = class_exists( 'Blog_Poster_Settings' )
+            ? Blog_Poster_Settings::get_settings()
+            : get_option( 'blog_poster_settings', array() );
+        if ( ! empty( $this->settings_override ) ) {
+            $settings = array_merge( $settings, $this->settings_override );
+        }
+        return $settings;
+    }
+
+    /**
+     * APIレスポンスのエラーを抽出
+     *
+     * @param mixed $response レスポンス
+     * @return string
+     */
+    private function extract_api_error_message( $response ) {
+        if ( is_array( $response ) && isset( $response['success'] ) && false === $response['success'] ) {
+            return isset( $response['error'] ) ? $response['error'] : 'APIエラーが発生しました。';
+        }
+
+        return '';
+    }
+
+    /**
+     * APIレスポンスからWP_Errorを生成
+     *
+     * @param mixed $response レスポンス
+     * @param string $default_code デフォルトエラーコード
+     * @return WP_Error|null
+     */
+    private function response_to_wp_error( $response, $default_code ) {
+        $message = $this->extract_api_error_message( $response );
+        if ( '' === $message ) {
+            return null;
+        }
+
+        $code = $default_code;
+        if ( is_array( $response ) && ! empty( $response['error_code'] ) ) {
+            $code = sanitize_key( $response['error_code'] );
+        }
+        $lower_message = strtolower( $message );
+        if ( false !== strpos( $lower_message, 'insufficient_quota' ) || false !== strpos( $lower_message, 'quota' ) ) {
+            $code = 'api_insufficient_quota';
+        } elseif ( preg_match( '/\b429\b/u', $message ) ) {
+            $code = 'api_rate_limit';
+        }
+
+        return new WP_Error( $code, $message );
+    }
+
+    /**
+     * 記事長に応じた設定を取得
+     *
+     * @param string $article_length 記事長（short/standard/long）
+     * @return array 設定配列
+     */
+    private function get_length_config( $article_length ) {
+        $configs = array(
+            'short' => array(
+                'total_chars' => 2000,
+                'h2_count' => '3-4',
+                'h2_min' => 3,
+                'h2_max' => 4,
+                'section_chars' => '200-300',
+                'outline_max_tokens' => 1200,
+                'max_tokens' => 1500,
+            ),
+            'standard' => array(
+                'total_chars' => 5000,
+                'h2_count' => '4-5',
+                'h2_min' => 4,
+                'h2_max' => 5,
+                'section_chars' => '300-500',
+                'outline_max_tokens' => 1500,
+                'max_tokens' => 3000,
+            ),
+            'long' => array(
+                'total_chars' => 10000,
+                'h2_count' => '6-8',
+                'h2_min' => 6,
+                'h2_max' => 8,
+                'section_chars' => '500-800',
+                'outline_max_tokens' => 2000,
+                'max_tokens' => 4500,
+            ),
+        );
+        return isset( $configs[ $article_length ] ) ? $configs[ $article_length ] : $configs['standard'];
+    }
+
+    /**
+     * 記事長を設定
+     *
+     * @param string $article_length 記事長（short/standard/long）
+     */
+    public function set_article_length( $article_length ) {
+        $this->current_article_length = $article_length;
+    }
+
+    /**
      * AIクライアントを取得
      *
      * @return object|WP_Error AIクライアントまたはエラー
      */
     private function get_ai_client() {
-        $settings = get_option( 'blog_poster_settings', array() );
+        // オーバーライドを含む有効な設定を取得（DBに保存せずメモリ上でマージ）
+        $settings = $this->get_effective_settings();
         $provider = isset( $settings['ai_provider'] ) ? $settings['ai_provider'] : 'claude';
 
         $api_key = '';
@@ -34,20 +172,20 @@ class Blog_Poster_Generator {
 
         switch ( $provider ) {
             case 'gemini':
-                $api_key = isset( $settings['gemini_api_key'] ) ? $settings['gemini_api_key'] : '';
+                $api_key = Blog_Poster_Settings::get_api_key( 'gemini', $settings );
                 $model = isset( $settings['default_model']['gemini'] ) ? $settings['default_model']['gemini'] : 'gemini-2.5-pro';
                 $client = new Blog_Poster_Gemini_Client( $api_key, $model, $settings );
                 break;
 
             case 'claude':
-                $api_key = isset( $settings['claude_api_key'] ) ? $settings['claude_api_key'] : '';
+                $api_key = Blog_Poster_Settings::get_api_key( 'claude', $settings );
                 $model = isset( $settings['default_model']['claude'] ) ? $settings['default_model']['claude'] : 'claude-sonnet-4-5-20250929';
                 $client = new Blog_Poster_Claude_Client( $api_key, $model, $settings );
                 break;
 
             case 'openai':
             default:
-                $api_key = isset( $settings['openai_api_key'] ) ? $settings['openai_api_key'] : '';
+                $api_key = Blog_Poster_Settings::get_api_key( 'openai', $settings );
                 $model = isset( $settings['default_model']['openai'] ) ? $settings['default_model']['openai'] : 'gpt-5.2';
                 $client = new Blog_Poster_OpenAI_Client( $api_key, $model, $settings );
                 break;
@@ -118,6 +256,122 @@ class Blog_Poster_Generator {
         $final_md = $this->postprocess_markdown( $final_md );
         $final_md = $this->normalize_code_blocks_after_generation( $final_md );
 
+        $external_link_audit = array();
+        $primary_research_validator = $this->get_primary_research_validator();
+        if ( $primary_research_validator && $primary_research_validator->is_enabled() ) {
+            $validation_result = $primary_research_validator->filter_markdown_external_links( $final_md );
+            $final_md = $validation_result['markdown'];
+            $external_link_audit = $validation_result['reports'];
+            if ( ! empty( $external_link_audit ) ) {
+                $invalid_count = 0;
+                foreach ( $external_link_audit as $audit_entry ) {
+                    if ( empty( $audit_entry['valid'] ) ) {
+                        $invalid_count++;
+                    }
+                }
+                error_log(
+                    sprintf(
+                        'Blog Poster: Primary research link audit completed. checked=%d invalid=%d',
+                        count( $external_link_audit ),
+                        $invalid_count
+                    )
+                );
+            }
+        }
+
+        // RAG: insert internal links
+        $rag_article_settings = Blog_Poster_Settings::get_settings();
+        $rag_article_enabled  = ! empty( $rag_article_settings['rag_enabled'] );
+        if ( $rag_article_enabled ) {
+            $retriever_art = new Blog_Poster_Content_Retriever();
+            $related_art   = $retriever_art->search_related( $topic, 5 );
+            if ( ! empty( $related_art ) ) {
+                $max_links = isset( $rag_article_settings['max_internal_links'] ) ? (int) $rag_article_settings['max_internal_links'] : 3;
+                $linker    = new Blog_Poster_Internal_Linker();
+                $final_md  = $linker->process( $final_md, $related_art, $max_links );
+            }
+        }
+
+        $quality_report = array(
+            'enabled' => false,
+            'mode' => 'strict',
+            'passes' => true,
+            'quality_score' => 100,
+            'issues' => array(),
+            'auto_fix_attempts' => 0,
+            'auto_fix_applied' => false,
+        );
+        if ( class_exists( 'Blog_Poster_Content_Quality_Gate' ) ) {
+            $quality_gate = new Blog_Poster_Content_Quality_Gate( $this->get_effective_settings() );
+            if ( $quality_gate->is_enabled() ) {
+                $quality_report['enabled'] = true;
+                $quality_report = array_merge(
+                    $quality_report,
+                    $quality_gate->validate_markdown(
+                        $final_md,
+                        array(
+                            'topic' => $topic,
+                            'title' => isset( $meta['title'] ) ? $meta['title'] : '',
+                            'external_link_audit' => $external_link_audit,
+                        )
+                    )
+                );
+
+                $max_fixes = $quality_gate->get_max_auto_fixes();
+                $auto_fix_attempts = 0;
+                $auto_fix_applied = false;
+                while ( empty( $quality_report['passes'] ) && $auto_fix_attempts < $max_fixes ) {
+                    $auto_fix_attempts++;
+                    $fixed_result = $this->auto_fix_quality_markdown(
+                        $final_md,
+                        $quality_report,
+                        array(
+                            'topic' => $topic,
+                            'title' => isset( $meta['title'] ) ? $meta['title'] : '',
+                        )
+                    );
+                    if ( is_wp_error( $fixed_result ) ) {
+                        error_log( 'Blog Poster: Quality auto-fix failed: ' . $fixed_result->get_error_message() );
+                        break;
+                    }
+                    $fixed_markdown = isset( $fixed_result['markdown'] ) ? (string) $fixed_result['markdown'] : '';
+                    if ( '' === trim( $fixed_markdown ) || trim( $fixed_markdown ) === trim( $final_md ) ) {
+                        break;
+                    }
+                    $auto_fix_applied = true;
+                    $final_md = $fixed_markdown;
+
+                    if ( $primary_research_validator && $primary_research_validator->is_enabled() ) {
+                        $validation_result = $primary_research_validator->filter_markdown_external_links( $final_md );
+                        $final_md = $validation_result['markdown'];
+                        $external_link_audit = $validation_result['reports'];
+                    }
+
+                    $quality_report = array_merge(
+                        $quality_report,
+                        $quality_gate->validate_markdown(
+                            $final_md,
+                            array(
+                                'topic' => $topic,
+                                'title' => isset( $meta['title'] ) ? $meta['title'] : '',
+                                'external_link_audit' => $external_link_audit,
+                            )
+                        )
+                    );
+                }
+
+                $quality_report['auto_fix_attempts'] = $auto_fix_attempts;
+                $quality_report['auto_fix_applied'] = $auto_fix_applied;
+
+                if ( empty( $quality_report['passes'] ) && 'strict' === ( $quality_report['mode'] ?? 'strict' ) ) {
+                    $first_issue_message = ! empty( $quality_report['issues'][0]['message'] )
+                        ? (string) $quality_report['issues'][0]['message']
+                        : '品質基準を満たしていません。';
+                    return new WP_Error( 'quality_gate_failed', '自動品質ゲート（strict）で停止しました: ' . $first_issue_message );
+                }
+            }
+        }
+
         // 5. HTML変換
         $html = Blog_Poster_Admin::markdown_to_html( $final_md );
 
@@ -131,6 +385,8 @@ class Blog_Poster_Generator {
             'keywords' => isset( $meta['keywords'] ) ? $meta['keywords'] : array(),
             'markdown' => $final_md,
             'html' => $html,
+            'external_link_audit' => $external_link_audit,
+            'quality_report' => $quality_report,
         );
     }
 
@@ -142,292 +398,121 @@ class Blog_Poster_Generator {
      * @return array|WP_Error ['success' => bool, 'outline_md' => string, 'meta' => array, 'sections' => array]
      */
     public function generate_outline_markdown( $topic, $additional_instructions = '', $forced_model = '' ) {
-        // プロバイダーを判定
-        $settings = get_option( 'blog_poster_settings', array() );
+        // プロバイダーを判定（オーバーライドを含む有効な設定を取得）
+        $settings = $this->get_effective_settings();
         $provider = isset( $settings['ai_provider'] ) ? $settings['ai_provider'] : 'claude';
-
-        // Geminiの場合は2段階生成
-        if ( 'gemini' === $provider ) {
-            error_log( 'Blog Poster: Using 2-step outline generation for Gemini' );
-
-            // Step1: セクションタイトルのみ生成
-            $step1_result = $this->generate_outline_step1_gemini( $topic, $additional_instructions );
-            if ( is_wp_error( $step1_result ) ) {
-                return $step1_result;
-            }
-
-            $section_titles = $step1_result['titles'];
-
-            // Step2: 詳細構造を生成
-            $step2_result = $this->generate_outline_step2_gemini( $topic, $section_titles, $additional_instructions );
-            if ( is_wp_error( $step2_result ) ) {
-                return $step2_result;
-            }
-
-            return $step2_result;
+        if ( ! empty( $forced_model ) && 0 === strpos( $forced_model, 'gemini-' ) ) {
+            $provider = 'gemini';
         }
+        $configured_model = isset( $settings['ai_model'] ) ? $settings['ai_model'] : '';
+        $outline_model = ! empty( $forced_model ) ? $forced_model : $configured_model;
+        error_log( sprintf( 'Blog Poster: Outline provider=%s model=%s', $provider, $outline_model !== '' ? $outline_model : 'default' ) );
 
-        // Claude/OpenAIは既存の1段階生成を使用
-        error_log( 'Blog Poster: Using standard outline generation for ' . $provider );
+        // Sprint 2: Geminiも含めて1段階生成に統一
+        error_log( 'Blog Poster: Using unified 1-pass outline generation for ' . $provider );
 
-        $client = $this->get_ai_client();
-        if ( is_wp_error( $client ) ) {
-            return $client;
-        }
+        $config = $this->get_length_config( $this->current_article_length );
+        $h2_min = $config['h2_min'];
+        $h2_max = $config['h2_max'];
+        $h2_count = $config['h2_count'];
+        $outline_max_tokens = $config['outline_max_tokens'];
 
-        $prompt = $this->build_outline_prompt( $topic, $additional_instructions );
-        $model_override = '';
-        $settings = get_option( 'blog_poster_settings', array() );
-        if ( isset( $settings['ai_provider'] ) && 'gemini' === $settings['ai_provider'] && ! empty( $forced_model ) ) {
-            $model_override = $forced_model;
-        }
-
-        try {
-            $response = $client->generate_text( $prompt, array( 'max_tokens' => 8000, 'model' => $model_override ) );
-
-            if ( is_wp_error( $response ) ) {
-                return $response;
+        $max_outline_retries = 2;
+        for ( $outline_attempt = 0; $outline_attempt <= $max_outline_retries; $outline_attempt++ ) {
+            $client = $this->get_ai_client();
+            if ( is_wp_error( $client ) ) {
+                return $client;
             }
 
-            $outline_md = '';
-            if ( isset( $response['data'] ) && is_string( $response['data'] ) ) {
-                $outline_md = $response['data'];
-            } elseif ( isset( $response['content'] ) && is_string( $response['content'] ) ) {
-                $outline_md = $response['content'];
+            $current_additional_instructions = $additional_instructions;
+            if ( $outline_attempt > 0 ) {
+                $current_additional_instructions .= "\n\n【再試行指示】H2見出し数は{$h2_min}〜{$h2_max}個を厳守してください。";
             }
 
-            if ( empty( $outline_md ) ) {
-                error_log( 'Blog Poster: Outline response empty. Raw response: ' . print_r( $response, true ) );
-                return new WP_Error( 'outline_empty', 'アウトラインが空です。' );
-            }
+            $prompt = $this->build_outline_prompt( $topic, $current_additional_instructions );
 
-            // 生成されたアウトラインをログに出力（デバッグ用）
-            error_log( 'Blog Poster: Generated outline (first 500 chars): ' . substr( $outline_md, 0, 500 ) );
-
-            // YAML frontmatterとセクション構造を解析
-            $parsed = $this->parse_markdown_frontmatter( $outline_md );
-            $sections = isset( $parsed['sections'] ) ? $parsed['sections'] : array();
-            $section_count = count( $sections );
-
-            if ( empty( $sections ) ) {
-                error_log( 'Blog Poster: No sections parsed from outline. Outline MD head: ' . substr( $outline_md, 0, 200 ) );
-                return new WP_Error( 'outline_no_sections', 'アウトラインからセクションを抽出できませんでした。' );
-            }
-
-            if ( $section_count < 5 || $section_count > 7 ) {
-                error_log( 'Blog Poster: Outline section count out of range: ' . $section_count );
-                error_log( 'Blog Poster: Full outline MD: ' . $outline_md );
-                return new WP_Error( 'outline_section_count', 'アウトラインのH2セクション数が不足しています。実際: ' . $section_count . '個（必要: 5-7個）' );
-            }
-
-            return array(
-                'success' => true,
-                'outline_md' => $outline_md,
-                'meta' => $parsed['meta'],
-                'sections' => $sections,
-            );
-
-        } catch ( Exception $e ) {
-            error_log( 'Blog Poster: Outline generation error: ' . $e->getMessage() );
-            return new WP_Error( 'outline_error', $e->getMessage() );
-        }
-    }
-
-    /**
-     * Gemini専用: Step1 - セクションタイトルのみ生成
-     *
-     * @param string $topic トピック
-     * @param string $additional_instructions 追加指示
-     * @return array|WP_Error ['success' => true, 'titles' => array]
-     */
-    private function generate_outline_step1_gemini( $topic, $additional_instructions = '' ) {
-        $client = $this->get_ai_client();
-        if ( is_wp_error( $client ) ) {
-            return $client;
-        }
-
-        $additional_text = ! empty( $additional_instructions ) ? "\n追加指示: {$additional_instructions}" : '';
-
-        $prompt = "以下のトピックについて、ブログ記事のセクション見出し（H2）を5-7個考えてください。
-
-トピック: {$topic}{$additional_text}
-
-【重要な制約】
-1. セクション見出しは必ず5個以上7個以下
-2. 各見出しは読者の課題解決を意識
-3. 論理的な流れを持つ構成
-
-出力形式（番号付きリストのみ）:
-1. セクション1のタイトル
-2. セクション2のタイトル
-3. セクション3のタイトル
-4. セクション4のタイトル
-5. セクション5のタイトル
-6. セクション6のタイトル（任意）
-7. セクション7のタイトル（任意）
-
-番号付きリストのみを出力してください。説明文は不要です。";
-
-        try {
-            $response = $client->generate_text( $prompt, array( 'max_tokens' => 2000 ) );
-
-            if ( is_wp_error( $response ) ) {
-                return $response;
-            }
-
-            $content = '';
-            if ( isset( $response['data'] ) && is_string( $response['data'] ) ) {
-                $content = $response['data'];
-            } elseif ( isset( $response['content'] ) && is_string( $response['content'] ) ) {
-                $content = $response['content'];
-            }
-
-            if ( empty( $content ) ) {
-                error_log( 'Blog Poster: Step1 response empty' );
-                return new WP_Error( 'step1_empty', 'セクションタイトルの生成に失敗しました。' );
-            }
-
-            // 番号付きリストからタイトルを抽出
-            $titles = array();
-            $lines = explode( "\n", $content );
-            foreach ( $lines as $line ) {
-                $line = trim( $line );
-                // "1. タイトル" または "1) タイトル" 形式を抽出
-                if ( preg_match( '/^\d+[\.\)]\s+(.+)$/', $line, $matches ) ) {
-                    $titles[] = trim( $matches[1] );
+            // RAG: inject related content context
+            $eff_settings = Blog_Poster_Settings::get_settings();
+            $rag_enabled  = ! empty( $eff_settings['rag_enabled'] );
+            if ( $rag_enabled ) {
+                $retriever = new Blog_Poster_Content_Retriever();
+                $related   = $retriever->search_related( $topic, 5 );
+                if ( ! empty( $related ) ) {
+                    $prompt .= "\n\n" . $retriever->format_as_context( $related );
+                    $prompt .= "\n\n上記の既存コンテンツに適切な内部リンクを2〜3件、本文中に自然に挿入してください。リンク形式: [アンカーテキスト](URL)";
                 }
             }
-
-            $count = count( $titles );
-            if ( $count < 5 || $count > 7 ) {
-                error_log( 'Blog Poster: Step1 section count out of range: ' . $count );
-                return new WP_Error( 'step1_count', 'セクション数が不足しています。実際: ' . $count . '個（必要: 5-7個）' );
+            $model_override = '';
+            if ( isset( $settings['ai_provider'] ) && 'gemini' === $settings['ai_provider'] && ! empty( $forced_model ) ) {
+                $model_override = $forced_model;
             }
 
-            error_log( 'Blog Poster: Step1 generated ' . $count . ' section titles' );
+            try {
+            $response = $client->generate_text( $prompt, array( 'max_tokens' => $outline_max_tokens, 'model' => $model_override ) );
 
-            return array(
-                'success' => true,
-                'titles' => $titles,
-            );
+                if ( is_wp_error( $response ) ) {
+                    return $response;
+                }
+                $api_error = $this->response_to_wp_error( $response, 'outline_api_error' );
+                if ( $api_error ) {
+                    return $api_error;
+                }
 
-        } catch ( Exception $e ) {
-            error_log( 'Blog Poster: Step1 error: ' . $e->getMessage() );
-            return new WP_Error( 'step1_error', $e->getMessage() );
+                if ( isset( $response['success'] ) && false === $response['success'] ) {
+                    $error_msg = isset( $response['error'] ) ? $response['error'] : 'APIエラーが発生しました。';
+                    error_log( 'Blog Poster: API error response: ' . $error_msg );
+                    return new WP_Error( 'api_error', $error_msg );
+                }
+
+                $outline_md = method_exists( $client, 'get_text_content' ) ? $client->get_text_content( $response ) : '';
+
+                if ( empty( $outline_md ) ) {
+                    error_log(
+                        'Blog Poster: Outline response empty. Response keys: '
+                        . wp_json_encode( array_keys( $response ), JSON_UNESCAPED_UNICODE )
+                        . ' | data type: '
+                        . gettype( isset( $response['data'] ) ? $response['data'] : null )
+                    );
+                    return new WP_Error( 'outline_empty', 'アウトラインが空です。' );
+                }
+
+                error_log( 'Blog Poster: Generated outline (first 500 chars): ' . substr( $outline_md, 0, 500 ) );
+
+                $parsed = $this->parse_markdown_frontmatter( $outline_md );
+                $sections = isset( $parsed['sections'] ) ? $parsed['sections'] : array();
+                $section_count = count( $sections );
+
+                if ( empty( $sections ) ) {
+                    error_log( 'Blog Poster: No sections parsed from outline. Outline MD head: ' . substr( $outline_md, 0, 200 ) );
+                    return new WP_Error( 'outline_no_sections', 'アウトラインからセクションを抽出できませんでした。' );
+                }
+
+                if ( $section_count >= $h2_min && $section_count <= $h2_max ) {
+                    error_log( 'Blog Poster: Outline section count validated: ' . $section_count . ' (within ' . $h2_min . '-' . $h2_max . ')' );
+                    return array(
+                        'success' => true,
+                        'outline_md' => $outline_md,
+                        'meta' => $parsed['meta'],
+                        'sections' => $sections,
+                    );
+                }
+
+                error_log( 'Blog Poster: Outline section count out of range: ' . $section_count . ' (expected: ' . $h2_min . '-' . $h2_max . '), attempt: ' . $outline_attempt . '/' . $max_outline_retries );
+                error_log( 'Blog Poster: Full outline MD: ' . $outline_md );
+
+                if ( $outline_attempt < $max_outline_retries ) {
+                    continue;
+                }
+
+                return new WP_Error( 'outline_section_count', 'アウトラインのH2セクション数が不足しています。実際: ' . $section_count . '個（必要: ' . $h2_count . '個）' );
+
+            } catch ( Exception $e ) {
+                error_log( 'Blog Poster: Outline generation error: ' . $e->getMessage() );
+                return new WP_Error( 'outline_error', $e->getMessage() );
+            }
         }
-    }
 
-    /**
-     * Gemini専用: Step2 - セクションタイトルから詳細構造を生成
-     *
-     * @param string $topic トピック
-     * @param array $section_titles セクションタイトル配列
-     * @param string $additional_instructions 追加指示
-     * @return array|WP_Error ['success' => true, 'outline_md' => string, ...]
-     */
-    private function generate_outline_step2_gemini( $topic, $section_titles, $additional_instructions = '' ) {
-        $client = $this->get_ai_client();
-        if ( is_wp_error( $client ) ) {
-            return $client;
-        }
-
-        $additional_text = ! empty( $additional_instructions ) ? "\n追加指示: {$additional_instructions}" : '';
-
-        // セクションタイトルをリスト化
-        $titles_list = '';
-        foreach ( $section_titles as $idx => $title ) {
-            $num = $idx + 1;
-            $titles_list .= "{$num}. {$title}\n";
-        }
-
-        $prompt = "以下のトピックとセクション構成に基づいて、詳細なアウトラインを作成してください。
-
-トピック: {$topic}{$additional_text}
-
-セクション構成:
-{$titles_list}
-
-以下の形式で出力してください:
-
----
-title: \"記事タイトル（SEO最適化、30-60文字）\"
-slug: \"url-friendly-slug\"
-excerpt: \"記事の抜粋（120-160文字）\"
-keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
----
-
-## {section_titles[0]}
-
-### サブセクション1-1
-- キーポイント
-
-### サブセクション1-2
-- キーポイント
-
-## {section_titles[1]}
-
-### サブセクション2-1
-- キーポイント
-
-（以下同様に全セクションを展開）
-
-要件:
-- 各H2の下にH3を2-4個配置
-- 具体例やコード例を含むセクション構成を計画
-
-出力はMarkdown形式のみ。説明文は不要です。";
-
-        // デバッグ: プロンプト先頭500文字をログ出力
-        error_log( 'Blog Poster: Step2 prompt (first 500 chars): ' . substr( $prompt, 0, 500 ) );
-        error_log( 'Blog Poster: Step2 section titles: ' . print_r( $section_titles, true ) );
-
-        try {
-            $response = $client->generate_text( $prompt, array( 'max_tokens' => 8000 ) );
-
-            if ( is_wp_error( $response ) ) {
-                error_log( 'Blog Poster: Step2 WP_Error: ' . $response->get_error_message() );
-                return $response;
-            }
-
-            // デバッグ: レスポンス全体をログ出力
-            error_log( 'Blog Poster: Step2 raw response: ' . print_r( $response, true ) );
-
-            $outline_md = '';
-            if ( isset( $response['data'] ) && is_string( $response['data'] ) ) {
-                $outline_md = $response['data'];
-                error_log( 'Blog Poster: Step2 got data field, length: ' . strlen( $outline_md ) );
-            } elseif ( isset( $response['content'] ) && is_string( $response['content'] ) ) {
-                $outline_md = $response['content'];
-                error_log( 'Blog Poster: Step2 got content field, length: ' . strlen( $outline_md ) );
-            }
-
-            if ( empty( $outline_md ) ) {
-                error_log( 'Blog Poster: Step2 response empty. Response keys: ' . implode( ', ', array_keys( $response ) ) );
-                return new WP_Error( 'step2_empty', 'アウトラインの生成に失敗しました。' );
-            }
-
-            // YAML frontmatterとセクション構造を解析
-            $parsed = $this->parse_markdown_frontmatter( $outline_md );
-            $sections = isset( $parsed['sections'] ) ? $parsed['sections'] : array();
-
-            if ( empty( $sections ) ) {
-                error_log( 'Blog Poster: Step2 no sections parsed' );
-                return new WP_Error( 'step2_no_sections', 'セクションを抽出できませんでした。' );
-            }
-
-            error_log( 'Blog Poster: Step2 completed with ' . count( $sections ) . ' sections' );
-
-            return array(
-                'success' => true,
-                'outline_md' => $outline_md,
-                'meta' => $parsed['meta'],
-                'sections' => $sections,
-            );
-
-        } catch ( Exception $e ) {
-            error_log( 'Blog Poster: Step2 error: ' . $e->getMessage() );
-            return new WP_Error( 'step2_error', $e->getMessage() );
-        }
+        return new WP_Error( 'outline_generation_failed', 'アウトライン生成に失敗しました。' );
     }
 
     /**
@@ -448,20 +533,21 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
         $section = $outline_sections[ $section_index ];
         $prompt = $this->build_section_prompt( $section, $previous_context, $additional_instructions );
 
+        $config = $this->get_length_config( $this->current_article_length );
+        $max_tokens = $config['max_tokens'];
+
         try {
-            $response = $client->generate_text( $prompt, array( 'max_tokens' => 8000 ) );
+            $response = $client->generate_text( $prompt, array( 'max_tokens' => $max_tokens ) );
 
             if ( is_wp_error( $response ) ) {
                 return $response;
             }
-
-            // Claude系は data キーに本文が入るケースがあるため両方を確認
-            $section_md = '';
-            if ( isset( $response['data'] ) && is_string( $response['data'] ) ) {
-                $section_md = $response['data'];
-            } elseif ( isset( $response['content'] ) && is_string( $response['content'] ) ) {
-                $section_md = $response['content'];
+            $api_error = $this->response_to_wp_error( $response, 'section_api_error' );
+            if ( $api_error ) {
+                return $api_error;
             }
+
+            $section_md = method_exists( $client, 'get_text_content' ) ? $client->get_text_content( $response ) : '';
 
             if ( empty( $section_md ) ) {
                 error_log( 'Blog Poster: Section response empty. Raw response: ' . print_r( $response, true ) );
@@ -499,63 +585,61 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
      */
     private function build_outline_prompt( $topic, $additional_instructions = '' ) {
         $additional_text = ! empty( $additional_instructions ) ? "\n追加指示: {$additional_instructions}" : '';
+        $config = $this->get_length_config( $this->current_article_length );
+        $h2_count = $config['h2_count'];
+        $h2_min = $config['h2_min'];
+        $h2_max = $config['h2_max'];
+        $total_chars = $config['total_chars'];
 
-        return "あなたは日本語ブログ記事のプロフェッショナルライターです。
+        // セクション例を動的に生成
+        $section_examples = '';
+        for ( $i = 1; $i <= $h2_min; $i++ ) {
+            $section_examples .= "\n## セクション{$i}のタイトル\n\n### サブセクション{$i}-1\n";
+            if ( $i <= 2 ) {
+                $section_examples .= "\n### サブセクション{$i}-2\n";
+            }
+        }
+        if ( $h2_max > $h2_min ) {
+            $section_examples .= "\n（必要に応じて" . ( $h2_min + 1 ) . "-{$h2_max}個目のセクションも追加）\n";
+        }
+
+        $primary_research_guidance = '';
+        $validator = $this->get_primary_research_validator();
+        if ( $validator && $validator->is_enabled() ) {
+            $primary_research_guidance = "\n【外部参照に関する制約】\n- 参照先は一次情報（公式発表・公的機関・原典資料）を優先する\n- リンク切れ/信頼性が低い情報源は参照候補に含めない";
+        }
+
+        return <<<PROMPT
+
+あなたは日本語ブログ記事のプロフェッショナルライターです。
 
 トピック: {$topic}{$additional_text}
 
-以下の形式で記事のアウトラインを作成してください:
+【記事の目標文字数】約{$total_chars}文字
+
+【事実性の厳守】
+- 事実に基づく内容のみで構成案を作成すること
+- 憶測・推測・断定できない表現に基づく構成は禁止
+{$primary_research_guidance}
+
+【重要】以下の形式で記事のアウトラインを作成してください:
 
 ---
-title: \"記事タイトル（SEO最適化、30-60文字）\"
-slug: \"url-friendly-slug\"
-excerpt: \"記事の抜粋（120-160文字）\"
-keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
+title: "記事タイトル（SEO最適化、30-60文字）"
+slug: "url-friendly-slug"
+excerpt: "記事の抜粋（120-160文字）"
+meta_description: "120〜160文字の記事概要。検索結果に表示されるSEO用テキスト。キーワードを自然に含む"
+keywords: ["キーワード1", "キーワード2", "キーワード3"]
 ---
-
-## セクション1のタイトル
-
-### サブセクション1-1
-- キーポイント
-
-### サブセクション1-2
-- キーポイント
-
-## セクション2のタイトル
-
-### サブセクション2-1
-- キーポイント
-
-## セクション3のタイトル
-
-### サブセクション3-1
-- キーポイント
-
-## セクション4のタイトル
-
-### サブセクション4-1
-- キーポイント
-
-## セクション5のタイトル
-
-### サブセクション5-1
-- キーポイント
-
-（必要に応じて6-7個目のセクションも追加）
-
+{$section_examples}
 【重要な制約】
-1. H2見出し（##）は「必ず5個以上7個以下」作成すること
-2. 5個未満は絶対に禁止
-3. 8個以上も禁止
-4. 各H2の下にH3見出し（###）を2-4個配置
-5. 読者の課題解決を意識した構成
-6. 具体例やコード例を含むセクション構成を計画
+- H2見出し（##）は{$h2_min}〜{$h2_max}個を厳守
+- 各H2の下にH3見出し（###）を2-4個配置
+- 読者の課題解決を意識した構成
+- H3見出しは具体例・手順・チェックリスト等を示唆する短いタイトルにする
 
-数値確認:
-- H2（##）の数: 5個、6個、または7個のいずれか
-- H3（###）の数: 各H2につき2-4個
-
-出力はMarkdown形式のみ。説明文は不要です。H2見出しを5-7個必ず作成してください。";
+出力はMarkdown形式のみ。説明文は不要です。
+PROMPT;
     }
 
     /**
@@ -586,17 +670,31 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
         $context_text = ! empty( $previous_context ) ? "\n前のセクションの内容: {$previous_context}" : '';
         $additional_text = ! empty( $additional_instructions ) ? "\n追加指示: {$additional_instructions}" : '';
 
+        $config = $this->get_length_config( $this->current_article_length );
+        $section_chars = $config['section_chars'];
+        $primary_research_note = '';
+        $validator = $this->get_primary_research_validator();
+        if ( $validator && $validator->is_enabled() ) {
+            $primary_research_note = "- 外部参照が必要な場合は一次情報（公式発表・公的機関・原典資料）を優先し、信頼性の低い情報源を避ける\n- リンクは実在するURLのみ使用する";
+        }
+
         return "以下のセクションの本文を、Markdown形式で詳細に執筆してください。
 
 セクション: ## {$section_title}
 {$subsections_text}{$context_text}{$additional_text}
 
+【事実性の厳守】
+- 事実に基づく内容のみを記述すること
+- 憶測・推測・断定できない表現は禁止
+
 要件:
-- 各サブセクションは300-500文字で詳細に
-- 具体例、手順、コード例を必ず含める
-- コードブロックは\`\`\`言語名\\nコード\\n\`\`\`形式で
+- 各サブセクションは{$section_chars}文字で詳細に
+- 具体例や手順を含める（コード例は必要に応じて）
+- コードは```fence もしくは <CODE lang=\"言語\">... </CODE> のどちらかで囲む（混在させない）
+- コードブロック内に本文や見出しを混入させない
 - 読者が実行できる内容を提供
 - 技術的に正確な情報のみ
+{$primary_research_note}
 
 出力はMarkdown形式のみ。余計な説明不要。セクションタイトル(##)から開始してください。";
     }
@@ -612,13 +710,13 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
         $section_md = ltrim( $section_md );
         $expected_heading = "## {$section_title}";
 
-        if ( preg_match( '/^##\s+.+$/m', $section_md, $matches, PREG_OFFSET_CAPTURE ) ) {
+        if ( preg_match( '/^##\s+.+$/mu', $section_md, $matches, PREG_OFFSET_CAPTURE ) ) {
             $first_heading = trim( $matches[0][0] );
             if ( $first_heading === $expected_heading ) {
                 return $section_md;
             }
             // 最初のH2を置換
-            $section_md = preg_replace( '/^##\s+.+$/m', $expected_heading, $section_md, 1 );
+            $section_md = preg_replace( '/^##\s+.+$/mu', $expected_heading, $section_md, 1 );
             return $section_md;
         }
 
@@ -645,7 +743,7 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
         $sections = array();
 
         // YAML frontmatterを抽出
-        if ( preg_match( '/^---\s*\n(.*?)\n---\s*\n/s', $markdown, $matches ) ) {
+        if ( preg_match( '/^---\s*\n(.*?)\n---\s*\n/su', $markdown, $matches ) ) {
             $frontmatter = $matches[1];
             $body = trim( substr( $markdown, strlen( $matches[0] ) ) );
 
@@ -654,10 +752,10 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
             foreach ( $lines as $line ) {
                 $line = trim( $line );
 
-                // title, slug, excerpt - シングルクォート、ダブルクォート両対応
-                if ( preg_match( '/^(title|slug|excerpt):\s*["\']([^"\']*)["\']/', $line, $m ) ) {
+                // title, slug, excerpt, meta_description - シングルクォート、ダブルクォート両対応
+                if ( preg_match( '/^(title|slug|excerpt|meta_description):\s*["\']([^"\']*)["\']/', $line, $m ) ) {
                     $meta[ $m[1] ] = $m[2];
-                } elseif ( preg_match( '/^(title|slug|excerpt):\s*(.+)$/', $line, $m ) ) {
+                } elseif ( preg_match( '/^(title|slug|excerpt|meta_description):\s*(.+)$/u', $line, $m ) ) {
                     $value = trim( $m[2] );
                     // 前後のクォートを削除（シングル/ダブル両対応）
                     if ( preg_match( '/^["\'](.+)["\']$/', $value, $quote_match ) ) {
@@ -688,14 +786,14 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
             $line = trim( $line );
 
             // H1（タイトル候補）
-            if ( preg_match( '/^#\s+(.+)$/', $line, $m ) ) {
+            if ( preg_match( '/^#\s+(.+)$/u', $line, $m ) ) {
                 if ( $h1_title === null ) {
                     $h1_title = trim( $m[1] );
                 }
             }
 
             // H2セクション
-            elseif ( preg_match( '/^##\s+(.+)$/', $line, $m ) ) {
+            elseif ( preg_match( '/^##\s+(.+)$/u', $line, $m ) ) {
                 if ( $current_section !== null ) {
                     $sections[] = $current_section;
                 }
@@ -707,7 +805,7 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
             }
 
             // H3サブセクション
-            elseif ( preg_match( '/^###\s+(.+)$/', $line, $m ) ) {
+            elseif ( preg_match( '/^###\s+(.+)$/u', $line, $m ) ) {
                 if ( $current_section !== null ) {
                     $current_subsection = array(
                         'title' => trim( $m[1] ),
@@ -718,7 +816,7 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
             }
 
             // リストポイント
-            elseif ( preg_match( '/^-\s+(.+)$/', $line, $m ) ) {
+            elseif ( preg_match( '/^-\s+(.+)$/u', $line, $m ) ) {
                 if ( $current_subsection !== null ) {
                     $last_idx = count( $current_section['subsections'] ) - 1;
                     $current_section['subsections'][ $last_idx ]['points'][] = trim( $m[1] );
@@ -740,9 +838,9 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
                 // 最初のH2セクションをタイトルとして使用（ただしトピックベースの自動生成を推奨）
                 $first_section_title = $sections[0]['title'];
                 // 一般的な構成セクション名を除外（目次、はじめに等）
-                if ( ! preg_match( '/^(目次|はじめに|概要|はじめにあたって|まとめ|結論|参考文献|付録)$/', $first_section_title ) ) {
-                    // トピックに基づいた自動生成フォールバック
-                    error_log( 'Blog Poster: No title found, first section: ' . $first_section_title );
+                if ( ! preg_match( '/^(目次|はじめに|概要|はじめにあたって|まとめ|結論|参考文献|付録)$/u', $first_section_title ) ) {
+                    $meta['title'] = $first_section_title;
+                    error_log( 'Blog Poster: Using first section as title: ' . $first_section_title );
                 }
             }
         }
@@ -806,6 +904,8 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
      * @return string コンテキスト要約（300文字程度）
      */
     public function extract_section_context( $section_md ) {
+        $section_md = $this->normalize_code_tag_to_fence( $section_md );
+
         // 最初の300文字を抽出（見出しやコードブロックを除外）
         $lines = explode( "\n", $section_md );
         $text_lines = array();
@@ -813,7 +913,7 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
 
         foreach ( $lines as $line ) {
             // コードブロック制御
-            if ( preg_match( '/^```/', $line ) ) {
+            if ( preg_match( '/^```/u', $line ) ) {
                 $in_code_block = ! $in_code_block;
                 continue;
             }
@@ -823,7 +923,7 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
             }
 
             // 見出し行をスキップ
-            if ( preg_match( '/^#{2,}/', $line ) ) {
+            if ( preg_match( '/^#{2,}/u', $line ) ) {
                 continue;
             }
 
@@ -850,8 +950,10 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
      * @return string 修正後のMarkdown
      */
     private function validate_section_code_blocks( $markdown ) {
+        $markdown = $this->normalize_code_tag_to_fence( $markdown );
+
         // コードブロックの開始・終了をカウント
-        $open_count = preg_match_all( '/```/m', $markdown, $matches );
+        $open_count = preg_match_all( '/```/mu', $markdown, $matches );
 
         // 奇数個の場合、最後に閉じタグを追加
         if ( $open_count % 2 !== 0 ) {
@@ -861,7 +963,7 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
 
         // セクション末尾のコードブロックチェック
         // 末尾が```で終わる場合、次のセクションとの干渉を防ぐため改行を追加
-        if ( preg_match( '/```\s*$/m', $markdown ) ) {
+        if ( preg_match( '/```\s*$/mu', $markdown ) ) {
             $markdown .= "\n";
         }
 
@@ -875,9 +977,11 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
      * @return string 修正後のMarkdown
      */
     public function postprocess_markdown( $markdown ) {
+        $markdown = $this->normalize_code_tag_to_fence( $markdown );
+
         // 1. コードブロック開始/終了の一致確認（柔軟な正規表現）
-        $open_count = preg_match_all( '/```[\w]*/m', $markdown, $open_matches );
-        $close_count = preg_match_all( '/```\s*$|```\s*\n/m', $markdown, $close_matches );
+        $open_count = preg_match_all( '/```[\w]*/mu', $markdown, $open_matches );
+        $close_count = preg_match_all( '/```\s*$|```\s*\n/mu', $markdown, $close_matches );
 
         error_log( "Blog Poster: Code block check - Open: {$open_count}, Close: {$close_count}" );
 
@@ -891,7 +995,7 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
         }
 
         // 2. 連続する空行を2つまでに制限
-        $markdown = preg_replace( "/\n{4,}/", "\n\n\n", $markdown );
+        $markdown = preg_replace( "/\n{4,}/u", "\n\n\n", $markdown );
 
         // 3. 末尾の余分な空白削除
         $markdown = rtrim( $markdown ) . "\n";
@@ -906,15 +1010,18 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
      * @return string 修正後のMarkdown
      */
     public function normalize_code_blocks_after_generation( $markdown ) {
+        $markdown = $this->normalize_code_tag_to_fence( $markdown );
         $converted = 0;
 
         $markdown = preg_replace_callback(
-            '/```([^\n]*)\R(.*?)\R```/s',
+            '/```([^\n]*)\R(.*?)\R```/su',
             function( $matches ) use ( &$converted ) {
                 $language = trim( $matches[1] );
+                $language_normalized = strtolower( $language );
                 $content  = $matches[2];
 
-                if ( '' !== $language ) {
+                $convertible_language = '' === $language || in_array( $language_normalized, array( 'text', 'plain', 'plaintext' ), true );
+                if ( ! $convertible_language ) {
                     return $matches[0];
                 }
 
@@ -925,6 +1032,19 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
 
                 if ( $this->is_prose_like_code_block( $content ) ) {
                     $converted++;
+                    $lines = preg_split( '/\R/u', $content );
+                    $first_nonempty_index = null;
+                    foreach ( $lines as $index => $line ) {
+                        if ( '' !== trim( $line ) ) {
+                            $first_nonempty_index = $index;
+                            break;
+                        }
+                    }
+                    if ( null !== $first_nonempty_index && 0 === strcasecmp( trim( $lines[ $first_nonempty_index ] ), 'text' ) ) {
+                        unset( $lines[ $first_nonempty_index ] );
+                        $lines = array_values( $lines );
+                    }
+                    $content = implode( "\n", $lines );
                     return rtrim( $content ) . "\n";
                 }
 
@@ -941,6 +1061,32 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
     }
 
     /**
+     * CODEタグをMarkdownフェンスへ正規化
+     *
+     * @param string $markdown Markdown
+     * @return string
+     */
+    private function normalize_code_tag_to_fence( $markdown ) {
+        if ( ! is_string( $markdown ) || '' === $markdown ) {
+            return $markdown;
+        }
+        if ( false === stripos( $markdown, '<CODE' ) ) {
+            return $markdown;
+        }
+
+        return preg_replace_callback(
+            '/<CODE(?:\s+lang="([^"]*)")?>\s*([\s\S]*?)\s*<\/CODE>/iu',
+            function ( $matches ) {
+                $lang = isset( $matches[1] ) ? trim( $matches[1] ) : '';
+                $code = isset( $matches[2] ) ? $matches[2] : '';
+                $fence = '```' . $lang;
+                return "\n{$fence}\n{$code}\n```\n";
+            },
+            $markdown
+        );
+    }
+
+    /**
      * 生成結果が途中で切れている可能性を判定
      *
      * @param string $markdown Markdownテキスト
@@ -952,7 +1098,7 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
             return false;
         }
 
-        $lines = preg_split( '/\R/', $markdown );
+        $lines = preg_split( '/\R/u', $markdown );
         $last_line = '';
         for ( $i = count( $lines ) - 1; $i >= 0; $i-- ) {
             $candidate = trim( $lines[ $i ] );
@@ -966,7 +1112,15 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
             return false;
         }
 
-        if ( preg_match( '/[`>]$/', $last_line ) ) {
+        if ( preg_match( '/^#{1,6}\s+/u', $last_line ) ) {
+            return false;
+        }
+
+        if ( preg_match( '/^(\d+[\.)]\s+|[-*+]\s+)/u', $last_line ) ) {
+            return false;
+        }
+
+        if ( preg_match( '/[`>]$/u', $last_line ) ) {
             return false;
         }
 
@@ -974,10 +1128,20 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
             return false;
         }
 
+        if ( preg_match( '/[」』）】］)]$/u', $last_line ) ) {
+            return false;
+        }
+
+        $tail_text = mb_substr( $last_line, max( 0, mb_strlen( $last_line ) - 40 ) );
+        if ( preg_match( '/[。．.!?！？…]/u', $tail_text ) ) {
+            return false;
+        }
+
         if ( mb_strlen( $last_line ) < 20 ) {
             return false;
         }
 
+        error_log( 'Blog Poster: Truncation suspected. Last line: ' . $last_line );
         return true;
     }
 
@@ -990,15 +1154,15 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
     private function is_prose_like_code_block( $content ) {
         $has_japanese = preg_match( '/[\x{3040}-\x{30FF}\x{4E00}-\x{9FFF}]/u', $content );
         $has_sentence = preg_match( '/[。！？]/u', $content ) || preg_match( '/(です|ます|こと|ため|例えば|なお)/u', $content );
-        $has_heading  = preg_match( '/^\s*#{1,6}\s+/m', $content );
-        $has_list     = preg_match( '/^\s*[-*+]\s+/m', $content );
+        $has_heading  = preg_match( '/^\s*#{1,6}\s+/mu', $content );
+        $has_list     = preg_match( '/^\s*[-*+]\s+/mu', $content );
 
-        $content_for_code = preg_replace( '/\{\{[^}]+\}\}/', '', $content );
+        $content_for_code = preg_replace( '/\{\{[^}]+\}\}/u', '', $content );
         $has_code_tokens = preg_match(
-            '/[{};]|=>|\b(function|const|let|var|class|import|export|return|public|private|protected|if|else|for|while|switch|case|def|echo|print|console|new)\b/',
+            '/[{};]|=>|\b(function|const|let|var|class|import|export|return|public|private|protected|if|else|for|while|switch|case|def|echo|print|console|new)\b/u',
             $content_for_code
         );
-        $has_code_indent = preg_match( '/^\s{4,}\S/m', $content );
+        $has_code_indent = preg_match( '/^\s{4,}\S/mu', $content );
 
         $has_prose_signal = $has_japanese || $has_sentence || $has_heading || $has_list;
         $has_code_signal  = $has_code_tokens || $has_code_indent;
@@ -1063,16 +1227,18 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
      * @return array 検証結果
      */
     public function validate_code_blocks( $content ) {
-        $open_count = preg_match_all( '/```\w*/m', $content, $open_matches );
-        $close_count = preg_match_all( '/```\s*$/m', $content, $close_matches );
+        // すべての ``` フェンス（言語タグ有無問わず）をカウント
+        $fence_count = preg_match_all( '/^`{3,}/mu', $content, $matches );
 
-        if ( $open_count !== $close_count ) {
+        error_log( 'Blog Poster: Code block check - Fence count: ' . $fence_count );
+
+        // 奇数個 = 閉じられていないコードブロックがある
+        if ( $fence_count % 2 !== 0 ) {
             return array(
                 'valid' => false,
                 'message' => sprintf(
-                    __( 'コードブロックの開始と終了が一致しません（開始: %d, 終了: %d）。', 'blog-poster' ),
-                    $open_count,
-                    $close_count
+                    __( 'コードブロックが閉じられていません（フェンス数: %d）。', 'blog-poster' ),
+                    $fence_count
                 ),
             );
         }
@@ -1087,9 +1253,10 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
      * アイキャッチ画像を生成
      *
      * @param string $topic トピック
-     * @return array|WP_Error 画像URLまたはエラー
+     * @param array  $context 生成コンテキスト
+     * @return array|WP_Error 画像データまたはエラー
      */
-    public function generate_featured_image( $topic ) {
+    public function generate_featured_image( $topic, $context = array() ) {
         $client = $this->get_ai_client();
         if ( is_wp_error( $client ) ) {
             return $client;
@@ -1103,18 +1270,76 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
             );
         }
 
-        $prompt = "A professional blog featured image for an article about: {$topic}. Modern, clean, and visually appealing.";
+        $settings = $this->get_effective_settings();
+        $prompt = $this->build_featured_image_prompt( $topic, $context );
+        $image_provider = isset( $settings['ai_provider'] ) ? sanitize_key( $settings['ai_provider'] ) : 'openai';
+        $image_model = '';
+        if ( 'gemini' === $image_provider ) {
+            $image_model = isset( $settings['image_gemini_model'] ) ? sanitize_text_field( $settings['image_gemini_model'] ) : 'gemini-2.5-flash-image';
+        } elseif ( 'openai' === $image_provider ) {
+            $image_model = isset( $settings['image_openai_model'] ) ? sanitize_text_field( $settings['image_openai_model'] ) : 'dall-e-3';
+        }
+        $image_options = array(
+            'size'            => $this->resolve_image_size( $settings, $image_provider ),
+            'quality'         => $this->sanitize_image_quality( $settings['image_quality'] ?? 'standard' ),
+            'response_format' => 'url',
+        );
+        if ( '' !== $image_model ) {
+            $image_options['model'] = $image_model;
+        }
 
         try {
-            $result = $client->generate_image( $prompt );
+            $max_attempts = 3;
+            $last_error = null;
+            $image_data = '';
 
-            if ( is_wp_error( $result ) ) {
-                return $result;
+            for ( $attempt = 1; $attempt <= $max_attempts; $attempt++ ) {
+                $result = $client->generate_image( $prompt, $image_options );
+
+                if ( is_wp_error( $result ) ) {
+                    $last_error = $result;
+                    if ( $attempt < $max_attempts && $this->should_retry_image_generation( $result->get_error_code() ) ) {
+                        usleep( (int) ( 250 * pow( 2, $attempt - 1 ) ) * 1000 );
+                        continue;
+                    }
+                    return $result;
+                }
+
+                $error = $this->response_to_wp_error( $result, 'image_api_error' );
+                if ( $error instanceof WP_Error ) {
+                    $last_error = $error;
+                    if ( $attempt < $max_attempts && $this->should_retry_image_generation( $error->get_error_code() ) ) {
+                        usleep( (int) ( 250 * pow( 2, $attempt - 1 ) ) * 1000 );
+                        continue;
+                    }
+                    return $error;
+                }
+
+                if ( is_array( $result ) && isset( $result['data'] ) && is_string( $result['data'] ) ) {
+                    $image_data = trim( $result['data'] );
+                }
+                if ( '' !== $image_data ) {
+                    break;
+                }
+
+                $last_error = new WP_Error( 'image_empty', __( '画像生成結果が空です。', 'blog-poster' ) );
+                if ( $attempt < $max_attempts ) {
+                    usleep( (int) ( 250 * pow( 2, $attempt - 1 ) ) * 1000 );
+                    continue;
+                }
+            }
+
+            if ( '' === $image_data ) {
+                return $last_error instanceof WP_Error
+                    ? $last_error
+                    : new WP_Error( 'image_empty', __( '画像生成結果が空です。', 'blog-poster' ) );
             }
 
             return array(
                 'success' => true,
-                'url' => $result['url'],
+                'data' => $image_data,
+                'prompt' => $prompt,
+                'options' => $image_options,
             );
 
         } catch ( Exception $e ) {
@@ -1124,28 +1349,365 @@ keywords: [\"キーワード1\", \"キーワード2\", \"キーワード3\"]
     }
 
     /**
-     * 記事のJSON表現を検証（後方互換性）
+     * Build featured image prompt.
      *
-     * @param array $article_json 記事JSON
-     * @return array 検証結果
+     * @param string $topic   Topic.
+     * @param array  $context Prompt context.
+     * @return string
      */
-    public function validate_article_json( $article_json ) {
-        return array(
-            'valid' => false,
-            'message' => __( 'JSON形式は非推奨です。Markdown形式を使用してください。', 'blog-poster' ),
+    private function build_featured_image_prompt( $topic, $context = array() ) {
+        $title = isset( $context['title'] ) ? sanitize_text_field( $context['title'] ) : sanitize_text_field( $topic );
+        $keywords = isset( $context['keywords'] ) && is_array( $context['keywords'] ) ? $context['keywords'] : array();
+        $categories = isset( $context['categories'] ) && is_array( $context['categories'] ) ? $context['categories'] : array();
+        $title = $this->sanitize_featured_image_prompt_value( $title );
+        $keywords = array_filter( array_map( array( $this, 'sanitize_featured_image_prompt_value' ), $keywords ) );
+        $categories = array_filter( array_map( array( $this, 'sanitize_featured_image_prompt_value' ), $categories ) );
+
+        $parts = array();
+        $parts[] = 'Create a professional blog featured image.';
+        $parts[] = 'Topic: ' . $title . '.';
+        if ( ! empty( $keywords ) ) {
+            $parts[] = 'Keywords: ' . implode( ', ', array_slice( $keywords, 0, 6 ) ) . '.';
+        }
+        if ( ! empty( $categories ) ) {
+            $parts[] = 'Category context: ' . implode( ', ', array_slice( $categories, 0, 3 ) ) . '.';
+        }
+        $settings = $this->get_effective_settings();
+        $image_style = $this->sanitize_image_style( $settings['image_style'] ?? 'photo' );
+        if ( 'illustration' === $image_style ) {
+            $parts[] = 'Style direction: editorial illustration, flat/clean, non-photorealistic, modern color palette.';
+        } else {
+            $parts[] = 'Style direction: photorealistic, professional real-world scene, natural lighting.';
+        }
+        $parts[] = 'Style: modern, clean composition, strong focal point, high contrast, no text, no logo, no watermark.';
+        $parts[] = 'Brand safety: avoid any brand names, trademarks, copyrighted characters, product packaging, or identifiable persons.';
+        if ( $this->contains_japanese( $title . ' ' . implode( ' ', $keywords ) ) ) {
+            $parts[] = 'Language context: Japanese input detected. Preserve Japanese cultural context, but do not render any letters in the image.';
+        }
+        $parts[] = 'Output should be suitable for a WordPress article thumbnail.';
+
+        return implode( ' ', $parts );
+    }
+
+    /**
+     * Retry policy for image generation errors.
+     *
+     * @param string $error_code Error code.
+     * @return bool
+     */
+    private function should_retry_image_generation( $error_code ) {
+        $error_code = sanitize_key( (string) $error_code );
+        return in_array(
+            $error_code,
+            array(
+                'api_rate_limit',
+                'api_server_error',
+                'api_error',
+                'http_request_failed',
+                'image_api_error',
+                'image_empty',
+            ),
+            true
         );
     }
 
     /**
-     * 記事JSONをHTMLにレンダリング（後方互換性）
+     * Sanitize user-derived prompt values for safety.
      *
-     * @param array $article_json 記事JSON
-     * @return string|WP_Error HTML
+     * @param string $value Raw value.
+     * @return string
      */
-    public function render_article_json_to_html( $article_json ) {
-        return new WP_Error(
-            'deprecated',
-            __( 'この機能は廃止されました。Markdown形式を使用してください。', 'blog-poster' )
+    private function sanitize_featured_image_prompt_value( $value ) {
+        $value = sanitize_text_field( (string) $value );
+        $value = preg_replace( '/\s+/u', ' ', trim( $value ) );
+
+        $blocked_terms = array(
+            'logo',
+            'watermark',
+            'trademark',
+            'copyright',
+            'brand',
+            'ブランド',
+            'ロゴ',
+            '商標',
+            '著作権',
+        );
+        foreach ( $blocked_terms as $term ) {
+            $value = preg_replace( '/' . preg_quote( $term, '/' ) . '/iu', '', $value );
+        }
+
+        $value = preg_replace( '/\s+/u', ' ', trim( $value ) );
+        if ( '' === $value ) {
+            return 'general business topic';
+        }
+
+        return $value;
+    }
+
+    /**
+     * Check whether text contains Japanese characters.
+     *
+     * @param string $text Input text.
+     * @return bool
+     */
+    private function contains_japanese( $text ) {
+        return 1 === preg_match( '/[\p{Hiragana}\p{Katakana}\p{Han}]/u', (string) $text );
+    }
+
+    /**
+     * Sanitize image size option.
+     *
+     * @param string $size Requested size.
+     * @return string
+     */
+    private function sanitize_image_size( $size ) {
+        $allowed = array( '1024x1024', '1536x1024', '1024x1536', '1792x1024', '1024x1792' );
+        $size = sanitize_text_field( (string) $size );
+        return in_array( $size, $allowed, true ) ? $size : '1024x1024';
+    }
+
+    /**
+     * Resolve provider request size from settings.
+     *
+     * @param array  $settings Settings array.
+     * @param string $provider Provider key.
+     * @return string
+     */
+    private function resolve_image_size( $settings, $provider ) {
+        $ratio = isset( $settings['image_aspect_ratio'] )
+            ? $this->sanitize_image_aspect_ratio( $settings['image_aspect_ratio'] )
+            : $this->legacy_ratio_from_size( $settings['image_size'] ?? '1024x1024' );
+        $provider = sanitize_key( (string) $provider );
+
+        if ( 'gemini' === $provider ) {
+            $map = array(
+                '1:1'  => '1024x1024',
+                '3:2'  => '1536x1024',
+                '4:3'  => '1536x1024',
+                '16:9' => '1792x1024',
+            );
+        } else {
+            $map = array(
+                '1:1'  => '1024x1024',
+                '3:2'  => '1792x1024',
+                '4:3'  => '1024x1024',
+                '16:9' => '1792x1024',
+            );
+        }
+
+        return isset( $map[ $ratio ] ) ? $map[ $ratio ] : '1024x1024';
+    }
+
+    /**
+     * Sanitize aspect ratio option.
+     *
+     * @param string $ratio Requested ratio.
+     * @return string
+     */
+    private function sanitize_image_aspect_ratio( $ratio ) {
+        $ratio = sanitize_text_field( (string) $ratio );
+        return in_array( $ratio, array( '1:1', '3:2', '4:3', '16:9' ), true ) ? $ratio : '1:1';
+    }
+
+    /**
+     * Keep compatibility for old image_size-based settings.
+     *
+     * @param string $size Legacy size.
+     * @return string
+     */
+    private function legacy_ratio_from_size( $size ) {
+        $size = $this->sanitize_image_size( $size );
+        if ( in_array( $size, array( '1536x1024' ), true ) ) {
+            return '3:2';
+        }
+        if ( in_array( $size, array( '1792x1024' ), true ) ) {
+            return '16:9';
+        }
+        return '1:1';
+    }
+
+    /**
+     * Sanitize image style option.
+     *
+     * @param string $style Style key.
+     * @return string
+     */
+    private function sanitize_image_style( $style ) {
+        $style = sanitize_key( (string) $style );
+        return in_array( $style, array( 'photo', 'illustration' ), true ) ? $style : 'photo';
+    }
+
+    /**
+     * Sanitize image quality option.
+     *
+     * @param string $quality Requested quality.
+     * @return string
+     */
+    private function sanitize_image_quality( $quality ) {
+        $quality = sanitize_text_field( (string) $quality );
+        return in_array( $quality, array( 'standard', 'hd' ), true ) ? $quality : 'standard';
+    }
+
+    /**
+     * 品質ゲート指摘を基にMarkdownを自動修正
+     *
+     * @param string $markdown       現在のMarkdown
+     * @param array  $quality_report 品質レポート
+     * @param array  $context        補助コンテキスト
+     * @return array|WP_Error
+     */
+    public function auto_fix_quality_markdown( $markdown, $quality_report = array(), $context = array() ) {
+        $client = $this->get_ai_client();
+        if ( is_wp_error( $client ) ) {
+            return $client;
+        }
+
+        $prompt = $this->build_quality_fix_prompt( $markdown, $quality_report, $context );
+
+        try {
+            $response = $client->generate_text( $prompt, array( 'max_tokens' => 3200 ) );
+            if ( is_wp_error( $response ) ) {
+                return $response;
+            }
+
+            $api_error = $this->response_to_wp_error( $response, 'quality_fix_api_error' );
+            if ( $api_error ) {
+                return $api_error;
+            }
+
+            $fixed_markdown = method_exists( $client, 'get_text_content' ) ? $client->get_text_content( $response ) : '';
+            if ( '' === trim( $fixed_markdown ) ) {
+                return new WP_Error( 'quality_fix_empty', '品質自動修正の結果が空です。' );
+            }
+
+            $fixed_markdown = $this->extract_markdown_block( $fixed_markdown );
+            $fixed_markdown = $this->postprocess_markdown( $fixed_markdown );
+            $fixed_markdown = $this->normalize_code_blocks_after_generation( $fixed_markdown );
+            if ( $this->looks_like_broken_quality_fix_result( $markdown, $fixed_markdown ) ) {
+                return new WP_Error(
+                    'quality_fix_broken_output',
+                    '品質自動修正の出力が不完全です。元本文を維持します。'
+                );
+            }
+
+            return array(
+                'success' => true,
+                'markdown' => $fixed_markdown,
+            );
+        } catch ( Exception $e ) {
+            return new WP_Error( 'quality_fix_error', $e->getMessage() );
+        }
+    }
+
+    /**
+     * 品質修正用プロンプトを構築
+     *
+     * @param string $markdown       Markdown
+     * @param array  $quality_report 品質レポート
+     * @param array  $context        補助コンテキスト
+     * @return string
+     */
+    private function build_quality_fix_prompt( $markdown, $quality_report = array(), $context = array() ) {
+        $topic = isset( $context['topic'] ) ? sanitize_text_field( (string) $context['topic'] ) : '';
+        $title = isset( $context['title'] ) ? sanitize_text_field( (string) $context['title'] ) : '';
+        $issues_text = '';
+        $issues = isset( $quality_report['issues'] ) && is_array( $quality_report['issues'] ) ? $quality_report['issues'] : array();
+        $issues = array_slice( $issues, 0, 8 );
+        if ( ! empty( $issues ) ) {
+            $lines = array();
+            foreach ( $issues as $issue ) {
+                $severity = isset( $issue['severity'] ) ? sanitize_text_field( (string) $issue['severity'] ) : 'medium';
+                $message = isset( $issue['message'] ) ? sanitize_text_field( (string) $issue['message'] ) : '';
+                if ( '' !== $message ) {
+                    $lines[] = sprintf( '- [%s] %s', $severity, $message );
+                }
+            }
+            if ( ! empty( $lines ) ) {
+                $issues_text = implode( "\n", $lines );
+            }
+        }
+        if ( '' === $issues_text ) {
+            $issues_text = '- 見出し切れ、誤字・文字化け、参考URL欠落、年次不整合を優先的に点検';
+        }
+
+        return <<<PROMPT
+あなたは日本語の編集者です。以下のMarkdown記事を最小限の修正で改善してください。
+
+トピック: {$topic}
+タイトル: {$title}
+
+修正対象:
+{$issues_text}
+
+制約:
+- 事実関係を改変しない
+- 段落構成・見出し階層(H2/H3)を維持
+- 壊れた見出しや途中で切れた見出しを自然な日本語に修正
+- 文字化け/不自然語（例: ひっ逼迫ぱく）を自然語へ修正
+- 「参考: ...」行でURL欠落がある場合、本文内に既にURLが無ければ文言のみ整える（捏造URLは追加しない）
+- 出力は本文Markdownのみ（説明不要）
+
+--- ARTICLE START ---
+{$markdown}
+--- ARTICLE END ---
+PROMPT;
+    }
+
+    /**
+     * AI応答からMarkdown本文を抽出
+     *
+     * @param string $text 応答本文
+     * @return string
+     */
+    private function extract_markdown_block( $text ) {
+        $text = trim( (string) $text );
+        // Unwrap only when the whole response is wrapped as markdown/md fence.
+        if ( preg_match( '/^\s*```(?:markdown|md)\s*([\s\S]*?)```\s*$/iu', $text, $matches ) ) {
+            return trim( $matches[1] );
+        }
+        return $text;
+    }
+
+    /**
+     * Detect catastrophic shrink / malformed result from auto-fix.
+     *
+     * @param string $original_markdown Original markdown.
+     * @param string $fixed_markdown    Fixed markdown.
+     * @return bool
+     */
+    private function looks_like_broken_quality_fix_result( $original_markdown, $fixed_markdown ) {
+        $orig_text = trim( wp_strip_all_tags( (string) $original_markdown ) );
+        $fixed_text = trim( wp_strip_all_tags( (string) $fixed_markdown ) );
+        $orig_len = mb_strlen( $orig_text, 'UTF-8' );
+        $fixed_len = mb_strlen( $fixed_text, 'UTF-8' );
+
+        if ( $orig_len >= 1200 && $fixed_len < 400 ) {
+            return true;
+        }
+        if ( $orig_len >= 1200 && $fixed_len > 0 && $fixed_len < (int) floor( $orig_len * 0.35 ) ) {
+            return true;
+        }
+
+        $has_h2 = (bool) preg_match( '/^(##\s+|<h2\b)/imu', (string) $fixed_markdown );
+        $orig_has_h2 = (bool) preg_match( '/^(##\s+|<h2\b)/imu', (string) $original_markdown );
+        if ( $orig_len >= 800 && $orig_has_h2 && ! $has_h2 ) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * @return Blog_Poster_Primary_Research_Validator|null
+     */
+    private function get_primary_research_validator() {
+        if ( ! class_exists( 'Blog_Poster_Primary_Research_Validator' ) ) {
+            return null;
+        }
+
+        return new Blog_Poster_Primary_Research_Validator(
+            $this->get_effective_settings()
         );
     }
+
 }

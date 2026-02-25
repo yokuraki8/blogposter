@@ -18,30 +18,62 @@ $selected_categories = isset( $settings['category_ids'] ) && is_array( $settings
     : array();
 $default_category_id = isset( $settings['default_category_id'] ) ? intval( $settings['default_category_id'] ) : 0;
 $default_models = isset( $settings['default_model'] ) && is_array( $settings['default_model'] ) ? $settings['default_model'] : array();
+$yoast_enabled = ! empty( $settings['enable_yoast_integration'] );
+$subscription_plan = isset( $settings['subscription_plan'] ) ? (string) $settings['subscription_plan'] : 'free';
+$is_paid_plan = 'free' !== $subscription_plan;
+$image_generation_enabled = ! empty( $settings['enable_image_generation'] );
+$image_provider = isset( $settings['image_provider'] ) ? $settings['image_provider'] : 'openai';
+$image_aspect_ratio = isset( $settings['image_aspect_ratio'] ) ? $settings['image_aspect_ratio'] : '1:1';
+$image_style = isset( $settings['image_style'] ) ? $settings['image_style'] : 'photo';
+$image_size = isset( $settings['image_size'] ) ? $settings['image_size'] : '1024x1024';
+$image_quality = isset( $settings['image_quality'] ) ? $settings['image_quality'] : 'standard';
+$primary_research_enabled = ! empty( $settings['primary_research_enabled'] );
+$external_link_existence_check_enabled = ! isset( $settings['external_link_existence_check_enabled'] ) || ! empty( $settings['external_link_existence_check_enabled'] );
+$external_link_credibility_check_enabled = ! isset( $settings['external_link_credibility_check_enabled'] ) || ! empty( $settings['external_link_credibility_check_enabled'] );
+$primary_research_mode = isset( $settings['primary_research_mode'] ) ? $settings['primary_research_mode'] : 'strict';
+$primary_research_threshold = isset( $settings['primary_research_credibility_threshold'] ) ? (int) $settings['primary_research_credibility_threshold'] : 70;
+$primary_research_timeout = isset( $settings['primary_research_timeout_sec'] ) ? (int) $settings['primary_research_timeout_sec'] : 8;
+$primary_research_retry = isset( $settings['primary_research_retry_count'] ) ? (int) $settings['primary_research_retry_count'] : 2;
+$primary_research_allowed_domains = isset( $settings['primary_research_allowed_domains'] ) ? $settings['primary_research_allowed_domains'] : '';
+$primary_research_blocked_domains = isset( $settings['primary_research_blocked_domains'] ) ? $settings['primary_research_blocked_domains'] : '';
+$auto_quality_gate_enabled = ! isset( $settings['auto_quality_gate_enabled'] ) || ! empty( $settings['auto_quality_gate_enabled'] );
+$auto_quality_gate_mode = isset( $settings['auto_quality_gate_mode'] ) ? $settings['auto_quality_gate_mode'] : 'strict';
+$auto_quality_gate_max_fixes = isset( $settings['auto_quality_gate_max_fixes'] ) ? (int) $settings['auto_quality_gate_max_fixes'] : 1;
+$yoast_active = false;
+if ( ! function_exists( 'is_plugin_active' ) ) {
+    require_once ABSPATH . 'wp-admin/includes/plugin.php';
+}
+if ( function_exists( 'is_plugin_active' ) ) {
+    $yoast_active = is_plugin_active( 'wordpress-seo/wp-seo.php' );
+}
 $openai_models = array(
     'gpt-5.2',
     'gpt-5.2-pro',
     'gpt-5-mini',
-    'gpt-4.1',
-    'gpt-4.1-mini',
-    'gpt-4o',
-    'gpt-4o-mini',
-    'gpt-4',
 );
 $gemini_models = array(
     'gemini-2.5-pro',
     'gemini-2.5-flash',
-    'gemini-2.5-flash-lite',
-    'gemini-2.0-flash',
-    'gemini-2.0-flash-lite',
-    'gemini-3-pro',
-    'gemini-3-flash',
 );
 $claude_models = array(
-    'claude-sonnet-4-5-20250929',  // Claude Sonnet 4.5
-    'claude-haiku-4-5-20251001',   // Claude Haiku 4.5
+    'claude-sonnet-4-5-20250929',  // Claude Sonnet 4.5（推奨）
     'claude-opus-4-5-20251101',    // Claude Opus 4.5
 );
+
+$mask_key = function ( $value ) {
+    $value = is_string( $value ) ? $value : '';
+    $len = strlen( $value );
+    if ( $len === 0 ) {
+        return '';
+    }
+    if ( $len <= 8 ) {
+        return str_repeat( '*', $len );
+    }
+    return substr( $value, 0, 4 ) . str_repeat( '*', max( 4, $len - 8 ) ) . substr( $value, -4 );
+};
+$masked_openai = $mask_key( Blog_Poster_Settings::decrypt( isset( $settings['openai_api_key'] ) ? $settings['openai_api_key'] : '' ) );
+$masked_gemini = $mask_key( Blog_Poster_Settings::decrypt( isset( $settings['gemini_api_key'] ) ? $settings['gemini_api_key'] : '' ) );
+$masked_claude = $mask_key( Blog_Poster_Settings::decrypt( isset( $settings['claude_api_key'] ) ? $settings['claude_api_key'] : '' ) );
 ?>
 
 <div class="wrap blog-poster-settings">
@@ -106,7 +138,8 @@ $claude_models = array(
                                 type="password"
                                 name="blog_poster_settings[gemini_api_key]"
                                 id="gemini_api_key"
-                                value="<?php echo esc_attr( isset( $settings['gemini_api_key'] ) ? $settings['gemini_api_key'] : '' ); ?>"
+                                value=""
+                                placeholder="<?php echo esc_attr( $masked_gemini ); ?>"
                                 class="regular-text"
                             />
                             <p class="description">
@@ -161,7 +194,8 @@ $claude_models = array(
                                 type="password"
                                 name="blog_poster_settings[claude_api_key]"
                                 id="claude_api_key"
-                                value="<?php echo esc_attr( isset( $settings['claude_api_key'] ) ? $settings['claude_api_key'] : '' ); ?>"
+                                value=""
+                                placeholder="<?php echo esc_attr( $masked_claude ); ?>"
                                 class="regular-text"
                             />
                             <p class="description">
@@ -211,7 +245,8 @@ $claude_models = array(
                                 type="password"
                                 name="blog_poster_settings[openai_api_key]"
                                 id="openai_api_key"
-                                value="<?php echo esc_attr( isset( $settings['openai_api_key'] ) ? $settings['openai_api_key'] : '' ); ?>"
+                                value=""
+                                placeholder="<?php echo esc_attr( $masked_openai ); ?>"
                                 class="regular-text"
                             />
                             <p class="description">
@@ -236,6 +271,12 @@ $claude_models = array(
                             </select>
                             <p class="description">
                                 <?php _e( 'OpenAIの使用モデルを選択します。', 'blog-poster' ); ?>
+                            </p>
+                            <p>
+                                <button type="button" class="button" id="openai-key-check">
+                                    <?php _e( 'APIキーを確認', 'blog-poster' ); ?>
+                                </button>
+                                <span id="openai-key-check-status" style="margin-left:8px;"></span>
                             </p>
                         </td>
                     </tr>
@@ -295,7 +336,7 @@ $claude_models = array(
                                 type="number"
                                 name="blog_poster_settings[max_tokens]"
                                 id="max_tokens"
-                                value="<?php echo esc_attr( isset( $settings['max_tokens'] ) ? $settings['max_tokens'] : 2000 ); ?>"
+                                value="<?php echo esc_attr( isset( $settings['max_tokens'] ) ? $settings['max_tokens'] : 4000 ); ?>"
                                 min="100"
                                 max="8000"
                                 step="100"
@@ -303,6 +344,34 @@ $claude_models = array(
                             />
                             <p class="description">
                                 <?php _e( '生成する最大トークン数を指定します。', 'blog-poster' ); ?>
+                            </p>
+                        </td>
+                    </tr>
+                </table>
+            </div>
+
+            <!-- SEO連携設定 -->
+            <div class="settings-section">
+                <h2><?php _e( 'SEO連携設定', 'blog-poster' ); ?></h2>
+                <table class="form-table">
+                    <tr>
+                        <th scope="row">
+                            <label for="enable_yoast_integration"><?php _e( 'Yoast SEO連携', 'blog-poster' ); ?></label>
+                        </th>
+                        <td>
+                            <label>
+                                <input
+                                    type="checkbox"
+                                    name="blog_poster_settings[enable_yoast_integration]"
+                                    id="enable_yoast_integration"
+                                    value="1"
+                                    <?php checked( $yoast_enabled, true ); ?>
+                                    <?php disabled( $yoast_active, false ); ?>
+                                />
+                                <?php _e( 'Yoast SEOが有効な場合のみ、メタディスクリプションとタグを自動登録', 'blog-poster' ); ?>
+                            </label>
+                            <p class="description">
+                                <?php echo $yoast_active ? __( 'Yoast SEOは有効です。', 'blog-poster' ) : __( 'Yoast SEOが見つかりません。インストール済みの場合は有効化してください。', 'blog-poster' ); ?>
                             </p>
                         </td>
                     </tr>
@@ -432,6 +501,222 @@ $claude_models = array(
 
         </div>
 
+
+        <!-- RAG機能設定 -->
+        <div class="blog-poster-section">
+            <h2><?php _e( 'RAG機能（関連コンテンツ参照）', 'blog-poster' ); ?></h2>
+            <p class="description"><?php _e( '既存の投稿・固定ページを参照して、内部リンクを自動挿入します。', 'blog-poster' ); ?></p>
+
+            <table class="form-table">
+                <tr>
+                    <th scope="row"><?php _e( 'RAG機能を有効化', 'blog-poster' ); ?></th>
+                    <td>
+                        <label>
+                            <input type="checkbox" name="blog_poster_settings[rag_enabled]" value="1"
+                                <?php checked( '1', $settings['rag_enabled'] ?? '0' ); ?>>
+                            <?php _e( '記事生成時に既存コンテンツを参照する', 'blog-poster' ); ?>
+                        </label>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php _e( '内部リンク最大挿入数', 'blog-poster' ); ?></th>
+                    <td>
+                        <select name="blog_poster_settings[max_internal_links]">
+                            <?php for ( $i = 1; $i <= 5; $i++ ) : ?>
+                                <option value="<?php echo $i; ?>"
+                                    <?php selected( $i, (int) ( $settings['max_internal_links'] ?? 3 ) ); ?>>
+                                    <?php echo $i; ?> 件
+                                </option>
+                            <?php endfor; ?>
+                        </select>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php _e( 'コンテンツインデックス', 'blog-poster' ); ?></th>
+                    <td>
+                        <div id="rag-index-status">
+                            <span class="rag-index-count">--</span> 件のコンテンツがインデックス済み
+                            （最終更新: <span class="rag-last-indexed">--</span>）
+                        </div>
+                        <button type="button" id="rag-reindex-btn" class="button button-secondary" style="margin-top: 8px;">
+                            <?php _e( '今すぐインデックス更新', 'blog-poster' ); ?>
+                        </button>
+                        <span id="rag-reindex-status" style="margin-left: 10px; display: none;"></span>
+                    </td>
+                </tr>
+            </table>
+        </div>
+        <div class="blog-poster-section">
+            <h2><?php _e( '画像生成機能（Featured Image）', 'blog-poster' ); ?></h2>
+            <p class="description"><?php _e( '記事生成後にアイキャッチ画像を自動生成します（有料プラン専用）。', 'blog-poster' ); ?></p>
+
+            <table class="form-table">
+                <tr>
+                    <th scope="row"><?php _e( '画像生成を有効化', 'blog-poster' ); ?></th>
+                    <td>
+                        <label>
+                            <input type="checkbox" name="blog_poster_settings[enable_image_generation]" value="1"
+                                <?php checked( $image_generation_enabled, true ); ?>
+                                <?php disabled( $is_paid_plan, false ); ?>>
+                            <?php _e( '記事投稿時にFeatured Imageを自動生成する', 'blog-poster' ); ?>
+                        </label>
+                        <p class="description">
+                            <?php echo $is_paid_plan ? esc_html__( '有効化すると投稿時に画像生成APIを呼び出します。', 'blog-poster' ) : esc_html__( '無料プランでは利用できません。', 'blog-poster' ); ?>
+                        </p>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php _e( '画像生成プロバイダー', 'blog-poster' ); ?></th>
+                    <td>
+                        <select name="blog_poster_settings[image_provider]">
+                            <option value="openai" <?php selected( $image_provider, 'openai' ); ?>>OpenAI (DALL-E 3)</option>
+                            <option value="gemini" <?php selected( $image_provider, 'gemini' ); ?>>Google Gemini (Imagen 3)</option>
+                        </select>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php _e( 'アスペクト比', 'blog-poster' ); ?></th>
+                    <td>
+                        <select name="blog_poster_settings[image_aspect_ratio]">
+                            <option value="1:1" <?php selected( $image_aspect_ratio, '1:1' ); ?>>1:1</option>
+                            <option value="3:2" <?php selected( $image_aspect_ratio, '3:2' ); ?>>3:2</option>
+                            <option value="4:3" <?php selected( $image_aspect_ratio, '4:3' ); ?>>4:3</option>
+                            <option value="16:9" <?php selected( $image_aspect_ratio, '16:9' ); ?>>16:9</option>
+                        </select>
+                        <p class="description"><?php _e( '最終的なアイキャッチ画像はこの比率にセンタークロップされます。', 'blog-poster' ); ?></p>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php _e( '画像トーン＆マナー', 'blog-poster' ); ?></th>
+                    <td>
+                        <select name="blog_poster_settings[image_style]">
+                            <option value="photo" <?php selected( $image_style, 'photo' ); ?>><?php _e( '実写', 'blog-poster' ); ?></option>
+                            <option value="illustration" <?php selected( $image_style, 'illustration' ); ?>><?php _e( 'イラスト', 'blog-poster' ); ?></option>
+                        </select>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php _e( '画像品質', 'blog-poster' ); ?></th>
+                    <td>
+                        <select name="blog_poster_settings[image_quality]">
+                            <option value="standard" <?php selected( $image_quality, 'standard' ); ?>>standard</option>
+                            <option value="hd" <?php selected( $image_quality, 'hd' ); ?>>hd</option>
+                        </select>
+                    </td>
+                </tr>
+            </table>
+        </div>
+        <div class="blog-poster-section">
+            <h2><?php _e( '一次情報リサーチ（外部リンク検証）', 'blog-poster' ); ?></h2>
+            <p class="description"><?php _e( '外部リンクの実在性と信頼性を検証し、SEOリライトと記事生成の両方に適用します。', 'blog-poster' ); ?></p>
+
+            <table class="form-table">
+                <tr>
+                    <th scope="row"><?php _e( '一次情報リサーチを有効化', 'blog-poster' ); ?></th>
+                    <td>
+                        <label>
+                            <input type="checkbox" name="blog_poster_settings[primary_research_enabled]" value="1" <?php checked( $primary_research_enabled, true ); ?>>
+                            <?php _e( '外部リンクの検証を有効化する', 'blog-poster' ); ?>
+                        </label>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php _e( '実在チェック', 'blog-poster' ); ?></th>
+                    <td>
+                        <label>
+                            <input type="checkbox" name="blog_poster_settings[external_link_existence_check_enabled]" value="1" <?php checked( $external_link_existence_check_enabled, true ); ?>>
+                            <?php _e( 'HEAD/GETでURLが実在するか確認する', 'blog-poster' ); ?>
+                        </label>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php _e( '信頼性チェック', 'blog-poster' ); ?></th>
+                    <td>
+                        <label>
+                            <input type="checkbox" name="blog_poster_settings[external_link_credibility_check_enabled]" value="1" <?php checked( $external_link_credibility_check_enabled, true ); ?>>
+                            <?php _e( 'ドメイン・更新情報・URL構造をもとに信頼性スコアを判定する', 'blog-poster' ); ?>
+                        </label>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php _e( '不合格時のモード', 'blog-poster' ); ?></th>
+                    <td>
+                        <select name="blog_poster_settings[primary_research_mode]">
+                            <option value="strict" <?php selected( $primary_research_mode, 'strict' ); ?>>strict（不合格リンクは除外）</option>
+                            <option value="warn" <?php selected( $primary_research_mode, 'warn' ); ?>>warn（警告のみ）</option>
+                        </select>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php _e( '信頼性スコア閾値', 'blog-poster' ); ?></th>
+                    <td>
+                        <input type="number" min="0" max="100" step="1" class="small-text"
+                            name="blog_poster_settings[primary_research_credibility_threshold]"
+                            value="<?php echo esc_attr( $primary_research_threshold ); ?>">
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php _e( '検証タイムアウト（秒）', 'blog-poster' ); ?></th>
+                    <td>
+                        <input type="number" min="3" max="30" step="1" class="small-text"
+                            name="blog_poster_settings[primary_research_timeout_sec]"
+                            value="<?php echo esc_attr( $primary_research_timeout ); ?>">
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php _e( '再試行回数', 'blog-poster' ); ?></th>
+                    <td>
+                        <input type="number" min="0" max="3" step="1" class="small-text"
+                            name="blog_poster_settings[primary_research_retry_count]"
+                            value="<?php echo esc_attr( $primary_research_retry ); ?>">
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php _e( '許可ドメイン（改行 or カンマ区切り）', 'blog-poster' ); ?></th>
+                    <td>
+                        <textarea name="blog_poster_settings[primary_research_allowed_domains]" rows="3" class="large-text"><?php echo esc_textarea( $primary_research_allowed_domains ); ?></textarea>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php _e( '除外ドメイン（改行 or カンマ区切り）', 'blog-poster' ); ?></th>
+                    <td>
+                        <textarea name="blog_poster_settings[primary_research_blocked_domains]" rows="3" class="large-text"><?php echo esc_textarea( $primary_research_blocked_domains ); ?></textarea>
+                    </td>
+                </tr>
+            </table>
+        </div>
+        <div class="blog-poster-section">
+            <h2><?php _e( '自動品質ゲート', 'blog-poster' ); ?></h2>
+            <p class="description"><?php _e( '生成後に見出し破損・誤記・出典形式を自動検査し、必要なら自動修正します。', 'blog-poster' ); ?></p>
+            <table class="form-table">
+                <tr>
+                    <th scope="row"><?php _e( '自動品質ゲートを有効化', 'blog-poster' ); ?></th>
+                    <td>
+                        <label>
+                            <input type="checkbox" name="blog_poster_settings[auto_quality_gate_enabled]" value="1" <?php checked( $auto_quality_gate_enabled, true ); ?>>
+                            <?php _e( '記事生成後に品質検査と自動修正を実行する', 'blog-poster' ); ?>
+                        </label>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php _e( '判定モード', 'blog-poster' ); ?></th>
+                    <td>
+                        <select name="blog_poster_settings[auto_quality_gate_mode]">
+                            <option value="strict" <?php selected( $auto_quality_gate_mode, 'strict' ); ?>>strict（基準未達は失敗）</option>
+                            <option value="warn" <?php selected( $auto_quality_gate_mode, 'warn' ); ?>>warn（警告のみ）</option>
+                        </select>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php _e( '自動修正の最大回数', 'blog-poster' ); ?></th>
+                    <td>
+                        <input type="number" min="0" max="2" step="1" class="small-text"
+                            name="blog_poster_settings[auto_quality_gate_max_fixes]"
+                            value="<?php echo esc_attr( $auto_quality_gate_max_fixes ); ?>">
+                    </td>
+                </tr>
+            </table>
+        </div>
         <?php submit_button( __( '設定を保存', 'blog-poster' ) ); ?>
     </form>
 </div>
