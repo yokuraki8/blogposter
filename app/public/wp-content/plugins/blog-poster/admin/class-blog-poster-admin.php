@@ -40,7 +40,6 @@ class Blog_Poster_Admin {
         add_action( 'wp_ajax_blog_poster_get_tasks', array( $this, 'ajax_get_tasks' ) );
         add_action( 'wp_ajax_blog_poster_generate_tasks', array( $this, 'ajax_generate_tasks' ) );
         add_action( 'wp_ajax_blog_poster_apply_task', array( $this, 'ajax_apply_task' ) );
-        add_action( 'wp_ajax_blog_poster_batch_apply', array( $this, 'ajax_batch_apply' ) );
         add_action( 'wp_ajax_blog_poster_preview_rewrite', array( $this, 'ajax_preview_rewrite' ) );
         add_action( 'wp_ajax_blog_poster_apply_rewrite', array( $this, 'ajax_apply_rewrite' ) );
 
@@ -290,18 +289,6 @@ class Blog_Poster_Admin {
         wp_send_json_success( array( 'task_id' => $task_id, 'status' => 'completed' ) );
     }
 
-    public function ajax_batch_apply() {
-        check_ajax_referer( 'blog_poster_nonce', 'nonce' );
-        if ( ! current_user_can( 'edit_posts' ) ) {
-            wp_send_json_error( array( 'message' => 'Unauthorized' ) );
-        }
-        $post_id = intval( $_POST['post_id'] ?? 0 );
-        $task_ids = isset( $_POST['task_ids'] ) && is_array( $_POST['task_ids'] ) ? array_map( 'sanitize_text_field', $_POST['task_ids'] ) : array();
-        $manager = new Blog_Poster_Task_Manager();
-        $applied = $manager->batch_apply( $post_id, $task_ids );
-        wp_send_json_success( array( 'applied' => $applied ) );
-    }
-
     public function ajax_preview_rewrite() {
         check_ajax_referer( 'blog_poster_nonce', 'nonce' );
         if ( ! current_user_can( 'edit_posts' ) ) {
@@ -444,6 +431,27 @@ class Blog_Poster_Admin {
 
         // Yoast SEO integration
         $sanitized['enable_yoast_integration'] = isset( $input['enable_yoast_integration'] ) ? (bool) $input['enable_yoast_integration'] : false;
+        $sanitized['enable_image_generation']  = isset( $input['enable_image_generation'] ) ? (bool) $input['enable_image_generation'] : false;
+        $sanitized['image_provider']           = isset( $input['image_provider'] ) ? sanitize_key( $input['image_provider'] ) : 'openai';
+        if ( ! in_array( $sanitized['image_provider'], array( 'openai', 'gemini' ), true ) ) {
+            $sanitized['image_provider'] = 'openai';
+        }
+        $sanitized['image_aspect_ratio'] = isset( $input['image_aspect_ratio'] ) ? sanitize_text_field( $input['image_aspect_ratio'] ) : '1:1';
+        if ( ! in_array( $sanitized['image_aspect_ratio'], array( '1:1', '3:2', '4:3', '16:9' ), true ) ) {
+            $sanitized['image_aspect_ratio'] = '1:1';
+        }
+        $sanitized['image_style'] = isset( $input['image_style'] ) ? sanitize_key( $input['image_style'] ) : 'photo';
+        if ( ! in_array( $sanitized['image_style'], array( 'photo', 'illustration' ), true ) ) {
+            $sanitized['image_style'] = 'photo';
+        }
+        $sanitized['image_size']    = isset( $input['image_size'] ) ? sanitize_text_field( $input['image_size'] ) : '1024x1024';
+        if ( ! in_array( $sanitized['image_size'], array( '1024x1024', '1536x1024', '1024x1536', '1792x1024', '1024x1792' ), true ) ) {
+            $sanitized['image_size'] = '1024x1024';
+        }
+        $sanitized['image_quality'] = isset( $input['image_quality'] ) ? sanitize_text_field( $input['image_quality'] ) : 'standard';
+        if ( ! in_array( $sanitized['image_quality'], array( 'standard', 'hd' ), true ) ) {
+            $sanitized['image_quality'] = 'standard';
+        }
 
         // Default models
         if ( isset( $input['default_model'] ) && is_array( $input['default_model'] ) ) {
@@ -474,6 +482,9 @@ class Blog_Poster_Admin {
         // 既存の設定を維持
         $current_settings = Blog_Poster_Settings::get_settings();
         $sanitized = array_merge( $current_settings, $sanitized );
+        if ( isset( $sanitized['subscription_plan'] ) && 'free' === $sanitized['subscription_plan'] ) {
+            $sanitized['enable_image_generation'] = false;
+        }
 
         return $sanitized;
     }
@@ -687,7 +698,7 @@ class Blog_Poster_Admin {
         error_log( 'Blog Poster: ajax_create_post called' );
 
         $title            = isset( $_POST['title'] ) ? sanitize_text_field( wp_unslash( $_POST['title'] ) ) : '';
-        $slug             = isset( $_POST['slug'] ) ? sanitize_title( wp_unslash( $_POST['slug'] ) ) : '';
+        $slug             = isset( $_POST['slug'] ) ? sanitize_text_field( wp_unslash( $_POST['slug'] ) ) : '';
         $excerpt          = isset( $_POST['excerpt'] ) ? sanitize_textarea_field( wp_unslash( $_POST['excerpt'] ) ) : '';
         // マークダウンの内容はサニタイズせずそのまま取得（後でHTMLに変換してからサニタイズする）
         $content          = isset( $_POST['content'] ) ? wp_unslash( $_POST['content'] ) : '';
@@ -709,7 +720,7 @@ class Blog_Poster_Admin {
 
             global $wpdb;
             $job = $wpdb->get_row( $wpdb->prepare(
-                "SELECT post_id, final_html, final_markdown, final_title, ai_provider, ai_model, temperature FROM {$wpdb->prefix}blog_poster_jobs WHERE id = %d",
+                "SELECT post_id, final_html, final_markdown, final_title, outline_md, ai_provider, ai_model, temperature FROM {$wpdb->prefix}blog_poster_jobs WHERE id = %d",
                 $job_id
             ), ARRAY_A );
 
@@ -741,6 +752,16 @@ class Blog_Poster_Admin {
         if ( empty( $title ) || empty( $html_content ) ) {
             error_log( 'Blog Poster: Empty title or content after job fallback' );
             $send_json( false, array( 'message' => 'ジョブが未完了の可能性があります。完了後に再試行してください。' ) );
+        }
+
+        $keywords = $this->extract_keywords_from_job_record( $job );
+        if ( empty( $keywords ) ) {
+            $keywords = Blog_Poster_SEO_Helper::extract_keywords( $title, $html_content, 8 );
+        }
+        $slug = Blog_Poster_SEO_Helper::normalize_slug( $title, $slug, $keywords );
+        $meta_description = Blog_Poster_SEO_Helper::optimize_meta_description( $meta_description, $keywords, 120, 160 );
+        if ( '' === $meta_description ) {
+            $meta_description = Blog_Poster_SEO_Helper::build_meta_description_from_html( $html_content, $keywords, 120, 160 );
         }
 
         try {
@@ -819,25 +840,6 @@ class Blog_Poster_Admin {
                 }
             }
 
-        // メタディスクリプションを確定（空なら本文から生成）
-        if ( empty( $meta_description ) ) {
-            $meta_description = $this->build_meta_description( $html_content );
-        }
-
-        if ( ! empty( $meta_description ) ) {
-            update_post_meta( $post_id, '_blog_poster_meta_description', $meta_description );
-        }
-
-        // Yoast SEO連携（設定ON + Yoast有効時のみ）
-        $settings = Blog_Poster_Settings::get_settings();
-        $yoast_enabled = ! empty( $settings['enable_yoast_integration'] ) && $this->is_yoast_active();
-
-        if ( $yoast_enabled ) {
-            if ( ! empty( $meta_description ) ) {
-                update_post_meta( $post_id, '_yoast_wpseo_metadesc', $meta_description );
-            }
-        }
-
         // カテゴリ設定
         $settings = Blog_Poster_Settings::get_settings();
         $category_ids = isset( $settings['category_ids'] ) && is_array( $settings['category_ids'] )
@@ -853,6 +855,43 @@ class Blog_Poster_Admin {
             wp_set_post_categories( $post_id, $category_ids, false );
         }
 
+        $category_names = array();
+        if ( ! empty( $category_ids ) ) {
+            foreach ( $category_ids as $cat_id ) {
+                $term = get_term( $cat_id, 'category' );
+                if ( $term && ! is_wp_error( $term ) ) {
+                    $category_names[] = $term->name;
+                }
+            }
+        }
+
+        Blog_Poster_SEO_Helper::apply_post_seo_meta(
+            $post_id,
+            array(
+                'title'            => $title,
+                'slug'             => $slug,
+                'content'          => $html_content,
+                'meta_description' => $meta_description,
+                'keywords'         => $keywords,
+                'canonical'        => get_permalink( $post_id ),
+            )
+        );
+
+        $image_result = Blog_Poster_Image_Helper::maybe_generate_and_attach_featured_image(
+            $post_id,
+            $title,
+            array(
+                'title'      => $title,
+                'keywords'   => $keywords,
+                'categories' => $category_names,
+            ),
+            $settings
+        );
+        if ( ! empty( $image_result['error'] ) ) {
+            error_log( 'Blog Poster: featured image generation failed. post_id=' . $post_id . ' error=' . $image_result['error'] );
+        }
+
+        $yoast_enabled = Blog_Poster_SEO_Helper::is_yoast_enabled();
         if ( $yoast_enabled && $job_id > 0 ) {
             $tags = $this->extract_tags_from_job( $job_id );
             if ( ! empty( $tags ) ) {
@@ -860,12 +899,8 @@ class Blog_Poster_Admin {
             }
         }
 
-        // 投稿作成後にSEO分析を自動実行
-        $analyzer = new Blog_Poster_SEO_Analyzer();
-        $analysis = $analyzer->analyze_comprehensive( $post_id );
-        if ( ! empty( $analysis ) ) {
-            $analyzer->save_analysis( $post_id, $analysis );
-        }
+        // 投稿作成後にSEO最適化を1回実行して分析結果を保存
+        Blog_Poster_SEO_Helper::optimize_post_for_score( $post_id );
 
             error_log( 'Blog Poster: Post created successfully with ID: ' . $post_id );
 
@@ -890,11 +925,10 @@ class Blog_Poster_Admin {
      * @return bool
      */
     private function is_yoast_active() {
-        if ( ! function_exists( 'is_plugin_active' ) ) {
-            require_once ABSPATH . 'wp-admin/includes/plugin.php';
+        if ( class_exists( 'Blog_Poster_SEO_Helper' ) ) {
+            return Blog_Poster_SEO_Helper::is_yoast_active();
         }
-
-        return function_exists( 'is_plugin_active' ) && is_plugin_active( 'wordpress-seo/wp-seo.php' );
+        return false;
     }
 
     private function acquire_db_lock( $lock_name, $timeout = 10 ) {
@@ -930,19 +964,25 @@ class Blog_Poster_Admin {
             return;
         }
 
-        $settings = Blog_Poster_Settings::get_settings();
-        $yoast_enabled = ! empty( $settings['enable_yoast_integration'] ) && $this->is_yoast_active();
+        $yoast_enabled = Blog_Poster_SEO_Helper::is_yoast_enabled();
         if ( ! $yoast_enabled ) {
             return;
         }
 
         $meta = get_post_meta( $post_id, '_blog_poster_meta_description', true );
         if ( empty( $meta ) ) {
-            return;
+            $meta = Blog_Poster_SEO_Helper::build_meta_description_from_html( $post->post_content, array(), 120, 160 );
+            update_post_meta( $post_id, '_blog_poster_meta_description', $meta );
         }
 
         $meta = sanitize_text_field( $meta );
         update_post_meta( $post_id, '_yoast_wpseo_metadesc', $meta );
+        $focus_keyword = sanitize_text_field( get_post_meta( $post_id, '_blog_poster_focus_keyword', true ) );
+        if ( '' !== $focus_keyword ) {
+            update_post_meta( $post_id, '_yoast_wpseo_focuskw', $focus_keyword );
+        }
+        update_post_meta( $post_id, '_yoast_wpseo_title', sanitize_text_field( get_the_title( $post_id ) ) );
+        update_post_meta( $post_id, '_yoast_wpseo_canonical', esc_url_raw( get_permalink( $post_id ) ) );
     }
 
     private function resolve_rewrite_task_type( $task ) {
@@ -963,6 +1003,12 @@ class Blog_Poster_Admin {
         }
         if ( false !== mb_strpos( $title, 'ディスクリプション' ) ) {
             return 'meta_description';
+        }
+        if ( false !== mb_strpos( $title, '内部リンク' ) ) {
+            return 'internal_links';
+        }
+        if ( false !== mb_strpos( $title, '外部リンク' ) ) {
+            return 'external_links';
         }
 
         return 'unsupported';
@@ -1021,19 +1067,36 @@ class Blog_Poster_Admin {
      * @return string
      */
     private function build_meta_description( $html_content, $max_length = 160 ) {
-        $text = wp_strip_all_tags( $html_content );
-        $text = preg_replace( '/\s+/u', ' ', $text );
-        $text = trim( $text );
+        return Blog_Poster_SEO_Helper::build_meta_description_from_html( $html_content, array(), 120, max( 120, intval( $max_length ) ) );
+    }
 
-        if ( '' === $text ) {
-            return '';
+    /**
+     * Extract keyword list from job outline frontmatter.
+     *
+     * @param array|null $job Job record.
+     * @return array
+     */
+    private function extract_keywords_from_job_record( $job ) {
+        if ( empty( $job ) || empty( $job['outline_md'] ) ) {
+            return array();
         }
 
-        if ( mb_strlen( $text ) > $max_length ) {
-            $text = mb_substr( $text, 0, $max_length );
+        $generator = new Blog_Poster_Generator();
+        $parsed = $generator->parse_markdown_frontmatter( $job['outline_md'] );
+        $keywords = isset( $parsed['meta']['keywords'] ) ? $parsed['meta']['keywords'] : array();
+        if ( ! is_array( $keywords ) ) {
+            return array();
         }
 
-        return $text;
+        $result = array();
+        foreach ( $keywords as $keyword ) {
+            $keyword = sanitize_text_field( (string) $keyword );
+            if ( '' !== $keyword ) {
+                $result[] = $keyword;
+            }
+        }
+
+        return array_values( array_unique( $result ) );
     }
 
     /**

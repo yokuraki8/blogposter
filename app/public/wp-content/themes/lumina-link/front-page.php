@@ -202,6 +202,105 @@ get_header();
         </div>
     </section>
 
+    <section id="posts" class="py-20 bg-white">
+        <div class="container mx-auto px-4 md:px-6">
+            <div class="flex flex-col md:flex-row md:items-end md:justify-between gap-6 mb-10">
+                <div>
+                    <span class="text-lumina-orange font-bold tracking-widest uppercase text-sm">Posts</span>
+                    <h2 class="text-3xl md:text-4xl font-bold text-lumina-navy mt-2">最新の投稿</h2>
+                </div>
+                <?php
+                $posts_page_id  = (int) get_option( 'page_for_posts' );
+                $posts_page_url = $posts_page_id ? get_permalink( $posts_page_id ) : '';
+                ?>
+                <?php if ( $posts_page_url ) : ?>
+                    <a href="<?php echo esc_url( $posts_page_url ); ?>" class="text-sm font-bold text-lumina-navy hover:text-lumina-orange transition-colors">
+                        すべての投稿を見る <i class="fa-solid fa-angle-right"></i>
+                    </a>
+                <?php endif; ?>
+            </div>
+
+            <?php
+            $latest_posts = new WP_Query(
+                array(
+                    'post_type'           => 'post',
+                    'post_status'         => 'publish',
+                    'posts_per_page'      => 6,
+                    'ignore_sticky_posts' => true,
+                )
+            );
+            ?>
+
+            <?php if ( $latest_posts->have_posts() ) : ?>
+                <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    <?php while ( $latest_posts->have_posts() ) : ?>
+                        <?php $latest_posts->the_post(); ?>
+                        <?php
+                        $post_content_raw   = get_post_field( 'post_content', get_the_ID() );
+                        $post_content_plain = wp_strip_all_tags( strip_shortcodes( $post_content_raw ) );
+                        if ( function_exists( 'mb_substr' ) ) {
+                            $post_content_excerpt = mb_substr( $post_content_plain, 0, 200 );
+                            if ( mb_strlen( $post_content_plain ) > 200 ) {
+                                $post_content_excerpt .= '…';
+                            }
+                        } else {
+                            $post_content_excerpt = substr( $post_content_plain, 0, 200 );
+                            if ( strlen( $post_content_plain ) > 200 ) {
+                                $post_content_excerpt .= '…';
+                            }
+                        }
+                        $post_thumbnail_html = get_the_post_thumbnail(
+                            get_the_ID(),
+                            'medium_large',
+                            array(
+                                'class'   => 'w-full h-auto block transition-transform duration-300 group-hover:scale-105',
+                                'loading' => 'lazy',
+                            )
+                        );
+                        $post_thumbnail_fallback_url = '';
+                        if ( ! $post_thumbnail_html ) {
+                            $post_thumbnail_fallback_url = (string) get_post_meta( get_the_ID(), '_blog_poster_og_image', true );
+                        }
+                        ?>
+                        <article class="group bg-white border border-gray-100 rounded-sm shadow-sm p-6 hover:shadow-md transition-shadow">
+                            <?php if ( $post_thumbnail_html ) : ?>
+                                <a href="<?php the_permalink(); ?>" class="block mb-5 overflow-hidden rounded-sm bg-gray-100" style="aspect-ratio: 16 / 9;">
+                                    <?php echo $post_thumbnail_html; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped ?>
+                                </a>
+                            <?php elseif ( '' !== $post_thumbnail_fallback_url ) : ?>
+                                <a href="<?php the_permalink(); ?>" class="block mb-5 overflow-hidden rounded-sm bg-gray-100" style="aspect-ratio: 16 / 9;">
+                                    <img src="<?php echo esc_url( $post_thumbnail_fallback_url ); ?>" alt="<?php echo esc_attr( get_the_title() ); ?>" class="w-full h-auto block transition-transform duration-300 group-hover:scale-105" loading="lazy">
+                                </a>
+                            <?php else : ?>
+                                <a href="<?php the_permalink(); ?>" class="block mb-5 overflow-hidden rounded-sm bg-gray-100" style="aspect-ratio: 16 / 9;">
+                                    <div class="w-full h-full flex items-center justify-center bg-gradient-to-br from-slate-100 to-slate-200 text-slate-500">
+                                        <span class="text-xs tracking-widest uppercase">No Image</span>
+                                    </div>
+                                </a>
+                            <?php endif; ?>
+                            <time datetime="<?php echo esc_attr( get_the_date( 'c' ) ); ?>" class="text-xs text-gray-500 font-roboto">
+                                <?php echo esc_html( get_the_date( 'Y.m.d' ) ); ?>
+                            </time>
+                            <h3 class="mt-3 text-xl font-bold text-lumina-navy leading-snug">
+                                <a href="<?php the_permalink(); ?>" class="hover:text-lumina-orange transition-colors">
+                                    <?php the_title(); ?>
+                                </a>
+                            </h3>
+                            <p class="mt-4 text-sm text-gray-600 leading-relaxed">
+                                <?php echo esc_html( $post_content_excerpt ); ?>
+                            </p>
+                        </article>
+                    <?php endwhile; ?>
+                </div>
+                <?php wp_reset_postdata(); ?>
+            <?php else : ?>
+                <div class="bg-lumina-bg border border-gray-100 rounded-sm p-8 text-center">
+                    <p class="text-gray-600">表示できる投稿がまだありません。</p>
+                </div>
+            <?php endif; ?>
+        </div>
+    </section>
+
     <section id="contact" class="py-20 bg-lumina-navy relative overflow-hidden">
         <div class="absolute inset-0 opacity-10" style="background-image: repeating-linear-gradient(45deg, #fff 0, #fff 1px, transparent 0, transparent 50%); background-size: 10px 10px;"></div>
 

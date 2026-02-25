@@ -106,6 +106,7 @@ class Blog_Poster_SEO_Analyzer {
         $meta_status = $this->length_status( $meta_len, 120, 160 );
 
         $keywords = $this->get_primary_keyword( $post_id );
+        $secondary_keywords = $this->get_secondary_keywords( $post_id );
         $keyword_info = array(
             'keyword' => $keywords,
             'density' => 0,
@@ -127,10 +128,10 @@ class Blog_Poster_SEO_Analyzer {
         $links = $this->count_links( $content );
 
         $score = 100;
-        if ( 'too_short' === $title_status || 'too_long' === $title_status ) {
+        if ( in_array( $title_status, array( 'missing', 'too_short', 'too_long' ), true ) ) {
             $score -= 10;
         }
-        if ( 'too_short' === $meta_status || 'too_long' === $meta_status ) {
+        if ( in_array( $meta_status, array( 'missing', 'too_short', 'too_long' ), true ) ) {
             $score -= 10;
         }
         if ( $links['internal'] < 3 ) {
@@ -155,7 +156,7 @@ class Blog_Poster_SEO_Analyzer {
             ),
             'keywords' => array(
                 'primary' => $keyword_info,
-                'secondary' => array(),
+                'secondary' => $secondary_keywords,
             ),
             'internal_links' => array(
                 'count' => $links['internal'],
@@ -293,6 +294,27 @@ class Blog_Poster_SEO_Analyzer {
         return isset( $parts[0] ) ? $parts[0] : '';
     }
 
+    private function get_secondary_keywords( $post_id ) {
+        $raw = get_post_meta( $post_id, '_blog_poster_keyword_suggestions', true );
+        if ( ! is_array( $raw ) ) {
+            return array();
+        }
+
+        $secondary = array();
+        foreach ( $raw as $item ) {
+            if ( ! is_array( $item ) || empty( $item['keyword'] ) ) {
+                continue;
+            }
+            $secondary[] = array(
+                'keyword' => sanitize_text_field( $item['keyword'] ),
+                'score'   => isset( $item['score'] ) ? intval( $item['score'] ) : 0,
+                'recommended_placement' => isset( $item['recommended_placement'] ) ? sanitize_text_field( $item['recommended_placement'] ) : 'body',
+            );
+        }
+
+        return array_slice( $secondary, 0, 5 );
+    }
+
     private function count_occurrences( $content, $keyword ) {
         $text = wp_strip_all_tags( $content );
         return substr_count( $text, $keyword );
@@ -393,6 +415,9 @@ class Blog_Poster_SEO_Analyzer {
         if ( $seo['external_links']['count'] < $seo['external_links']['target_min'] ) {
             $recs[] = $this->make_rec( $id++, 3, 'seo', 'external_links', '外部リンクを追加', '参考文献として外部リンクを追加してください', 'medium' );
         }
+        if ( empty( $seo['keywords']['primary']['keyword'] ) ) {
+            $recs[] = $this->make_rec( $id++, 2, 'seo', 'keyword_focus', 'フォーカスキーワードを設定', '主要キーワードを設定し、タイトルと見出しに自然に含めてください', 'medium' );
+        }
         if ( $engagement['cta']['count'] === 0 ) {
             $recs[] = $this->make_rec( $id++, 3, 'engagement', 'missing_cta', 'CTAを追加', '記事内に行動喚起を追加してください', 'medium' );
         }
@@ -412,4 +437,3 @@ class Blog_Poster_SEO_Analyzer {
         );
     }
 }
-

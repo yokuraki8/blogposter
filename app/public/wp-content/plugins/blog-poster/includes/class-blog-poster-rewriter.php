@@ -11,6 +11,13 @@ if ( ! defined( 'ABSPATH' ) ) {
 
 class Blog_Poster_Rewriter {
 
+    /**
+     * External URL validation cache.
+     *
+     * @var array<string,bool>
+     */
+    private $external_url_validation_cache = array();
+
     public function generate_suggestion( $content, $task_type, $context = array() ) {
         $prompt = $this->build_prompt( $task_type, $context );
         if ( '' === $prompt ) {
@@ -31,7 +38,7 @@ class Blog_Poster_Rewriter {
             );
         }
 
-        $text = $this->sanitize_generated_text( $response );
+        $text = $this->sanitize_generated_text( $response, $task_type );
 
         return array(
             'content' => $text,
@@ -75,6 +82,18 @@ class Blog_Poster_Rewriter {
 
         if ( empty( $suggestion['content'] ) ) {
             return new WP_Error( 'rewrite_failed', $suggestion['reason'] );
+        }
+
+        if ( in_array( $task_type, array( 'internal_links', 'external_links' ), true ) ) {
+            $entries = $this->parse_link_suggestions( $suggestion['content'], $task_type );
+            if ( empty( $entries ) ) {
+                $message = 'リンク提案の形式が不正です。';
+                if ( 'external_links' === $task_type ) {
+                    $message = '有効な外部リンクが見つかりませんでした（404ページは除外されます）。';
+                }
+                return new WP_Error( 'invalid_links', $message );
+            }
+            $suggestion['content'] = $this->build_link_suggestions_text( $entries );
         }
 
         return array(
@@ -145,6 +164,23 @@ class Blog_Poster_Rewriter {
                     $updated_meta = true;
                 }
                 break;
+            case 'internal_links':
+            case 'external_links':
+                $entries = $this->parse_link_suggestions( $content, $task_type );
+                if ( empty( $entries ) ) {
+                    $message = 'リンク提案の形式が不正です。';
+                    if ( 'external_links' === $task_type ) {
+                        $message = '有効な外部リンクが見つかりませんでした（404ページは除外されます）。';
+                    }
+                    return new WP_Error( 'invalid_links', $message );
+                }
+                $updated = $this->append_link_list_to_content( $new_content, $task_type, $entries );
+                if ( $updated === $new_content ) {
+                    return new WP_Error( 'duplicate_links', '追加可能な新しいリンクが見つかりませんでした。' );
+                }
+                $new_content = $updated;
+                $updated_content = $new_content;
+                break;
         }
 
         if ( ! $updated_meta ) {
@@ -199,6 +235,12 @@ class Blog_Poster_Rewriter {
         if ( false !== mb_strpos( $title, 'ディスクリプション' ) ) {
             return 'meta_description';
         }
+        if ( false !== mb_strpos( $title, '内部リンク' ) ) {
+            return 'internal_links';
+        }
+        if ( false !== mb_strpos( $title, '外部リンク' ) ) {
+            return 'external_links';
+        }
 
         return 'unsupported';
     }
@@ -214,11 +256,13 @@ class Blog_Poster_Rewriter {
         $headings = $this->extract_h2_titles( $content );
 
         return array(
+            'post_id' => (int) $post_id,
             'title' => $title,
             'excerpt' => $excerpt,
             'content' => $content,
             'summary' => $summary,
             'headings' => $headings,
+            'internal_candidates' => $this->get_internal_link_candidates( $post_id, 8 ),
         );
     }
 
@@ -227,6 +271,9 @@ class Blog_Poster_Rewriter {
         $excerpt = $context['excerpt'] ?? '';
         $summary = $context['summary'] ?? '';
         $headings = isset( $context['headings'] ) && is_array( $context['headings'] ) ? implode( ' / ', $context['headings'] ) : '';
+        $internal_candidates = isset( $context['internal_candidates'] ) && is_array( $context['internal_candidates'] )
+            ? $context['internal_candidates']
+            : array();
 
         $base = "あなたは日本語のSEO編集者です。HTMLやMarkdownを使わず、平文のみで出力してください。引用符や箇条書き、コードブロックは禁止です。";
 
@@ -259,6 +306,31 @@ class Blog_Poster_Rewriter {
                     . "抜粋: {$excerpt}\n"
                     . "要約: " . mb_substr( $summary, 0, 300 ) . "\n"
                     . "出力: メタディスクリプションのみ。";
+            case 'internal_links':
+                $candidates = '';
+                if ( ! empty( $internal_candidates ) ) {
+                    $rows = array();
+                    foreach ( $internal_candidates as $candidate ) {
+                        $rows[] = ( $candidate['title'] ?? '' ) . ' | ' . ( $candidate['url'] ?? '' );
+                    }
+                    $candidates = implode( "\n", $rows );
+                }
+                return $base . "\n"
+                    . "目的: 記事に追加する内部リンク候補を2〜3件作成してください。\n"
+                    . "タイトル: {$title}\n"
+                    . "見出し: {$headings}\n"
+                    . "要約: " . mb_substr( $summary, 0, 350 ) . "\n"
+                    . ( $candidates !== '' ? "利用可能な内部リンク候補（タイトル | URL）:\n{$candidates}\n" : '' )
+                    . "制約: URLは必ず同一サイト内のみ。\n"
+                    . "出力形式: 1行につき「アンカーテキスト | URL | 追加文（30-80文字）」で2〜3行。";
+            case 'external_links':
+                return $base . "\n"
+                    . "目的: 記事に追加する外部リンク候補を2件作成してください。\n"
+                    . "タイトル: {$title}\n"
+                    . "見出し: {$headings}\n"
+                    . "要約: " . mb_substr( $summary, 0, 350 ) . "\n"
+                    . "制約: 公式サイト・公的機関・主要メディアなど信頼できるURLのみ。URLは https:// から始める。\n"
+                    . "出力形式: 1行につき「アンカーテキスト | URL | 追加文（30-80文字）」で2行。";
         }
 
         return '';
@@ -270,6 +342,10 @@ class Blog_Poster_Rewriter {
                 return 450;
             case 'meta_description':
                 return 480;
+            case 'external_links':
+                return 900;
+            case 'internal_links':
+                return 1000;
             case 'missing_lead':
                 return 1000;
             case 'missing_conclusion':
@@ -288,7 +364,7 @@ class Blog_Poster_Rewriter {
         return array_slice( $titles, 0, 8 );
     }
 
-    private function sanitize_generated_text( $text ) {
+    private function sanitize_generated_text( $text, $task_type = '' ) {
         $text = trim( (string) $text );
         if ( $text === '' ) {
             return '';
@@ -297,7 +373,13 @@ class Blog_Poster_Rewriter {
         $text = preg_replace( '/^[\"“”「『]+/u', '', $text );
         $text = preg_replace( '/[\"“”」』]+$/u', '', $text );
         $text = wp_strip_all_tags( $text );
-        $text = preg_replace( '/\\s+/u', ' ', $text );
+        if ( in_array( $task_type, array( 'internal_links', 'external_links' ), true ) ) {
+            $text = str_replace( array( "\r\n", "\r" ), "\n", $text );
+            $text = preg_replace( '/[ \t]+/u', ' ', $text );
+            $text = preg_replace( "/\n{3,}/u", "\n\n", $text );
+        } else {
+            $text = preg_replace( '/\\s+/u', ' ', $text );
+        }
         return trim( $text );
     }
 
@@ -343,6 +425,176 @@ class Blog_Poster_Rewriter {
             'content' => $updated,
             'replaced' => $replaced,
         );
+    }
+
+    private function get_internal_link_candidates( $post_id, $limit = 8 ) {
+        $query = new WP_Query(
+            array(
+                'post_type' => 'post',
+                'post_status' => 'publish',
+                'posts_per_page' => max( 1, (int) $limit ),
+                'post__not_in' => array( (int) $post_id ),
+                'orderby' => 'date',
+                'order' => 'DESC',
+                'ignore_sticky_posts' => true,
+                'no_found_rows' => true,
+            )
+        );
+
+        $items = array();
+        if ( $query->have_posts() ) {
+            foreach ( $query->posts as $post ) {
+                $url = get_permalink( $post->ID );
+                if ( ! $url ) {
+                    continue;
+                }
+                $items[] = array(
+                    'title' => get_the_title( $post->ID ),
+                    'url' => $url,
+                );
+            }
+        }
+        wp_reset_postdata();
+
+        return $items;
+    }
+
+    private function parse_link_suggestions( $content, $task_type ) {
+        $site_host = (string) wp_parse_url( home_url(), PHP_URL_HOST );
+        $lines = preg_split( "/\n+/u", (string) $content );
+        $entries = array();
+        foreach ( $lines as $line ) {
+            $line = trim( preg_replace( '/^[\-\*\d\.\)\s・]+/u', '', $line ) );
+            if ( '' === $line ) {
+                continue;
+            }
+
+            $parts = array_map( 'trim', explode( '|', $line ) );
+            if ( count( $parts ) < 2 ) {
+                continue;
+            }
+
+            $anchor = sanitize_text_field( $parts[0] );
+            $url = trim( $parts[1] );
+            $note = isset( $parts[2] ) ? sanitize_text_field( $parts[2] ) : '';
+            if ( '' === $anchor || '' === $url ) {
+                continue;
+            }
+
+            if ( 0 === strpos( $url, '/' ) ) {
+                $url = home_url( $url );
+            }
+            $url = esc_url_raw( $url );
+            if ( '' === $url || ! wp_http_validate_url( $url ) ) {
+                continue;
+            }
+
+            $url_host = (string) wp_parse_url( $url, PHP_URL_HOST );
+            if ( 'internal_links' === $task_type && ( '' === $url_host || $url_host !== $site_host ) ) {
+                continue;
+            }
+            if ( 'external_links' === $task_type && ( '' === $url_host || $url_host === $site_host ) ) {
+                continue;
+            }
+            if ( 'external_links' === $task_type && ! $this->is_external_reference_url_valid( $url ) ) {
+                continue;
+            }
+
+            $entries[] = array(
+                'anchor' => $anchor,
+                'url' => $url,
+                'note' => $note,
+            );
+        }
+
+        return $entries;
+    }
+
+    private function build_link_suggestions_text( $entries ) {
+        $lines = array();
+        foreach ( $entries as $entry ) {
+            $anchor = sanitize_text_field( $entry['anchor'] ?? '' );
+            $url = esc_url_raw( $entry['url'] ?? '' );
+            $note = sanitize_text_field( $entry['note'] ?? '' );
+            if ( '' === $anchor || '' === $url ) {
+                continue;
+            }
+            $line = $anchor . ' | ' . $url;
+            if ( '' !== $note ) {
+                $line .= ' | ' . $note;
+            }
+            $lines[] = $line;
+        }
+
+        return implode( "\n", $lines );
+    }
+
+    private function is_external_reference_url_valid( $url ) {
+        $url = esc_url_raw( (string) $url );
+        if ( '' === $url ) {
+            return false;
+        }
+
+        if ( isset( $this->external_url_validation_cache[ $url ] ) ) {
+            return (bool) $this->external_url_validation_cache[ $url ];
+        }
+
+        $args = array(
+            'timeout' => 8,
+            'redirection' => 5,
+            'user-agent' => 'BlogPoster/1.0 (+WordPress)',
+        );
+
+        $response = wp_remote_head( $url, $args );
+        if ( is_wp_error( $response ) ) {
+            $response = wp_remote_get( $url, $args );
+        } else {
+            $status_code = (int) wp_remote_retrieve_response_code( $response );
+            if ( in_array( $status_code, array( 405, 501 ), true ) ) {
+                $response = wp_remote_get( $url, $args );
+            }
+        }
+
+        if ( is_wp_error( $response ) ) {
+            $this->external_url_validation_cache[ $url ] = true;
+            return true;
+        }
+
+        $status_code = (int) wp_remote_retrieve_response_code( $response );
+        $valid = ! in_array( $status_code, array( 404, 410 ), true );
+        $this->external_url_validation_cache[ $url ] = $valid;
+
+        return $valid;
+    }
+
+    private function append_link_list_to_content( $content, $task_type, $entries ) {
+        $existing_urls = array();
+        if ( preg_match_all( '/<a\s+[^>]*href=["\']([^"\']+)["\']/i', $content, $matches ) ) {
+            $existing_urls = array_map( 'esc_url_raw', $matches[1] );
+        }
+
+        $list_items = array();
+        foreach ( $entries as $entry ) {
+            $url = esc_url_raw( $entry['url'] );
+            if ( in_array( $url, $existing_urls, true ) ) {
+                continue;
+            }
+            $existing_urls[] = $url;
+
+            $anchor = esc_html( $entry['anchor'] );
+            $note = trim( (string) ( $entry['note'] ?? '' ) );
+            $note_html = '' !== $note ? ' - ' . esc_html( $note ) : '';
+            $list_items[] = '<li><a href="' . esc_url( $url ) . '">' . $anchor . '</a>' . $note_html . '</li>';
+        }
+
+        if ( empty( $list_items ) ) {
+            return $content;
+        }
+
+        $heading = 'internal_links' === $task_type ? '関連記事' : '参考リンク';
+        $section = "\n\n<h2>" . esc_html( $heading ) . "</h2>\n<ul>\n" . implode( "\n", $list_items ) . "\n</ul>";
+
+        return rtrim( $content ) . $section;
     }
 
     private function get_ai_client() {

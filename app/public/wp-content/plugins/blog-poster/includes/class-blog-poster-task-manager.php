@@ -147,16 +147,6 @@ class Blog_Poster_Task_Manager {
         return $this->update_task( $post_id, $task_id, 'completed' );
     }
 
-    public function batch_apply( $post_id, $task_ids ) {
-        $applied = 0;
-        foreach ( $task_ids as $task_id ) {
-            if ( $this->apply_task( $post_id, $task_id ) ) {
-                $applied++;
-            }
-        }
-        return $applied;
-    }
-
     private function build_summary( $tasks ) {
         $summary = array(
             'total' => count( $tasks ),

@@ -19,6 +19,14 @@ $selected_categories = isset( $settings['category_ids'] ) && is_array( $settings
 $default_category_id = isset( $settings['default_category_id'] ) ? intval( $settings['default_category_id'] ) : 0;
 $default_models = isset( $settings['default_model'] ) && is_array( $settings['default_model'] ) ? $settings['default_model'] : array();
 $yoast_enabled = ! empty( $settings['enable_yoast_integration'] );
+$subscription_plan = isset( $settings['subscription_plan'] ) ? (string) $settings['subscription_plan'] : 'free';
+$is_paid_plan = 'free' !== $subscription_plan;
+$image_generation_enabled = ! empty( $settings['enable_image_generation'] );
+$image_provider = isset( $settings['image_provider'] ) ? $settings['image_provider'] : 'openai';
+$image_aspect_ratio = isset( $settings['image_aspect_ratio'] ) ? $settings['image_aspect_ratio'] : '1:1';
+$image_style = isset( $settings['image_style'] ) ? $settings['image_style'] : 'photo';
+$image_size = isset( $settings['image_size'] ) ? $settings['image_size'] : '1024x1024';
+$image_quality = isset( $settings['image_quality'] ) ? $settings['image_quality'] : 'standard';
 $yoast_active = false;
 if ( ! function_exists( 'is_plugin_active' ) ) {
     require_once ABSPATH . 'wp-admin/includes/plugin.php';
@@ -522,6 +530,66 @@ $masked_claude = $mask_key( Blog_Poster_Settings::decrypt( isset( $settings['cla
                             <?php _e( '今すぐインデックス更新', 'blog-poster' ); ?>
                         </button>
                         <span id="rag-reindex-status" style="margin-left: 10px; display: none;"></span>
+                    </td>
+                </tr>
+            </table>
+        </div>
+        <div class="blog-poster-section">
+            <h2><?php _e( '画像生成機能（Featured Image）', 'blog-poster' ); ?></h2>
+            <p class="description"><?php _e( '記事生成後にアイキャッチ画像を自動生成します（有料プラン専用）。', 'blog-poster' ); ?></p>
+
+            <table class="form-table">
+                <tr>
+                    <th scope="row"><?php _e( '画像生成を有効化', 'blog-poster' ); ?></th>
+                    <td>
+                        <label>
+                            <input type="checkbox" name="blog_poster_settings[enable_image_generation]" value="1"
+                                <?php checked( $image_generation_enabled, true ); ?>
+                                <?php disabled( $is_paid_plan, false ); ?>>
+                            <?php _e( '記事投稿時にFeatured Imageを自動生成する', 'blog-poster' ); ?>
+                        </label>
+                        <p class="description">
+                            <?php echo $is_paid_plan ? esc_html__( '有効化すると投稿時に画像生成APIを呼び出します。', 'blog-poster' ) : esc_html__( '無料プランでは利用できません。', 'blog-poster' ); ?>
+                        </p>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php _e( '画像生成プロバイダー', 'blog-poster' ); ?></th>
+                    <td>
+                        <select name="blog_poster_settings[image_provider]">
+                            <option value="openai" <?php selected( $image_provider, 'openai' ); ?>>OpenAI (DALL-E 3)</option>
+                            <option value="gemini" <?php selected( $image_provider, 'gemini' ); ?>>Google Gemini (Imagen 3)</option>
+                        </select>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php _e( 'アスペクト比', 'blog-poster' ); ?></th>
+                    <td>
+                        <select name="blog_poster_settings[image_aspect_ratio]">
+                            <option value="1:1" <?php selected( $image_aspect_ratio, '1:1' ); ?>>1:1</option>
+                            <option value="3:2" <?php selected( $image_aspect_ratio, '3:2' ); ?>>3:2</option>
+                            <option value="4:3" <?php selected( $image_aspect_ratio, '4:3' ); ?>>4:3</option>
+                            <option value="16:9" <?php selected( $image_aspect_ratio, '16:9' ); ?>>16:9</option>
+                        </select>
+                        <p class="description"><?php _e( '最終的なアイキャッチ画像はこの比率にセンタークロップされます。', 'blog-poster' ); ?></p>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php _e( '画像トーン＆マナー', 'blog-poster' ); ?></th>
+                    <td>
+                        <select name="blog_poster_settings[image_style]">
+                            <option value="photo" <?php selected( $image_style, 'photo' ); ?>><?php _e( '実写', 'blog-poster' ); ?></option>
+                            <option value="illustration" <?php selected( $image_style, 'illustration' ); ?>><?php _e( 'イラスト', 'blog-poster' ); ?></option>
+                        </select>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php _e( '画像品質', 'blog-poster' ); ?></th>
+                    <td>
+                        <select name="blog_poster_settings[image_quality]">
+                            <option value="standard" <?php selected( $image_quality, 'standard' ); ?>>standard</option>
+                            <option value="hd" <?php selected( $image_quality, 'hd' ); ?>>hd</option>
+                        </select>
                     </td>
                 </tr>
             </table>

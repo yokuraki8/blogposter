@@ -82,9 +82,10 @@ class MockAIClient extends Blog_Poster_AI_Client {
      * Generate an image from a prompt.
      *
      * @param string $prompt The input prompt.
+     * @param array  $options Image options.
      * @return array Response array with image URL or error.
      */
-    public function generate_image( $prompt ) {
+    public function generate_image( $prompt, $options = array() ) {
         return array(
             'success' => false,
             'error'   => 'Not implemented in mock',

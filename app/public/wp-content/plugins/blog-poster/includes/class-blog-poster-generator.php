@@ -1135,9 +1135,10 @@ PROMPT;
      * アイキャッチ画像を生成
      *
      * @param string $topic トピック
-     * @return array|WP_Error 画像URLまたはエラー
+     * @param array  $context 生成コンテキスト
+     * @return array|WP_Error 画像データまたはエラー
      */
-    public function generate_featured_image( $topic ) {
+    public function generate_featured_image( $topic, $context = array() ) {
         $client = $this->get_ai_client();
         if ( is_wp_error( $client ) ) {
             return $client;
@@ -1151,24 +1152,282 @@ PROMPT;
             );
         }
 
-        $prompt = "A professional blog featured image for an article about: {$topic}. Modern, clean, and visually appealing.";
+        $settings = $this->get_effective_settings();
+        $prompt = $this->build_featured_image_prompt( $topic, $context );
+        $image_provider = isset( $settings['ai_provider'] ) ? sanitize_key( $settings['ai_provider'] ) : 'openai';
+        $image_model = '';
+        if ( 'gemini' === $image_provider ) {
+            $image_model = isset( $settings['image_gemini_model'] ) ? sanitize_text_field( $settings['image_gemini_model'] ) : 'gemini-2.5-flash-image';
+        } elseif ( 'openai' === $image_provider ) {
+            $image_model = isset( $settings['image_openai_model'] ) ? sanitize_text_field( $settings['image_openai_model'] ) : 'dall-e-3';
+        }
+        $image_options = array(
+            'size'            => $this->resolve_image_size( $settings, $image_provider ),
+            'quality'         => $this->sanitize_image_quality( $settings['image_quality'] ?? 'standard' ),
+            'response_format' => 'url',
+        );
+        if ( '' !== $image_model ) {
+            $image_options['model'] = $image_model;
+        }
 
         try {
-            $result = $client->generate_image( $prompt );
+            $max_attempts = 3;
+            $last_error = null;
+            $image_data = '';
 
-            if ( is_wp_error( $result ) ) {
-                return $result;
+            for ( $attempt = 1; $attempt <= $max_attempts; $attempt++ ) {
+                $result = $client->generate_image( $prompt, $image_options );
+
+                if ( is_wp_error( $result ) ) {
+                    $last_error = $result;
+                    if ( $attempt < $max_attempts && $this->should_retry_image_generation( $result->get_error_code() ) ) {
+                        usleep( (int) ( 250 * pow( 2, $attempt - 1 ) ) * 1000 );
+                        continue;
+                    }
+                    return $result;
+                }
+
+                $error = $this->response_to_wp_error( $result, 'image_api_error' );
+                if ( $error instanceof WP_Error ) {
+                    $last_error = $error;
+                    if ( $attempt < $max_attempts && $this->should_retry_image_generation( $error->get_error_code() ) ) {
+                        usleep( (int) ( 250 * pow( 2, $attempt - 1 ) ) * 1000 );
+                        continue;
+                    }
+                    return $error;
+                }
+
+                if ( is_array( $result ) && isset( $result['data'] ) && is_string( $result['data'] ) ) {
+                    $image_data = trim( $result['data'] );
+                }
+                if ( '' !== $image_data ) {
+                    break;
+                }
+
+                $last_error = new WP_Error( 'image_empty', __( '画像生成結果が空です。', 'blog-poster' ) );
+                if ( $attempt < $max_attempts ) {
+                    usleep( (int) ( 250 * pow( 2, $attempt - 1 ) ) * 1000 );
+                    continue;
+                }
+            }
+
+            if ( '' === $image_data ) {
+                return $last_error instanceof WP_Error
+                    ? $last_error
+                    : new WP_Error( 'image_empty', __( '画像生成結果が空です。', 'blog-poster' ) );
             }
 
             return array(
                 'success' => true,
-                'url' => $result['url'],
+                'data' => $image_data,
+                'prompt' => $prompt,
+                'options' => $image_options,
             );
 
         } catch ( Exception $e ) {
             error_log( 'Blog Poster: Featured image generation error: ' . $e->getMessage() );
             return new WP_Error( 'image_error', $e->getMessage() );
         }
+    }
+
+    /**
+     * Build featured image prompt.
+     *
+     * @param string $topic   Topic.
+     * @param array  $context Prompt context.
+     * @return string
+     */
+    private function build_featured_image_prompt( $topic, $context = array() ) {
+        $title = isset( $context['title'] ) ? sanitize_text_field( $context['title'] ) : sanitize_text_field( $topic );
+        $keywords = isset( $context['keywords'] ) && is_array( $context['keywords'] ) ? $context['keywords'] : array();
+        $categories = isset( $context['categories'] ) && is_array( $context['categories'] ) ? $context['categories'] : array();
+        $title = $this->sanitize_featured_image_prompt_value( $title );
+        $keywords = array_filter( array_map( array( $this, 'sanitize_featured_image_prompt_value' ), $keywords ) );
+        $categories = array_filter( array_map( array( $this, 'sanitize_featured_image_prompt_value' ), $categories ) );
+
+        $parts = array();
+        $parts[] = 'Create a professional blog featured image.';
+        $parts[] = 'Topic: ' . $title . '.';
+        if ( ! empty( $keywords ) ) {
+            $parts[] = 'Keywords: ' . implode( ', ', array_slice( $keywords, 0, 6 ) ) . '.';
+        }
+        if ( ! empty( $categories ) ) {
+            $parts[] = 'Category context: ' . implode( ', ', array_slice( $categories, 0, 3 ) ) . '.';
+        }
+        $settings = $this->get_effective_settings();
+        $image_style = $this->sanitize_image_style( $settings['image_style'] ?? 'photo' );
+        if ( 'illustration' === $image_style ) {
+            $parts[] = 'Style direction: editorial illustration, flat/clean, non-photorealistic, modern color palette.';
+        } else {
+            $parts[] = 'Style direction: photorealistic, professional real-world scene, natural lighting.';
+        }
+        $parts[] = 'Style: modern, clean composition, strong focal point, high contrast, no text, no logo, no watermark.';
+        $parts[] = 'Brand safety: avoid any brand names, trademarks, copyrighted characters, product packaging, or identifiable persons.';
+        if ( $this->contains_japanese( $title . ' ' . implode( ' ', $keywords ) ) ) {
+            $parts[] = 'Language context: Japanese input detected. Preserve Japanese cultural context, but do not render any letters in the image.';
+        }
+        $parts[] = 'Output should be suitable for a WordPress article thumbnail.';
+
+        return implode( ' ', $parts );
+    }
+
+    /**
+     * Retry policy for image generation errors.
+     *
+     * @param string $error_code Error code.
+     * @return bool
+     */
+    private function should_retry_image_generation( $error_code ) {
+        $error_code = sanitize_key( (string) $error_code );
+        return in_array(
+            $error_code,
+            array(
+                'api_rate_limit',
+                'api_server_error',
+                'api_error',
+                'http_request_failed',
+                'image_api_error',
+                'image_empty',
+            ),
+            true
+        );
+    }
+
+    /**
+     * Sanitize user-derived prompt values for safety.
+     *
+     * @param string $value Raw value.
+     * @return string
+     */
+    private function sanitize_featured_image_prompt_value( $value ) {
+        $value = sanitize_text_field( (string) $value );
+        $value = preg_replace( '/\s+/u', ' ', trim( $value ) );
+
+        $blocked_terms = array(
+            'logo',
+            'watermark',
+            'trademark',
+            'copyright',
+            'brand',
+            'ブランド',
+            'ロゴ',
+            '商標',
+            '著作権',
+        );
+        foreach ( $blocked_terms as $term ) {
+            $value = preg_replace( '/' . preg_quote( $term, '/' ) . '/iu', '', $value );
+        }
+
+        $value = preg_replace( '/\s+/u', ' ', trim( $value ) );
+        if ( '' === $value ) {
+            return 'general business topic';
+        }
+
+        return $value;
+    }
+
+    /**
+     * Check whether text contains Japanese characters.
+     *
+     * @param string $text Input text.
+     * @return bool
+     */
+    private function contains_japanese( $text ) {
+        return 1 === preg_match( '/[\p{Hiragana}\p{Katakana}\p{Han}]/u', (string) $text );
+    }
+
+    /**
+     * Sanitize image size option.
+     *
+     * @param string $size Requested size.
+     * @return string
+     */
+    private function sanitize_image_size( $size ) {
+        $allowed = array( '1024x1024', '1536x1024', '1024x1536', '1792x1024', '1024x1792' );
+        $size = sanitize_text_field( (string) $size );
+        return in_array( $size, $allowed, true ) ? $size : '1024x1024';
+    }
+
+    /**
+     * Resolve provider request size from settings.
+     *
+     * @param array  $settings Settings array.
+     * @param string $provider Provider key.
+     * @return string
+     */
+    private function resolve_image_size( $settings, $provider ) {
+        $ratio = isset( $settings['image_aspect_ratio'] )
+            ? $this->sanitize_image_aspect_ratio( $settings['image_aspect_ratio'] )
+            : $this->legacy_ratio_from_size( $settings['image_size'] ?? '1024x1024' );
+        $provider = sanitize_key( (string) $provider );
+
+        if ( 'gemini' === $provider ) {
+            $map = array(
+                '1:1'  => '1024x1024',
+                '3:2'  => '1536x1024',
+                '4:3'  => '1536x1024',
+                '16:9' => '1792x1024',
+            );
+        } else {
+            $map = array(
+                '1:1'  => '1024x1024',
+                '3:2'  => '1792x1024',
+                '4:3'  => '1024x1024',
+                '16:9' => '1792x1024',
+            );
+        }
+
+        return isset( $map[ $ratio ] ) ? $map[ $ratio ] : '1024x1024';
+    }
+
+    /**
+     * Sanitize aspect ratio option.
+     *
+     * @param string $ratio Requested ratio.
+     * @return string
+     */
+    private function sanitize_image_aspect_ratio( $ratio ) {
+        $ratio = sanitize_text_field( (string) $ratio );
+        return in_array( $ratio, array( '1:1', '3:2', '4:3', '16:9' ), true ) ? $ratio : '1:1';
+    }
+
+    /**
+     * Keep compatibility for old image_size-based settings.
+     *
+     * @param string $size Legacy size.
+     * @return string
+     */
+    private function legacy_ratio_from_size( $size ) {
+        $size = $this->sanitize_image_size( $size );
+        if ( in_array( $size, array( '1536x1024' ), true ) ) {
+            return '3:2';
+        }
+        if ( in_array( $size, array( '1792x1024' ), true ) ) {
+            return '16:9';
+        }
+        return '1:1';
+    }
+
+    /**
+     * Sanitize image style option.
+     *
+     * @param string $style Style key.
+     * @return string
+     */
+    private function sanitize_image_style( $style ) {
+        $style = sanitize_key( (string) $style );
+        return in_array( $style, array( 'photo', 'illustration' ), true ) ? $style : 'photo';
+    }
+
+    /**
+     * Sanitize image quality option.
+     *
+     * @param string $quality Requested quality.
+     * @return string
+     */
+    private function sanitize_image_quality( $quality ) {
+        $quality = sanitize_text_field( (string) $quality );
+        return in_array( $quality, array( 'standard', 'hd' ), true ) ? $quality : 'standard';
     }
 
 }

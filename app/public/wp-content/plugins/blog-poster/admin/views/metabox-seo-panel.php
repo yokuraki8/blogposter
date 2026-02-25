@@ -64,7 +64,6 @@ $tasks = get_post_meta( $post->ID, '_blog_poster_seo_tasks', true );
                     <option value="4"><?php esc_html_e( 'Low', 'blog-poster' ); ?></option>
                 </select>
                 <button type="button" class="button blog-poster-generate-tasks"><?php esc_html_e( 'タスク生成', 'blog-poster' ); ?></button>
-                <button type="button" class="button blog-poster-batch-apply"><?php esc_html_e( '選択を一括実行', 'blog-poster' ); ?></button>
             </div>
         </div>
         <ul class="tasks-list"></ul>

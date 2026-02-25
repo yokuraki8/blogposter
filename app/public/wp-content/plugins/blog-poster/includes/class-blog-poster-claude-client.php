@@ -89,9 +89,10 @@ class Blog_Poster_Claude_Client extends Blog_Poster_AI_Client {
      * 画像生成
      *
      * @param string $prompt プロンプト
+     * @param array  $options オプション
      * @return array レスポンス
      */
-    public function generate_image( $prompt ) {
+    public function generate_image( $prompt, $options = array() ) {
         // TODO: Claude Image Generation実装（将来対応検討）
         return $this->error_response( __( 'Claude画像生成機能は現在サポートされていません。', 'blog-poster' ) );
     }

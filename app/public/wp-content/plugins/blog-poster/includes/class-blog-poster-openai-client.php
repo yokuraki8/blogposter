@@ -215,21 +215,34 @@ class Blog_Poster_OpenAI_Client extends Blog_Poster_AI_Client {
      * 画像生成（DALL-E 3）
      *
      * @param string $prompt プロンプト
+     * @param array  $options オプション
      * @return array レスポンス
      */
-    public function generate_image( $prompt ) {
+    public function generate_image( $prompt, $options = array() ) {
         if ( empty( $this->api_key ) ) {
             return $this->error_response( __( 'OpenAI APIキーが設定されていません。', 'blog-poster' ) );
         }
 
         $url = self::API_BASE_URL . 'images/generations';
 
+        $model = isset( $options['model'] ) ? sanitize_text_field( $options['model'] ) : 'dall-e-3';
+        $size = isset( $options['size'] ) ? sanitize_text_field( $options['size'] ) : '1024x1024';
+        if ( ! in_array( $size, array( '1024x1024', '1024x1792', '1792x1024' ), true ) ) {
+            $size = '1024x1024';
+        }
+        $quality = isset( $options['quality'] ) ? sanitize_text_field( $options['quality'] ) : 'standard';
+        if ( ! in_array( $quality, array( 'standard', 'hd' ), true ) ) {
+            $quality = 'standard';
+        }
+        $response_format = isset( $options['response_format'] ) ? sanitize_text_field( $options['response_format'] ) : 'url';
+
         $body = array(
-            'model' => 'dall-e-3',
+            'model' => $model,
             'prompt' => $prompt,
             'n' => 1,
-            'size' => '1024x1024',
-            'quality' => 'standard',
+            'size' => $size,
+            'quality' => $quality,
+            'response_format' => $response_format,
         );
 
         $headers = array(
@@ -246,8 +259,10 @@ class Blog_Poster_OpenAI_Client extends Blog_Poster_AI_Client {
         // レスポンスから画像URLを抽出
         $image_url = '';
 
-        if ( isset( $response['data'][0]['url'] ) ) {
+        if ( isset( $response['data'][0]['url'] ) && '' !== $response['data'][0]['url'] ) {
             $image_url = $response['data'][0]['url'];
+        } elseif ( isset( $response['data'][0]['b64_json'] ) && '' !== $response['data'][0]['b64_json'] ) {
+            $image_url = 'data:image/png;base64,' . $response['data'][0]['b64_json'];
         }
 
         return $this->success_response( $image_url );

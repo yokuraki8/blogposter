@@ -190,39 +190,6 @@
     });
   });
 
-  $(document).on('click', '.blog-poster-batch-apply', function() {
-    const $panel = $(this).closest('.blog-poster-seo-panel');
-    const postId = $panel.data('post-id');
-    const taskIds = [];
-    $panel.find('.task-checkbox:checked').each(function() {
-      taskIds.push($(this).closest('li').data('task-id'));
-    });
-    if (taskIds.length === 0) return;
-    $.ajax({
-      url: blogPosterSeo.ajaxUrl,
-      method: 'POST',
-      timeout: 120000,
-      data: {
-        action: 'blog_poster_batch_apply',
-        nonce: blogPosterSeo.nonce,
-        post_id: postId,
-        task_ids: taskIds
-      }
-    }).done(function(res) {
-      if (res.success) {
-        taskIds.forEach(id => {
-          const $li = $panel.find(`li[data-task-id="${id}"]`);
-          $li.attr('data-status', 'completed');
-          $li.find('.task-status').text('完了');
-        });
-      } else if (res.data && res.data.message) {
-        $panel.find('.blog-poster-seo-status').text(res.data.message);
-      }
-    }).fail(function() {
-      $panel.find('.blog-poster-seo-status').text('一括実行がタイムアウトしました');
-    });
-  });
-
   $(document).on('click', '.blog-poster-preview-rewrite', function() {
     const $panel = $(this).closest('.blog-poster-seo-panel');
     const postId = $panel.data('post-id');

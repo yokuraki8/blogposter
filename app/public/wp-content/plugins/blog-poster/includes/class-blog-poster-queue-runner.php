@@ -200,13 +200,40 @@ class Blog_Poster_Queue_Runner {
 
             $model = isset( $job['ai_model'] ) ? $job['ai_model'] : '';
             $title = isset( $review_result['title'] ) ? $review_result['title'] : 'Untitled';
+            $keywords = isset( $review_result['keywords'] ) && is_array( $review_result['keywords'] ) ? $review_result['keywords'] : array();
+            if ( empty( $keywords ) ) {
+                $keywords = Blog_Poster_SEO_Helper::extract_keywords(
+                    $title,
+                    isset( $review_result['html'] ) ? $review_result['html'] : '',
+                    8
+                );
+            }
             $is_batch = ! empty( $job['is_batch'] );
             // バッチ生成時のみモデル名をプレフィックスとして追加
             $prefixed_title = ( $is_batch && $model !== '' ) ? '[' . $model . '] ' . $title : $title;
+            $slug = Blog_Poster_SEO_Helper::normalize_slug(
+                $title,
+                isset( $review_result['slug'] ) ? $review_result['slug'] : '',
+                $keywords
+            );
+            $meta_description = Blog_Poster_SEO_Helper::optimize_meta_description(
+                isset( $review_result['meta_description'] ) ? $review_result['meta_description'] : '',
+                $keywords,
+                120,
+                160
+            );
+            if ( '' === $meta_description ) {
+                $meta_description = Blog_Poster_SEO_Helper::build_meta_description_from_html(
+                    isset( $review_result['html'] ) ? $review_result['html'] : '',
+                    $keywords,
+                    120,
+                    160
+                );
+            }
 
             $post_id = wp_insert_post( array(
                 'post_title'   => $prefixed_title,
-                'post_name'    => ! empty( $review_result['slug'] ) ? sanitize_title( $review_result['slug'] ) : '',
+                'post_name'    => $slug,
                 'post_content' => isset( $review_result['html'] ) ? $review_result['html'] : '',
                 'post_excerpt' => isset( $review_result['excerpt'] ) ? $review_result['excerpt'] : '',
                 'post_status'  => 'draft',
@@ -244,6 +271,32 @@ class Blog_Poster_Queue_Runner {
             if ( isset( $job['temperature'] ) ) {
                 update_post_meta( $post_id, '_blog_poster_temperature', $job['temperature'] );
             }
+
+            Blog_Poster_SEO_Helper::apply_post_seo_meta(
+                $post_id,
+                array(
+                    'title'            => $prefixed_title,
+                    'slug'             => $slug,
+                    'content'          => isset( $review_result['html'] ) ? $review_result['html'] : '',
+                    'meta_description' => $meta_description,
+                    'keywords'         => $keywords,
+                    'canonical'        => get_permalink( $post_id ),
+                )
+            );
+            $image_settings = Blog_Poster_Settings::get_settings();
+            $image_result = Blog_Poster_Image_Helper::maybe_generate_and_attach_featured_image(
+                $post_id,
+                $title,
+                array(
+                    'title'    => $title,
+                    'keywords' => $keywords,
+                ),
+                $image_settings
+            );
+            if ( ! empty( $image_result['error'] ) ) {
+                error_log( 'Blog Poster Queue: featured image generation failed. job_id=' . $job_id . ' post_id=' . $post_id . ' error=' . $image_result['error'] );
+            }
+            Blog_Poster_SEO_Helper::optimize_post_for_score( $post_id );
 
             return $post_id;
         } finally {

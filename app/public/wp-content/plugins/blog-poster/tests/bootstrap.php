@@ -222,6 +222,7 @@ $plugin_includes = array(
     'includes/class-blog-poster-claude-client.php',
     'includes/class-blog-poster-openai-client.php',
     'includes/class-blog-poster-generator.php',
+    'includes/class-blog-poster-image-helper.php',
     'includes/class-blog-poster-settings.php',
 );
 

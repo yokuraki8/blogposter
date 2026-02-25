@@ -83,9 +83,10 @@ abstract class Blog_Poster_AI_Client {
      * 画像生成（抽象メソッド）
      *
      * @param string $prompt プロンプト
+     * @param array  $options オプション（size/quality/response_format等）
      * @return array レスポンス
      */
-    abstract public function generate_image( $prompt );
+    abstract public function generate_image( $prompt, $options = array() );
 
     /**
      * APIリクエストを送信
