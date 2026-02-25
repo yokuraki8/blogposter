@@ -292,6 +292,84 @@ class Blog_Poster_Generator {
             }
         }
 
+        $quality_report = array(
+            'enabled' => false,
+            'mode' => 'strict',
+            'passes' => true,
+            'quality_score' => 100,
+            'issues' => array(),
+            'auto_fix_attempts' => 0,
+            'auto_fix_applied' => false,
+        );
+        if ( class_exists( 'Blog_Poster_Content_Quality_Gate' ) ) {
+            $quality_gate = new Blog_Poster_Content_Quality_Gate( $this->get_effective_settings() );
+            if ( $quality_gate->is_enabled() ) {
+                $quality_report['enabled'] = true;
+                $quality_report = array_merge(
+                    $quality_report,
+                    $quality_gate->validate_markdown(
+                        $final_md,
+                        array(
+                            'topic' => $topic,
+                            'title' => isset( $meta['title'] ) ? $meta['title'] : '',
+                        )
+                    )
+                );
+
+                $max_fixes = $quality_gate->get_max_auto_fixes();
+                $auto_fix_attempts = 0;
+                $auto_fix_applied = false;
+                while ( empty( $quality_report['passes'] ) && $auto_fix_attempts < $max_fixes ) {
+                    $auto_fix_attempts++;
+                    $fixed_result = $this->auto_fix_quality_markdown(
+                        $final_md,
+                        $quality_report,
+                        array(
+                            'topic' => $topic,
+                            'title' => isset( $meta['title'] ) ? $meta['title'] : '',
+                        )
+                    );
+                    if ( is_wp_error( $fixed_result ) ) {
+                        error_log( 'Blog Poster: Quality auto-fix failed: ' . $fixed_result->get_error_message() );
+                        break;
+                    }
+                    $fixed_markdown = isset( $fixed_result['markdown'] ) ? (string) $fixed_result['markdown'] : '';
+                    if ( '' === trim( $fixed_markdown ) || trim( $fixed_markdown ) === trim( $final_md ) ) {
+                        break;
+                    }
+                    $auto_fix_applied = true;
+                    $final_md = $fixed_markdown;
+
+                    if ( $primary_research_validator && $primary_research_validator->is_enabled() ) {
+                        $validation_result = $primary_research_validator->filter_markdown_external_links( $final_md );
+                        $final_md = $validation_result['markdown'];
+                        $external_link_audit = $validation_result['reports'];
+                    }
+
+                    $quality_report = array_merge(
+                        $quality_report,
+                        $quality_gate->validate_markdown(
+                            $final_md,
+                            array(
+                                'topic' => $topic,
+                                'title' => isset( $meta['title'] ) ? $meta['title'] : '',
+                            )
+                        )
+                    );
+                }
+
+                $quality_report['auto_fix_attempts'] = $auto_fix_attempts;
+                $quality_report['auto_fix_applied'] = $auto_fix_applied;
+
+                if ( empty( $quality_report['passes'] ) && 'strict' === ( $quality_report['mode'] ?? 'strict' ) ) {
+                    $first_issue_message = ! empty( $quality_report['issues'][0]['message'] )
+                        ? (string) $quality_report['issues'][0]['message']
+                        : '品質基準を満たしていません。';
+                    return new WP_Error( 'quality_gate_failed', '自動品質ゲート（strict）で停止しました: ' . $first_issue_message );
+                }
+            }
+        }
+
         // 5. HTML変換
         $html = Blog_Poster_Admin::markdown_to_html( $final_md );
 
@@ -306,6 +384,7 @@ class Blog_Poster_Generator {
             'markdown' => $final_md,
             'html' => $html,
             'external_link_audit' => $external_link_audit,
+            'quality_report' => $quality_report,
         );
     }
 
@@ -1465,6 +1544,119 @@ PROMPT;
     private function sanitize_image_quality( $quality ) {
         $quality = sanitize_text_field( (string) $quality );
         return in_array( $quality, array( 'standard', 'hd' ), true ) ? $quality : 'standard';
+    }
+
+    /**
+     * 品質ゲート指摘を基にMarkdownを自動修正
+     *
+     * @param string $markdown       現在のMarkdown
+     * @param array  $quality_report 品質レポート
+     * @param array  $context        補助コンテキスト
+     * @return array|WP_Error
+     */
+    public function auto_fix_quality_markdown( $markdown, $quality_report = array(), $context = array() ) {
+        $client = $this->get_ai_client();
+        if ( is_wp_error( $client ) ) {
+            return $client;
+        }
+
+        $prompt = $this->build_quality_fix_prompt( $markdown, $quality_report, $context );
+
+        try {
+            $response = $client->generate_text( $prompt, array( 'max_tokens' => 3200 ) );
+            if ( is_wp_error( $response ) ) {
+                return $response;
+            }
+
+            $api_error = $this->response_to_wp_error( $response, 'quality_fix_api_error' );
+            if ( $api_error ) {
+                return $api_error;
+            }
+
+            $fixed_markdown = method_exists( $client, 'get_text_content' ) ? $client->get_text_content( $response ) : '';
+            if ( '' === trim( $fixed_markdown ) ) {
+                return new WP_Error( 'quality_fix_empty', '品質自動修正の結果が空です。' );
+            }
+
+            $fixed_markdown = $this->extract_markdown_block( $fixed_markdown );
+            $fixed_markdown = $this->postprocess_markdown( $fixed_markdown );
+            $fixed_markdown = $this->normalize_code_blocks_after_generation( $fixed_markdown );
+
+            return array(
+                'success' => true,
+                'markdown' => $fixed_markdown,
+            );
+        } catch ( Exception $e ) {
+            return new WP_Error( 'quality_fix_error', $e->getMessage() );
+        }
+    }
+
+    /**
+     * 品質修正用プロンプトを構築
+     *
+     * @param string $markdown       Markdown
+     * @param array  $quality_report 品質レポート
+     * @param array  $context        補助コンテキスト
+     * @return string
+     */
+    private function build_quality_fix_prompt( $markdown, $quality_report = array(), $context = array() ) {
+        $topic = isset( $context['topic'] ) ? sanitize_text_field( (string) $context['topic'] ) : '';
+        $title = isset( $context['title'] ) ? sanitize_text_field( (string) $context['title'] ) : '';
+        $issues_text = '';
+        $issues = isset( $quality_report['issues'] ) && is_array( $quality_report['issues'] ) ? $quality_report['issues'] : array();
+        $issues = array_slice( $issues, 0, 8 );
+        if ( ! empty( $issues ) ) {
+            $lines = array();
+            foreach ( $issues as $issue ) {
+                $severity = isset( $issue['severity'] ) ? sanitize_text_field( (string) $issue['severity'] ) : 'medium';
+                $message = isset( $issue['message'] ) ? sanitize_text_field( (string) $issue['message'] ) : '';
+                if ( '' !== $message ) {
+                    $lines[] = sprintf( '- [%s] %s', $severity, $message );
+                }
+            }
+            if ( ! empty( $lines ) ) {
+                $issues_text = implode( "\n", $lines );
+            }
+        }
+        if ( '' === $issues_text ) {
+            $issues_text = '- 見出し切れ、誤字・文字化け、参考URL欠落、年次不整合を優先的に点検';
+        }
+
+        return <<<PROMPT
+あなたは日本語の編集者です。以下のMarkdown記事を最小限の修正で改善してください。
+
+トピック: {$topic}
+タイトル: {$title}
+
+修正対象:
+{$issues_text}
+
+制約:
+- 事実関係を改変しない
+- 段落構成・見出し階層(H2/H3)を維持
+- 壊れた見出しや途中で切れた見出しを自然な日本語に修正
+- 文字化け/不自然語（例: ひっ逼迫ぱく）を自然語へ修正
+- 「参考: ...」行でURL欠落がある場合、本文内に既にURLが無ければ文言のみ整える（捏造URLは追加しない）
+- 出力は本文Markdownのみ（説明不要）
+
+--- ARTICLE START ---
+{$markdown}
+--- ARTICLE END ---
+PROMPT;
+    }
+
+    /**
+     * AI応答からMarkdown本文を抽出
+     *
+     * @param string $text 応答本文
+     * @return string
+     */
+    private function extract_markdown_block( $text ) {
+        $text = trim( (string) $text );
+        if ( preg_match( '/```(?:markdown|md)?\s*([\s\S]*?)```/iu', $text, $matches ) ) {
+            return trim( $matches[1] );
+        }
+        return $text;
     }
 
     /**

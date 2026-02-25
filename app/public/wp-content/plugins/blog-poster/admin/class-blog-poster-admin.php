@@ -504,6 +504,13 @@ class Blog_Poster_Admin {
             ? sanitize_textarea_field( $input['primary_research_blocked_domains'] )
             : '';
 
+        // Auto quality gate settings
+        $sanitized['auto_quality_gate_enabled'] = ! empty( $input['auto_quality_gate_enabled'] ) ? '1' : '0';
+        $quality_mode = isset( $input['auto_quality_gate_mode'] ) ? sanitize_key( $input['auto_quality_gate_mode'] ) : 'strict';
+        $sanitized['auto_quality_gate_mode'] = in_array( $quality_mode, array( 'strict', 'warn' ), true ) ? $quality_mode : 'strict';
+        $max_fixes = isset( $input['auto_quality_gate_max_fixes'] ) ? (int) $input['auto_quality_gate_max_fixes'] : 1;
+        $sanitized['auto_quality_gate_max_fixes'] = max( 0, min( 2, $max_fixes ) );
+
         // 既存の設定を維持
         $current_settings = Blog_Poster_Settings::get_settings();
         $sanitized = array_merge( $current_settings, $sanitized );
@@ -737,7 +744,9 @@ class Blog_Poster_Admin {
         $html_content = '';
         $job = null;
         $external_link_audit = array();
+        $quality_report = array();
         $markdown_for_validation = '';
+        $generator = new Blog_Poster_Generator();
         if ( $job_id > 0 ) {
             $job_lock_name = 'blog_poster_create_post_' . $job_id;
             $job_lock_acquired = $this->acquire_db_lock( $job_lock_name, 10 );
@@ -782,6 +791,81 @@ class Blog_Poster_Admin {
                 $external_link_audit = isset( $validation_result['reports'] ) && is_array( $validation_result['reports'] )
                     ? $validation_result['reports']
                     : array();
+            }
+        }
+
+        if ( class_exists( 'Blog_Poster_Content_Quality_Gate' ) && ! empty( $markdown_for_validation ) ) {
+            $quality_gate = new Blog_Poster_Content_Quality_Gate( Blog_Poster_Settings::get_settings() );
+            if ( $quality_gate->is_enabled() ) {
+                $quality_report = $quality_gate->validate_markdown(
+                    $markdown_for_validation,
+                    array(
+                        'title' => $title,
+                    )
+                );
+                $quality_report['enabled'] = true;
+                $quality_report['auto_fix_attempts'] = 0;
+                $quality_report['auto_fix_applied'] = false;
+
+                $max_fixes = $quality_gate->get_max_auto_fixes();
+                if ( ! empty( $job['article_length'] ) ) {
+                    $generator->set_article_length( $job['article_length'] );
+                }
+                for ( $attempt = 1; empty( $quality_report['passes'] ) && $attempt <= $max_fixes; $attempt++ ) {
+                    $fixed = $generator->auto_fix_quality_markdown(
+                        $markdown_for_validation,
+                        $quality_report,
+                        array(
+                            'topic' => $title,
+                            'title' => $title,
+                        )
+                    );
+                    if ( is_wp_error( $fixed ) ) {
+                        error_log( 'Blog Poster: ajax_create_post quality auto-fix failed: ' . $fixed->get_error_message() );
+                        break;
+                    }
+                    $fixed_markdown = isset( $fixed['markdown'] ) ? (string) $fixed['markdown'] : '';
+                    if ( '' === trim( $fixed_markdown ) || trim( $fixed_markdown ) === trim( $markdown_for_validation ) ) {
+                        break;
+                    }
+                    $markdown_for_validation = $fixed_markdown;
+                    $quality_report['auto_fix_attempts'] = $attempt;
+                    $quality_report['auto_fix_applied'] = true;
+
+                    if ( isset( $validator ) && $validator instanceof Blog_Poster_Primary_Research_Validator && $validator->is_enabled() ) {
+                        $validation_result = $validator->filter_markdown_external_links( $markdown_for_validation );
+                        $markdown_for_validation = isset( $validation_result['markdown'] ) ? $validation_result['markdown'] : $markdown_for_validation;
+                        $external_link_audit = isset( $validation_result['reports'] ) && is_array( $validation_result['reports'] )
+                            ? $validation_result['reports']
+                            : array();
+                    }
+
+                    $quality_report = array_merge(
+                        $quality_report,
+                        $quality_gate->validate_markdown(
+                            $markdown_for_validation,
+                            array(
+                                'title' => $title,
+                            )
+                        )
+                    );
+                    $quality_report['enabled'] = true;
+                    $quality_report['auto_fix_attempts'] = $attempt;
+                    $quality_report['auto_fix_applied'] = true;
+                }
+
+                if ( empty( $quality_report['passes'] ) && 'strict' === ( $quality_report['mode'] ?? 'strict' ) ) {
+                    $first_issue_message = ! empty( $quality_report['issues'][0]['message'] )
+                        ? (string) $quality_report['issues'][0]['message']
+                        : '品質基準を満たしていません。';
+                    $send_json(
+                        false,
+                        array(
+                            'message' => '自動品質ゲート（strict）で停止しました: ' . $first_issue_message,
+                            'quality_report' => $quality_report,
+                        )
+                    );
+                }
             }
         }
 
@@ -859,6 +943,19 @@ class Blog_Poster_Admin {
                     }
                 }
                 update_post_meta( $post_id, '_blog_poster_external_link_audit_summary', sprintf( 'checked=%d invalid=%d', $checked_count, $invalid_count ) );
+            }
+
+            if ( ! empty( $quality_report ) ) {
+                update_post_meta( $post_id, '_blog_poster_quality_report', wp_json_encode( $quality_report, JSON_UNESCAPED_UNICODE ) );
+                $quality_summary = sprintf(
+                    'mode=%s score=%d pass=%s issues=%d fixes=%d',
+                    isset( $quality_report['mode'] ) ? sanitize_text_field( (string) $quality_report['mode'] ) : 'strict',
+                    isset( $quality_report['quality_score'] ) ? (int) $quality_report['quality_score'] : 0,
+                    ! empty( $quality_report['passes'] ) ? 'yes' : 'no',
+                    isset( $quality_report['issues'] ) && is_array( $quality_report['issues'] ) ? count( $quality_report['issues'] ) : 0,
+                    isset( $quality_report['auto_fix_attempts'] ) ? (int) $quality_report['auto_fix_attempts'] : 0
+                );
+                update_post_meta( $post_id, '_blog_poster_quality_report_summary', $quality_summary );
             }
 
             // ジョブに post_id を紐付け（post_id=0のときのみ）
@@ -967,6 +1064,7 @@ class Blog_Poster_Admin {
                     'edit_url' => admin_url( 'post.php?post=' . $post_id . '&action=edit' ),
                     'message'  => '投稿を作成しました',
                     'external_link_audit' => $external_link_audit,
+                    'quality_report' => $quality_report,
                 )
             );
         } finally {

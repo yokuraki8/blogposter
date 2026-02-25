@@ -91,6 +91,7 @@ class Blog_Poster {
         require_once BLOG_POSTER_PLUGIN_DIR . 'includes/class-blog-poster-task-manager.php';
         require_once BLOG_POSTER_PLUGIN_DIR . 'includes/class-blog-poster-rewriter.php';
         require_once BLOG_POSTER_PLUGIN_DIR . 'includes/class-blog-poster-primary-research-validator.php';
+        require_once BLOG_POSTER_PLUGIN_DIR . 'includes/class-blog-poster-content-quality-gate.php';
 
         // RAG コンテンツインデクサー
         require_once BLOG_POSTER_PLUGIN_DIR . 'includes/class-blog-poster-content-indexer.php';
@@ -355,6 +356,9 @@ class Blog_Poster {
             'primary_research_retry_count' => 2,
             'primary_research_allowed_domains' => '',
             'primary_research_blocked_domains' => '',
+            'auto_quality_gate_enabled' => true,
+            'auto_quality_gate_mode' => 'strict',
+            'auto_quality_gate_max_fixes' => 1,
             'cron_step_limit' => 3, // Cron1回あたりの処理ステップ数
             'subscription_plan' => 'free', // free, paid_with_api, paid_without_api
             'articles_generated' => 0,

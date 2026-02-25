@@ -36,6 +36,9 @@ $primary_research_timeout = isset( $settings['primary_research_timeout_sec'] ) ?
 $primary_research_retry = isset( $settings['primary_research_retry_count'] ) ? (int) $settings['primary_research_retry_count'] : 2;
 $primary_research_allowed_domains = isset( $settings['primary_research_allowed_domains'] ) ? $settings['primary_research_allowed_domains'] : '';
 $primary_research_blocked_domains = isset( $settings['primary_research_blocked_domains'] ) ? $settings['primary_research_blocked_domains'] : '';
+$auto_quality_gate_enabled = ! isset( $settings['auto_quality_gate_enabled'] ) || ! empty( $settings['auto_quality_gate_enabled'] );
+$auto_quality_gate_mode = isset( $settings['auto_quality_gate_mode'] ) ? $settings['auto_quality_gate_mode'] : 'strict';
+$auto_quality_gate_max_fixes = isset( $settings['auto_quality_gate_max_fixes'] ) ? (int) $settings['auto_quality_gate_max_fixes'] : 1;
 $yoast_active = false;
 if ( ! function_exists( 'is_plugin_active' ) ) {
     require_once ABSPATH . 'wp-admin/includes/plugin.php';
@@ -678,6 +681,38 @@ $masked_claude = $mask_key( Blog_Poster_Settings::decrypt( isset( $settings['cla
                     <th scope="row"><?php _e( '除外ドメイン（改行 or カンマ区切り）', 'blog-poster' ); ?></th>
                     <td>
                         <textarea name="blog_poster_settings[primary_research_blocked_domains]" rows="3" class="large-text"><?php echo esc_textarea( $primary_research_blocked_domains ); ?></textarea>
+                    </td>
+                </tr>
+            </table>
+        </div>
+        <div class="blog-poster-section">
+            <h2><?php _e( '自動品質ゲート', 'blog-poster' ); ?></h2>
+            <p class="description"><?php _e( '生成後に見出し破損・誤記・出典形式を自動検査し、必要なら自動修正します。', 'blog-poster' ); ?></p>
+            <table class="form-table">
+                <tr>
+                    <th scope="row"><?php _e( '自動品質ゲートを有効化', 'blog-poster' ); ?></th>
+                    <td>
+                        <label>
+                            <input type="checkbox" name="blog_poster_settings[auto_quality_gate_enabled]" value="1" <?php checked( $auto_quality_gate_enabled, true ); ?>>
+                            <?php _e( '記事生成後に品質検査と自動修正を実行する', 'blog-poster' ); ?>
+                        </label>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php _e( '判定モード', 'blog-poster' ); ?></th>
+                    <td>
+                        <select name="blog_poster_settings[auto_quality_gate_mode]">
+                            <option value="strict" <?php selected( $auto_quality_gate_mode, 'strict' ); ?>>strict（基準未達は失敗）</option>
+                            <option value="warn" <?php selected( $auto_quality_gate_mode, 'warn' ); ?>>warn（警告のみ）</option>
+                        </select>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php _e( '自動修正の最大回数', 'blog-poster' ); ?></th>
+                    <td>
+                        <input type="number" min="0" max="2" step="1" class="small-text"
+                            name="blog_poster_settings[auto_quality_gate_max_fixes]"
+                            value="<?php echo esc_attr( $auto_quality_gate_max_fixes ); ?>">
                     </td>
                 </tr>
             </table>

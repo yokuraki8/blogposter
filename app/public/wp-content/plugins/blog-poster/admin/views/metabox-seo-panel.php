@@ -7,10 +7,19 @@ $tasks = get_post_meta( $post->ID, '_blog_poster_seo_tasks', true );
 $external_link_audit_summary = get_post_meta( $post->ID, '_blog_poster_external_link_audit_summary', true );
 $external_link_audit_raw = get_post_meta( $post->ID, '_blog_poster_external_link_audit', true );
 $external_link_audit = array();
+$quality_report_summary = get_post_meta( $post->ID, '_blog_poster_quality_report_summary', true );
+$quality_report_raw = get_post_meta( $post->ID, '_blog_poster_quality_report', true );
+$quality_report = array();
 if ( is_string( $external_link_audit_raw ) && '' !== $external_link_audit_raw ) {
     $decoded = json_decode( $external_link_audit_raw, true );
     if ( is_array( $decoded ) ) {
         $external_link_audit = $decoded;
+    }
+}
+if ( is_string( $quality_report_raw ) && '' !== $quality_report_raw ) {
+    $decoded_quality = json_decode( $quality_report_raw, true );
+    if ( is_array( $decoded_quality ) ) {
+        $quality_report = $decoded_quality;
     }
 }
 ?>
@@ -59,6 +68,33 @@ if ( is_string( $external_link_audit_raw ) && '' !== $external_link_audit_raw ) 
             <strong><?php esc_html_e( '改善提案', 'blog-poster' ); ?></strong>
         </div>
         <ul class="recommendations-list"></ul>
+    </div>
+
+    <div class="blog-poster-seo-recommendations">
+        <div class="recommendations-header">
+            <strong><?php esc_html_e( '自動品質ゲート', 'blog-poster' ); ?></strong>
+        </div>
+        <?php if ( ! empty( $quality_report_summary ) ) : ?>
+            <p><?php echo esc_html( $quality_report_summary ); ?></p>
+        <?php else : ?>
+            <p><?php esc_html_e( '品質ゲートデータはまだありません。', 'blog-poster' ); ?></p>
+        <?php endif; ?>
+        <?php if ( ! empty( $quality_report['issues'] ) && is_array( $quality_report['issues'] ) ) : ?>
+            <ul class="recommendations-list">
+                <?php foreach ( array_slice( $quality_report['issues'], 0, 8 ) as $issue ) : ?>
+                    <?php
+                    $severity = isset( $issue['severity'] ) ? strtoupper( (string) $issue['severity'] ) : 'INFO';
+                    $message = isset( $issue['message'] ) ? (string) $issue['message'] : '';
+                    ?>
+                    <?php if ( '' !== $message ) : ?>
+                        <li>
+                            <span class="rec-priority"><?php echo esc_html( $severity ); ?></span>
+                            <?php echo esc_html( $message ); ?>
+                        </li>
+                    <?php endif; ?>
+                <?php endforeach; ?>
+            </ul>
+        <?php endif; ?>
     </div>
 
     <div class="blog-poster-seo-recommendations">

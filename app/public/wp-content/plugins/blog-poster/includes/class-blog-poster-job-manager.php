@@ -815,14 +815,102 @@ class Blog_Poster_Job_Manager {
 			}
 
 			$external_link_audit = array();
+			$primary_validator = null;
 			if ( class_exists( 'Blog_Poster_Primary_Research_Validator' ) ) {
-				$validator = new Blog_Poster_Primary_Research_Validator( Blog_Poster_Settings::get_settings() );
-				if ( $validator->is_enabled() ) {
-					$validation_result = $validator->filter_markdown_external_links( $final_markdown );
+				$primary_validator = new Blog_Poster_Primary_Research_Validator( Blog_Poster_Settings::get_settings() );
+				if ( $primary_validator->is_enabled() ) {
+					$validation_result = $primary_validator->filter_markdown_external_links( $final_markdown );
 					$final_markdown = isset( $validation_result['markdown'] ) ? $validation_result['markdown'] : $final_markdown;
 					$external_link_audit = isset( $validation_result['reports'] ) && is_array( $validation_result['reports'] )
 						? $validation_result['reports']
 						: array();
+				}
+			}
+
+			$quality_report = array(
+				'enabled' => false,
+				'mode' => 'strict',
+				'passes' => true,
+				'quality_score' => 100,
+				'issues' => array(),
+				'auto_fix_attempts' => 0,
+				'auto_fix_applied' => false,
+			);
+			if ( class_exists( 'Blog_Poster_Content_Quality_Gate' ) ) {
+				$quality_gate = new Blog_Poster_Content_Quality_Gate( Blog_Poster_Settings::get_settings() );
+				if ( $quality_gate->is_enabled() ) {
+					$quality_report['enabled'] = true;
+					$quality_report = array_merge(
+						$quality_report,
+						$quality_gate->validate_markdown(
+							$final_markdown,
+							array(
+								'topic' => $topic,
+							)
+						)
+					);
+
+					$max_fixes = $quality_gate->get_max_auto_fixes();
+					$auto_fix_attempts = 0;
+					$auto_fix_applied = false;
+
+					while ( empty( $quality_report['passes'] ) && $auto_fix_attempts < $max_fixes ) {
+						$auto_fix_attempts++;
+						$fixed_result = $this->generator->auto_fix_quality_markdown(
+							$final_markdown,
+							$quality_report,
+							array(
+								'topic' => $topic,
+							)
+						);
+						if ( is_wp_error( $fixed_result ) ) {
+							error_log( 'Blog Poster: Quality auto-fix failed: ' . $fixed_result->get_error_message() );
+							break;
+						}
+
+						$fixed_markdown = isset( $fixed_result['markdown'] ) ? (string) $fixed_result['markdown'] : '';
+						if ( '' === trim( $fixed_markdown ) || trim( $fixed_markdown ) === trim( $final_markdown ) ) {
+							error_log( 'Blog Poster: Quality auto-fix skipped because output was empty or unchanged.' );
+							break;
+						}
+
+						$auto_fix_applied = true;
+						$final_markdown = $fixed_markdown;
+
+						if ( $primary_validator && $primary_validator->is_enabled() ) {
+							$validation_result = $primary_validator->filter_markdown_external_links( $final_markdown );
+							$final_markdown = isset( $validation_result['markdown'] ) ? $validation_result['markdown'] : $final_markdown;
+							$external_link_audit = isset( $validation_result['reports'] ) && is_array( $validation_result['reports'] )
+								? $validation_result['reports']
+								: array();
+						}
+
+						$quality_report = array_merge(
+							$quality_report,
+							$quality_gate->validate_markdown(
+								$final_markdown,
+								array(
+									'topic' => $topic,
+								)
+							)
+						);
+					}
+
+					$quality_report['auto_fix_attempts'] = $auto_fix_attempts;
+					$quality_report['auto_fix_applied'] = $auto_fix_applied;
+
+					if ( empty( $quality_report['passes'] ) && 'strict' === ( $quality_report['mode'] ?? 'strict' ) ) {
+						$first_issue_message = '品質基準を満たしていません。';
+						if ( ! empty( $quality_report['issues'][0]['message'] ) ) {
+							$first_issue_message = (string) $quality_report['issues'][0]['message'];
+						}
+						throw new Exception(
+							sprintf(
+								'自動品質ゲート（strict）で停止しました: %s',
+								$first_issue_message
+							)
+						);
+					}
 				}
 			}
 
@@ -878,6 +966,7 @@ class Blog_Poster_Job_Manager {
 				'html'             => $this->sanitize_utf8( $final_html ),
 				'keywords'         => $outline_meta['keywords'] ?? array(),
 				'external_link_audit' => $external_link_audit,
+				'quality_report'   => $quality_report,
 			);
 
 		} catch ( Exception $e ) {

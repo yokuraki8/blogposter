@@ -271,6 +271,35 @@ class Blog_Poster_Queue_Runner {
             if ( isset( $job['temperature'] ) ) {
                 update_post_meta( $post_id, '_blog_poster_temperature', $job['temperature'] );
             }
+            $external_link_audit = isset( $review_result['external_link_audit'] ) && is_array( $review_result['external_link_audit'] )
+                ? $review_result['external_link_audit']
+                : array();
+            if ( ! empty( $external_link_audit ) ) {
+                update_post_meta( $post_id, '_blog_poster_external_link_audit', wp_json_encode( $external_link_audit, JSON_UNESCAPED_UNICODE ) );
+                $checked_count = count( $external_link_audit );
+                $invalid_count = 0;
+                foreach ( $external_link_audit as $audit_entry ) {
+                    if ( empty( $audit_entry['valid'] ) ) {
+                        $invalid_count++;
+                    }
+                }
+                update_post_meta( $post_id, '_blog_poster_external_link_audit_summary', sprintf( 'checked=%d invalid=%d', $checked_count, $invalid_count ) );
+            }
+            $quality_report = isset( $review_result['quality_report'] ) && is_array( $review_result['quality_report'] )
+                ? $review_result['quality_report']
+                : array();
+            if ( ! empty( $quality_report ) ) {
+                update_post_meta( $post_id, '_blog_poster_quality_report', wp_json_encode( $quality_report, JSON_UNESCAPED_UNICODE ) );
+                $quality_summary = sprintf(
+                    'mode=%s score=%d pass=%s issues=%d fixes=%d',
+                    isset( $quality_report['mode'] ) ? sanitize_text_field( (string) $quality_report['mode'] ) : 'strict',
+                    isset( $quality_report['quality_score'] ) ? (int) $quality_report['quality_score'] : 0,
+                    ! empty( $quality_report['passes'] ) ? 'yes' : 'no',
+                    isset( $quality_report['issues'] ) && is_array( $quality_report['issues'] ) ? count( $quality_report['issues'] ) : 0,
+                    isset( $quality_report['auto_fix_attempts'] ) ? (int) $quality_report['auto_fix_attempts'] : 0
+                );
+                update_post_meta( $post_id, '_blog_poster_quality_report_summary', $quality_summary );
+            }
 
             Blog_Poster_SEO_Helper::apply_post_seo_meta(
                 $post_id,

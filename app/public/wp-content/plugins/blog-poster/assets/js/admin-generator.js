@@ -324,6 +324,15 @@ jQuery(document).ready(function($) {
                 $('#progress-message').text(note);
             }
         }
+        if (data && data.quality_report) {
+            const qr = data.quality_report || {};
+            const issues = Array.isArray(qr.issues) ? qr.issues.length : 0;
+            const score = Number.isFinite(Number(qr.quality_score)) ? Number(qr.quality_score) : null;
+            console.log('Auto quality gate:', qr);
+            if (issues > 0 && score !== null) {
+                $('#progress-message').text(`品質ゲート: score=${score}, issues=${issues}`);
+            }
+        }
 
         // プログレスメッセージを更新
         updateProgress(100, '投稿を作成中...');
