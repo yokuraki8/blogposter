@@ -27,6 +27,15 @@ $image_aspect_ratio = isset( $settings['image_aspect_ratio'] ) ? $settings['imag
 $image_style = isset( $settings['image_style'] ) ? $settings['image_style'] : 'photo';
 $image_size = isset( $settings['image_size'] ) ? $settings['image_size'] : '1024x1024';
 $image_quality = isset( $settings['image_quality'] ) ? $settings['image_quality'] : 'standard';
+$primary_research_enabled = ! empty( $settings['primary_research_enabled'] );
+$external_link_existence_check_enabled = ! isset( $settings['external_link_existence_check_enabled'] ) || ! empty( $settings['external_link_existence_check_enabled'] );
+$external_link_credibility_check_enabled = ! isset( $settings['external_link_credibility_check_enabled'] ) || ! empty( $settings['external_link_credibility_check_enabled'] );
+$primary_research_mode = isset( $settings['primary_research_mode'] ) ? $settings['primary_research_mode'] : 'strict';
+$primary_research_threshold = isset( $settings['primary_research_credibility_threshold'] ) ? (int) $settings['primary_research_credibility_threshold'] : 70;
+$primary_research_timeout = isset( $settings['primary_research_timeout_sec'] ) ? (int) $settings['primary_research_timeout_sec'] : 8;
+$primary_research_retry = isset( $settings['primary_research_retry_count'] ) ? (int) $settings['primary_research_retry_count'] : 2;
+$primary_research_allowed_domains = isset( $settings['primary_research_allowed_domains'] ) ? $settings['primary_research_allowed_domains'] : '';
+$primary_research_blocked_domains = isset( $settings['primary_research_blocked_domains'] ) ? $settings['primary_research_blocked_domains'] : '';
 $yoast_active = false;
 if ( ! function_exists( 'is_plugin_active' ) ) {
     require_once ABSPATH . 'wp-admin/includes/plugin.php';
@@ -590,6 +599,85 @@ $masked_claude = $mask_key( Blog_Poster_Settings::decrypt( isset( $settings['cla
                             <option value="standard" <?php selected( $image_quality, 'standard' ); ?>>standard</option>
                             <option value="hd" <?php selected( $image_quality, 'hd' ); ?>>hd</option>
                         </select>
+                    </td>
+                </tr>
+            </table>
+        </div>
+        <div class="blog-poster-section">
+            <h2><?php _e( '一次情報リサーチ（外部リンク検証）', 'blog-poster' ); ?></h2>
+            <p class="description"><?php _e( '外部リンクの実在性と信頼性を検証し、SEOリライトと記事生成の両方に適用します。', 'blog-poster' ); ?></p>
+
+            <table class="form-table">
+                <tr>
+                    <th scope="row"><?php _e( '一次情報リサーチを有効化', 'blog-poster' ); ?></th>
+                    <td>
+                        <label>
+                            <input type="checkbox" name="blog_poster_settings[primary_research_enabled]" value="1" <?php checked( $primary_research_enabled, true ); ?>>
+                            <?php _e( '外部リンクの検証を有効化する', 'blog-poster' ); ?>
+                        </label>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php _e( '実在チェック', 'blog-poster' ); ?></th>
+                    <td>
+                        <label>
+                            <input type="checkbox" name="blog_poster_settings[external_link_existence_check_enabled]" value="1" <?php checked( $external_link_existence_check_enabled, true ); ?>>
+                            <?php _e( 'HEAD/GETでURLが実在するか確認する', 'blog-poster' ); ?>
+                        </label>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php _e( '信頼性チェック', 'blog-poster' ); ?></th>
+                    <td>
+                        <label>
+                            <input type="checkbox" name="blog_poster_settings[external_link_credibility_check_enabled]" value="1" <?php checked( $external_link_credibility_check_enabled, true ); ?>>
+                            <?php _e( 'ドメイン・更新情報・URL構造をもとに信頼性スコアを判定する', 'blog-poster' ); ?>
+                        </label>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php _e( '不合格時のモード', 'blog-poster' ); ?></th>
+                    <td>
+                        <select name="blog_poster_settings[primary_research_mode]">
+                            <option value="strict" <?php selected( $primary_research_mode, 'strict' ); ?>>strict（不合格リンクは除外）</option>
+                            <option value="warn" <?php selected( $primary_research_mode, 'warn' ); ?>>warn（警告のみ）</option>
+                        </select>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php _e( '信頼性スコア閾値', 'blog-poster' ); ?></th>
+                    <td>
+                        <input type="number" min="0" max="100" step="1" class="small-text"
+                            name="blog_poster_settings[primary_research_credibility_threshold]"
+                            value="<?php echo esc_attr( $primary_research_threshold ); ?>">
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php _e( '検証タイムアウト（秒）', 'blog-poster' ); ?></th>
+                    <td>
+                        <input type="number" min="3" max="30" step="1" class="small-text"
+                            name="blog_poster_settings[primary_research_timeout_sec]"
+                            value="<?php echo esc_attr( $primary_research_timeout ); ?>">
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php _e( '再試行回数', 'blog-poster' ); ?></th>
+                    <td>
+                        <input type="number" min="0" max="3" step="1" class="small-text"
+                            name="blog_poster_settings[primary_research_retry_count]"
+                            value="<?php echo esc_attr( $primary_research_retry ); ?>">
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php _e( '許可ドメイン（改行 or カンマ区切り）', 'blog-poster' ); ?></th>
+                    <td>
+                        <textarea name="blog_poster_settings[primary_research_allowed_domains]" rows="3" class="large-text"><?php echo esc_textarea( $primary_research_allowed_domains ); ?></textarea>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row"><?php _e( '除外ドメイン（改行 or カンマ区切り）', 'blog-poster' ); ?></th>
+                    <td>
+                        <textarea name="blog_poster_settings[primary_research_blocked_domains]" rows="3" class="large-text"><?php echo esc_textarea( $primary_research_blocked_domains ); ?></textarea>
                     </td>
                 </tr>
             </table>

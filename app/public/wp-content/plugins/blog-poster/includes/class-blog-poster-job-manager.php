@@ -814,6 +814,18 @@ class Blog_Poster_Job_Manager {
 				throw new Exception( $final_markdown->get_error_message() );
 			}
 
+			$external_link_audit = array();
+			if ( class_exists( 'Blog_Poster_Primary_Research_Validator' ) ) {
+				$validator = new Blog_Poster_Primary_Research_Validator( Blog_Poster_Settings::get_settings() );
+				if ( $validator->is_enabled() ) {
+					$validation_result = $validator->filter_markdown_external_links( $final_markdown );
+					$final_markdown = isset( $validation_result['markdown'] ) ? $validation_result['markdown'] : $final_markdown;
+					$external_link_audit = isset( $validation_result['reports'] ) && is_array( $validation_result['reports'] )
+						? $validation_result['reports']
+						: array();
+				}
+			}
+
 			// MarkdownからHTMLへ変換
 			$final_html = Blog_Poster_Admin::markdown_to_html( $final_markdown );
 			$code_tag_html = preg_match_all( '/<CODE(?:\\s+lang="[^"]*")?>/i', $final_html, $tmp_matches4 );
@@ -865,6 +877,7 @@ class Blog_Poster_Job_Manager {
 				'markdown'         => $this->sanitize_utf8( $final_markdown ),
 				'html'             => $this->sanitize_utf8( $final_html ),
 				'keywords'         => $outline_meta['keywords'] ?? array(),
+				'external_link_audit' => $external_link_audit,
 			);
 
 		} catch ( Exception $e ) {

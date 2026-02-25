@@ -18,6 +18,11 @@ class Blog_Poster_Rewriter {
      */
     private $external_url_validation_cache = array();
 
+    /**
+     * @var Blog_Poster_Primary_Research_Validator|null
+     */
+    private $primary_research_validator = null;
+
     public function generate_suggestion( $content, $task_type, $context = array() ) {
         $prompt = $this->build_prompt( $task_type, $context );
         if ( '' === $prompt ) {
@@ -324,12 +329,17 @@ class Blog_Poster_Rewriter {
                     . "制約: URLは必ず同一サイト内のみ。\n"
                     . "出力形式: 1行につき「アンカーテキスト | URL | 追加文（30-80文字）」で2〜3行。";
             case 'external_links':
+                $primary_research_note = '';
+                if ( $this->is_primary_research_enabled() ) {
+                    $primary_research_note = "制約: 一次情報（公式発表・公的機関・原典資料）を優先し、リンク切れURLは提案しない。";
+                }
                 return $base . "\n"
                     . "目的: 記事に追加する外部リンク候補を2件作成してください。\n"
                     . "タイトル: {$title}\n"
                     . "見出し: {$headings}\n"
                     . "要約: " . mb_substr( $summary, 0, 350 ) . "\n"
                     . "制約: 公式サイト・公的機関・主要メディアなど信頼できるURLのみ。URLは https:// から始める。\n"
+                    . ( '' !== $primary_research_note ? $primary_research_note . "\n" : '' )
                     . "出力形式: 1行につき「アンカーテキスト | URL | 追加文（30-80文字）」で2行。";
         }
 
@@ -496,8 +506,11 @@ class Blog_Poster_Rewriter {
             if ( 'external_links' === $task_type && ( '' === $url_host || $url_host === $site_host ) ) {
                 continue;
             }
-            if ( 'external_links' === $task_type && ! $this->is_external_reference_url_valid( $url ) ) {
-                continue;
+            if ( 'external_links' === $task_type ) {
+                $validation = $this->get_primary_research_validator()->validate_external_url( $url );
+                if ( ! $validation['valid'] ) {
+                    continue;
+                }
             }
 
             $entries[] = array(
@@ -539,32 +552,42 @@ class Blog_Poster_Rewriter {
             return (bool) $this->external_url_validation_cache[ $url ];
         }
 
-        $args = array(
-            'timeout' => 8,
-            'redirection' => 5,
-            'user-agent' => 'BlogPoster/1.0 (+WordPress)',
-        );
-
-        $response = wp_remote_head( $url, $args );
-        if ( is_wp_error( $response ) ) {
-            $response = wp_remote_get( $url, $args );
-        } else {
-            $status_code = (int) wp_remote_retrieve_response_code( $response );
-            if ( in_array( $status_code, array( 405, 501 ), true ) ) {
-                $response = wp_remote_get( $url, $args );
-            }
-        }
-
-        if ( is_wp_error( $response ) ) {
-            $this->external_url_validation_cache[ $url ] = true;
-            return true;
-        }
-
-        $status_code = (int) wp_remote_retrieve_response_code( $response );
-        $valid = ! in_array( $status_code, array( 404, 410 ), true );
+        $validation = $this->get_primary_research_validator()->validate_external_url( $url );
+        $valid = ! empty( $validation['valid'] );
         $this->external_url_validation_cache[ $url ] = $valid;
 
         return $valid;
+    }
+
+    /**
+     * @return Blog_Poster_Primary_Research_Validator
+     */
+    private function get_primary_research_validator() {
+        if ( null !== $this->primary_research_validator ) {
+            return $this->primary_research_validator;
+        }
+
+        if ( ! class_exists( 'Blog_Poster_Primary_Research_Validator' ) ) {
+            // Fallback: treat as permissive validator when class is unavailable (e.g. isolated tests).
+            $this->primary_research_validator = new class() {
+                public function validate_external_url( $url ) {
+                    return array( 'valid' => true );
+                }
+            };
+            return $this->primary_research_validator;
+        }
+
+        $this->primary_research_validator = new Blog_Poster_Primary_Research_Validator(
+            $this->get_effective_settings()
+        );
+        return $this->primary_research_validator;
+    }
+
+    /**
+     * @return bool
+     */
+    private function is_primary_research_enabled() {
+        return ! empty( $this->get_effective_settings()['primary_research_enabled'] );
     }
 
     private function append_link_list_to_content( $content, $task_type, $entries ) {

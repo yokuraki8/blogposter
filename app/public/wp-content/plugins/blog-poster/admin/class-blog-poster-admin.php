@@ -479,6 +479,31 @@ class Blog_Poster_Admin {
         // RAG settings
         $sanitized['rag_enabled']       = ! empty( $input['rag_enabled'] ) ? '1' : '0';
         $sanitized['max_internal_links'] = isset( $input['max_internal_links'] ) ? min( 5, max( 1, (int) $input['max_internal_links'] ) ) : 3;
+
+        // Primary research settings (external link validation)
+        $sanitized['primary_research_enabled'] = ! empty( $input['primary_research_enabled'] ) ? '1' : '0';
+        $sanitized['external_link_existence_check_enabled'] = ! empty( $input['external_link_existence_check_enabled'] ) ? '1' : '0';
+        $sanitized['external_link_credibility_check_enabled'] = ! empty( $input['external_link_credibility_check_enabled'] ) ? '1' : '0';
+
+        $mode = isset( $input['primary_research_mode'] ) ? sanitize_key( $input['primary_research_mode'] ) : 'strict';
+        $sanitized['primary_research_mode'] = in_array( $mode, array( 'strict', 'warn' ), true ) ? $mode : 'strict';
+
+        $threshold = isset( $input['primary_research_credibility_threshold'] ) ? (int) $input['primary_research_credibility_threshold'] : 70;
+        $sanitized['primary_research_credibility_threshold'] = max( 0, min( 100, $threshold ) );
+
+        $timeout = isset( $input['primary_research_timeout_sec'] ) ? (int) $input['primary_research_timeout_sec'] : 8;
+        $sanitized['primary_research_timeout_sec'] = max( 3, min( 30, $timeout ) );
+
+        $retry_count = isset( $input['primary_research_retry_count'] ) ? (int) $input['primary_research_retry_count'] : 2;
+        $sanitized['primary_research_retry_count'] = max( 0, min( 3, $retry_count ) );
+
+        $sanitized['primary_research_allowed_domains'] = isset( $input['primary_research_allowed_domains'] )
+            ? sanitize_textarea_field( $input['primary_research_allowed_domains'] )
+            : '';
+        $sanitized['primary_research_blocked_domains'] = isset( $input['primary_research_blocked_domains'] )
+            ? sanitize_textarea_field( $input['primary_research_blocked_domains'] )
+            : '';
+
         // 既存の設定を維持
         $current_settings = Blog_Poster_Settings::get_settings();
         $sanitized = array_merge( $current_settings, $sanitized );
@@ -711,6 +736,8 @@ class Blog_Poster_Admin {
         // マークダウンをHTMLに変換（ジョブがあればジョブ側の生成結果を優先）
         $html_content = '';
         $job = null;
+        $external_link_audit = array();
+        $markdown_for_validation = '';
         if ( $job_id > 0 ) {
             $job_lock_name = 'blog_poster_create_post_' . $job_id;
             $job_lock_acquired = $this->acquire_db_lock( $job_lock_name, 10 );
@@ -741,10 +768,27 @@ class Blog_Poster_Admin {
             $title = $job['final_title'];
         }
 
-        if ( $job && ! empty( $job['final_html'] ) ) {
+        if ( $job && ! empty( $job['final_markdown'] ) ) {
+            $markdown_for_validation = $job['final_markdown'];
+        } else {
+            $markdown_for_validation = $content;
+        }
+
+        if ( class_exists( 'Blog_Poster_Primary_Research_Validator' ) ) {
+            $validator = new Blog_Poster_Primary_Research_Validator( Blog_Poster_Settings::get_settings() );
+            if ( $validator->is_enabled() && ! empty( $markdown_for_validation ) ) {
+                $validation_result = $validator->filter_markdown_external_links( $markdown_for_validation );
+                $markdown_for_validation = isset( $validation_result['markdown'] ) ? $validation_result['markdown'] : $markdown_for_validation;
+                $external_link_audit = isset( $validation_result['reports'] ) && is_array( $validation_result['reports'] )
+                    ? $validation_result['reports']
+                    : array();
+            }
+        }
+
+        if ( ! empty( $markdown_for_validation ) ) {
+            $html_content = self::markdown_to_html( $markdown_for_validation );
+        } elseif ( $job && ! empty( $job['final_html'] ) ) {
             $html_content = $job['final_html'];
-        } elseif ( $job && ! empty( $job['final_markdown'] ) ) {
-            $html_content = self::markdown_to_html( $job['final_markdown'] );
         } else {
             $html_content = self::markdown_to_html( $content );
         }
@@ -803,6 +847,18 @@ class Blog_Poster_Admin {
                     update_post_meta( $post_id, '_blog_poster_temperature', $job['temperature'] );
                     error_log( 'Blog Poster: Job metadata saved. Provider: ' . $job['ai_provider'] . ', Model: ' . $job['ai_model'] . ', Temperature: ' . $job['temperature'] );
                 }
+            }
+
+            if ( ! empty( $external_link_audit ) ) {
+                update_post_meta( $post_id, '_blog_poster_external_link_audit', wp_json_encode( $external_link_audit, JSON_UNESCAPED_UNICODE ) );
+                $checked_count = count( $external_link_audit );
+                $invalid_count = 0;
+                foreach ( $external_link_audit as $audit_entry ) {
+                    if ( empty( $audit_entry['valid'] ) ) {
+                        $invalid_count++;
+                    }
+                }
+                update_post_meta( $post_id, '_blog_poster_external_link_audit_summary', sprintf( 'checked=%d invalid=%d', $checked_count, $invalid_count ) );
             }
 
             // ジョブに post_id を紐付け（post_id=0のときのみ）
@@ -910,6 +966,7 @@ class Blog_Poster_Admin {
                     'post_id'  => $post_id,
                     'edit_url' => admin_url( 'post.php?post=' . $post_id . '&action=edit' ),
                     'message'  => '投稿を作成しました',
+                    'external_link_audit' => $external_link_audit,
                 )
             );
         } finally {

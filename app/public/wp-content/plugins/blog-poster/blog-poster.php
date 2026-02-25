@@ -90,6 +90,7 @@ class Blog_Poster {
         require_once BLOG_POSTER_PLUGIN_DIR . 'includes/class-blog-poster-seo-analyzer.php';
         require_once BLOG_POSTER_PLUGIN_DIR . 'includes/class-blog-poster-task-manager.php';
         require_once BLOG_POSTER_PLUGIN_DIR . 'includes/class-blog-poster-rewriter.php';
+        require_once BLOG_POSTER_PLUGIN_DIR . 'includes/class-blog-poster-primary-research-validator.php';
 
         // RAG コンテンツインデクサー
         require_once BLOG_POSTER_PLUGIN_DIR . 'includes/class-blog-poster-content-indexer.php';
@@ -345,6 +346,15 @@ class Blog_Poster {
             'image_size' => '1024x1024', // 1024x1024 / 1536x1024 / 1024x1536 / 1792x1024 / 1024x1792
             'image_quality' => 'standard', // standard / hd
             'enable_yoast_integration' => false, // Yoast SEO連携
+            'primary_research_enabled' => false,
+            'external_link_existence_check_enabled' => true,
+            'external_link_credibility_check_enabled' => true,
+            'primary_research_mode' => 'strict',
+            'primary_research_credibility_threshold' => 70,
+            'primary_research_timeout_sec' => 8,
+            'primary_research_retry_count' => 2,
+            'primary_research_allowed_domains' => '',
+            'primary_research_blocked_domains' => '',
             'cron_step_limit' => 3, // Cron1回あたりの処理ステップ数
             'subscription_plan' => 'free', // free, paid_with_api, paid_without_api
             'articles_generated' => 0,

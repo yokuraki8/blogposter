@@ -312,6 +312,19 @@ jQuery(document).ready(function($) {
     function displayResult(data) {
         console.log('Displaying result and creating post automatically...');
 
+        if (data && data.external_link_audit) {
+            const reports = Object.values(data.external_link_audit || {});
+            const checked = reports.length;
+            const invalid = reports.filter(r => !r.valid).length;
+            if (checked > 0) {
+                console.log('Primary research audit:', { checked, invalid });
+                const note = invalid > 0
+                    ? `外部リンク監査: ${checked}件中 ${invalid}件を除外`
+                    : `外部リンク監査: ${checked}件すべて通過`;
+                $('#progress-message').text(note);
+            }
+        }
+
         // プログレスメッセージを更新
         updateProgress(100, '投稿を作成中...');
         $('#cancel-button').hide();

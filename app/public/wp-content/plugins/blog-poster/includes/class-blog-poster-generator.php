@@ -256,6 +256,29 @@ class Blog_Poster_Generator {
         $final_md = $this->postprocess_markdown( $final_md );
         $final_md = $this->normalize_code_blocks_after_generation( $final_md );
 
+        $external_link_audit = array();
+        $primary_research_validator = $this->get_primary_research_validator();
+        if ( $primary_research_validator && $primary_research_validator->is_enabled() ) {
+            $validation_result = $primary_research_validator->filter_markdown_external_links( $final_md );
+            $final_md = $validation_result['markdown'];
+            $external_link_audit = $validation_result['reports'];
+            if ( ! empty( $external_link_audit ) ) {
+                $invalid_count = 0;
+                foreach ( $external_link_audit as $audit_entry ) {
+                    if ( empty( $audit_entry['valid'] ) ) {
+                        $invalid_count++;
+                    }
+                }
+                error_log(
+                    sprintf(
+                        'Blog Poster: Primary research link audit completed. checked=%d invalid=%d',
+                        count( $external_link_audit ),
+                        $invalid_count
+                    )
+                );
+            }
+        }
+
         // RAG: insert internal links
         $rag_article_settings = Blog_Poster_Settings::get_settings();
         $rag_article_enabled  = ! empty( $rag_article_settings['rag_enabled'] );
@@ -282,6 +305,7 @@ class Blog_Poster_Generator {
             'keywords' => isset( $meta['keywords'] ) ? $meta['keywords'] : array(),
             'markdown' => $final_md,
             'html' => $html,
+            'external_link_audit' => $external_link_audit,
         );
     }
 
@@ -498,6 +522,12 @@ class Blog_Poster_Generator {
             $section_examples .= "\n（必要に応じて" . ( $h2_min + 1 ) . "-{$h2_max}個目のセクションも追加）\n";
         }
 
+        $primary_research_guidance = '';
+        $validator = $this->get_primary_research_validator();
+        if ( $validator && $validator->is_enabled() ) {
+            $primary_research_guidance = "\n【外部参照に関する制約】\n- 参照先は一次情報（公式発表・公的機関・原典資料）を優先する\n- リンク切れ/信頼性が低い情報源は参照候補に含めない";
+        }
+
         return <<<PROMPT
 
 あなたは日本語ブログ記事のプロフェッショナルライターです。
@@ -509,6 +539,7 @@ class Blog_Poster_Generator {
 【事実性の厳守】
 - 事実に基づく内容のみで構成案を作成すること
 - 憶測・推測・断定できない表現に基づく構成は禁止
+{$primary_research_guidance}
 
 【重要】以下の形式で記事のアウトラインを作成してください:
 
@@ -560,6 +591,11 @@ PROMPT;
 
         $config = $this->get_length_config( $this->current_article_length );
         $section_chars = $config['section_chars'];
+        $primary_research_note = '';
+        $validator = $this->get_primary_research_validator();
+        if ( $validator && $validator->is_enabled() ) {
+            $primary_research_note = "- 外部参照が必要な場合は一次情報（公式発表・公的機関・原典資料）を優先し、信頼性の低い情報源を避ける\n- リンクは実在するURLのみ使用する";
+        }
 
         return "以下のセクションの本文を、Markdown形式で詳細に執筆してください。
 
@@ -577,6 +613,7 @@ PROMPT;
 - コードブロック内に本文や見出しを混入させない
 - 読者が実行できる内容を提供
 - 技術的に正確な情報のみ
+{$primary_research_note}
 
 出力はMarkdown形式のみ。余計な説明不要。セクションタイトル(##)から開始してください。";
     }
@@ -1428,6 +1465,19 @@ PROMPT;
     private function sanitize_image_quality( $quality ) {
         $quality = sanitize_text_field( (string) $quality );
         return in_array( $quality, array( 'standard', 'hd' ), true ) ? $quality : 'standard';
+    }
+
+    /**
+     * @return Blog_Poster_Primary_Research_Validator|null
+     */
+    private function get_primary_research_validator() {
+        if ( ! class_exists( 'Blog_Poster_Primary_Research_Validator' ) ) {
+            return null;
+        }
+
+        return new Blog_Poster_Primary_Research_Validator(
+            $this->get_effective_settings()
+        );
     }
 
 }
